@@ -12,7 +12,7 @@ using Zaagl.Modules.Analytics.Infrastructure;
 namespace Zaagl.Modules.Analytics.Infrastructure.Migrations
 {
     [DbContext(typeof(AnalyticsDbContext))]
-    [Migration("20261021144223_Initial")]
+    [Migration("20261021220544_Initial")]
     partial class Initial
     {
         /// <inheritdoc />
@@ -70,6 +70,10 @@ namespace Zaagl.Modules.Analytics.Infrastructure.Migrations
                         .HasColumnType("character varying(100)")
                         .HasColumnName("os");
 
+                    b.Property<Guid>("OwnerId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("owner_id");
+
                     b.Property<string>("ReferrerHost")
                         .HasMaxLength(255)
                         .HasColumnType("character varying(255)")
@@ -86,6 +90,9 @@ namespace Zaagl.Modules.Analytics.Infrastructure.Migrations
 
                     b.HasIndex("LinkId", "OccurredAt")
                         .HasDatabaseName("ix_click_events_link_id_occurred_at");
+
+                    b.HasIndex("OwnerId", "OccurredAt")
+                        .HasDatabaseName("ix_click_events_owner_id_occurred_at");
 
                     b.ToTable("click_events", "analytics");
                 });

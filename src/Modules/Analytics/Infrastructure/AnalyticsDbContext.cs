@@ -29,6 +29,7 @@ public sealed class AnalyticsDbContext(DbContextOptions<AnalyticsDbContext> opti
             e.Property(x => x.Browser).HasMaxLength(100);
             e.Property(x => x.DeviceType).HasMaxLength(20).IsRequired();
             e.HasIndex(x => new { x.LinkId, x.OccurredAt });
+            e.HasIndex(x => new { x.OwnerId, x.OccurredAt });
         });
     }
 }

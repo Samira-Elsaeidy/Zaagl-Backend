@@ -109,6 +109,7 @@ public sealed partial class ResolutionService(
         var location = known ?? Locate(request);
         clicks.TryRecord(new ClickEvent(
             link.Id,
+            link.OwnerId,
             now.UtcDateTime,
             VisitorHash(request, now),
             ReferrerHost(request.Referer),

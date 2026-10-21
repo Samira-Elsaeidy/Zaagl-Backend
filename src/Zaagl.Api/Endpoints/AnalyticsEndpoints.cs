@@ -27,6 +27,20 @@ public static class AnalyticsEndpoints
             })
             .WithTags("Analytics").RequireAuthorization();
 
+        // Same overview summed over everything the user owns (dashboard cards and the Analytics page).
+        app.MapGet("/api/analytics/overview", async (
+                string? range, DateTime? from, DateTime? to,
+                ClaimsPrincipal user, IPlanProvider plans, IAnalyticsQueries analytics, CancellationToken ct) =>
+            {
+                if (!TryParseRange(range, out var parsed))
+                    return ApiResults.Problem(Error.Validation("range must be one of: live, 24h, 7d, 30d, custom."));
+
+                var userId = user.GetUserId();
+                var limits = await plans.GetLimitsAsync(userId, ct);
+                return Results.Ok(await analytics.GetOwnerOverviewAsync(userId, parsed, from, to, limits.AnalyticsRetentionDays, ct));
+            })
+            .WithTags("Analytics").RequireAuthorization();
+
         // Read-only stats page that a link owner can opt into per link (PublicStats). Never exposes the destination.
         app.MapGet("/api/public/stats/{slug}", async (
                 string slug, ILinkDirectory links, IAnalyticsQueries analytics, CancellationToken ct) =>

@@ -87,6 +87,7 @@ public sealed class ClickWriterService(
                 db.ClickEvents.AddRange(batch.Select(c => new ClickEventRow
                 {
                     LinkId = c.LinkId,
+                    OwnerId = c.OwnerId,
                     OccurredAt = c.OccurredAt,
                     VisitorHash = c.VisitorHash,
                     ReferrerHost = c.ReferrerHost,
@@ -117,7 +118,7 @@ public sealed class ClickWriterService(
         if (publisher is null) return;
 
         var live = batch.Where(c => !c.IsBot)
-            .Select(c => new LiveClick(c.LinkId, c.OccurredAt, c.ReferrerHost, c.Country, c.City, c.Os, c.Browser, c.DeviceType))
+            .Select(c => new LiveClick(c.LinkId, c.OwnerId, c.OccurredAt, c.ReferrerHost, c.Country, c.City, c.Os, c.Browser, c.DeviceType))
             .ToList();
         if (live.Count == 0) return;
 

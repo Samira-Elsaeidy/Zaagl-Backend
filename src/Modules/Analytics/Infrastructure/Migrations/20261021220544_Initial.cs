@@ -21,6 +21,7 @@ namespace Zaagl.Modules.Analytics.Infrastructure.Migrations
                     id            uuid                     NOT NULL,
                     occurred_at   timestamp with time zone NOT NULL,
                     link_id       uuid                     NOT NULL,
+                    owner_id      uuid                     NOT NULL,
                     visitor_hash  character varying(64)    NOT NULL,
                     referrer_host character varying(255)   NULL,
                     country       character varying(2)     NULL,
@@ -41,6 +42,11 @@ namespace Zaagl.Modules.Analytics.Infrastructure.Migrations
             migrationBuilder.Sql("""
                 CREATE INDEX ix_click_events_link_id_occurred_at
                     ON analytics.click_events (link_id, occurred_at);
+                """);
+
+            migrationBuilder.Sql("""
+                CREATE INDEX ix_click_events_owner_id_occurred_at
+                    ON analytics.click_events (owner_id, occurred_at);
                 """);
 
             // Creates the current month plus the next `months` monthly partitions (UTC boundaries).

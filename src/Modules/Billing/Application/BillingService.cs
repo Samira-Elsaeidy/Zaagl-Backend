@@ -63,8 +63,8 @@ public sealed class BillingService(
             Mode = "subscription",
             ClientReferenceId = userId.ToString(),
             LineItems = [new SessionLineItemOptions { Price = _options.StarterPriceId, Quantity = 1 }],
-            SuccessUrl = $"{_options.ReturnBaseUrl}/billing?checkout=success",
-            CancelUrl = $"{_options.ReturnBaseUrl}/billing?checkout=cancelled",
+            SuccessUrl = $"{_options.ReturnBaseUrl}/settings?checkout=success",
+            CancelUrl = $"{_options.ReturnBaseUrl}/settings?checkout=cancelled",
             SubscriptionData = new SessionSubscriptionDataOptions
             {
                 Metadata = new Dictionary<string, string> { ["user_id"] = userId.ToString() },
@@ -90,7 +90,7 @@ public sealed class BillingService(
             new Stripe.BillingPortal.SessionCreateOptions
             {
                 Customer = customer,
-                ReturnUrl = $"{_options.ReturnBaseUrl}/billing",
+                ReturnUrl = $"{_options.ReturnBaseUrl}/settings",
             }, cancellationToken: ct);
         return Result<RedirectUrlDto>.Ok(new(session.Url));
     }

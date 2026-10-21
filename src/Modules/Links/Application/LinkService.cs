@@ -122,6 +122,21 @@ public sealed class LinkService(
         return Result<LinkDto>.Ok(ToDto(link));
     }
 
+    public async Task<Result<LinkDto>> SetFlagsAsync(Guid userId, Guid id, LinkFlagsInput flags, CancellationToken ct)
+    {
+        var link = await db.Links.Include(l => l.Policy).Include(l => l.Rules)
+            .FirstOrDefaultAsync(l => l.Id == id && l.OwnerId == userId, ct);
+        if (link is null) return Error.NotFound("Link not found.");
+
+        if (flags.IsActive is { } active) link.IsActive = active;
+        if (flags.PublicStats is { } publicStats) link.PublicStats = publicStats;
+        link.UpdatedAt = DateTime.UtcNow;
+        await db.SaveChangesAsync(ct);
+
+        await cache.RemoveAsync(LinkCache.Key(link.SlugKey), ct); // the redirect path caches IsActive
+        return Result<LinkDto>.Ok(ToDto(link));
+    }
+
     // ---- Read / delete ----------------------------------------------------
 
     public async Task<LinkDto?> GetAsync(Guid userId, Guid id, CancellationToken ct)
@@ -149,6 +164,25 @@ public sealed class LinkService(
         {
             var tag = query.Tag.Trim();
             q = q.Where(l => l.Tags.Contains(tag));
+        }
+
+        var now = DateTime.UtcNow;
+        // "Expired" means the link no longer redirects: deactivated, past its date, or out of clicks.
+        switch (query.Status?.ToLowerInvariant())
+        {
+            case "expired":
+                q = q.Where(l => !l.IsActive
+                    || (l.Policy != null && ((l.Policy.ExpiresAt != null && l.Policy.ExpiresAt <= now)
+                        || (l.Policy.MaxClicks != null && l.Policy.ClicksUsed >= l.Policy.MaxClicks))));
+                break;
+            case "active":
+            case "password":
+                q = q.Where(l => l.IsActive
+                    && (l.Policy == null || ((l.Policy.ExpiresAt == null || l.Policy.ExpiresAt > now)
+                        && (l.Policy.MaxClicks == null || l.Policy.ClicksUsed < l.Policy.MaxClicks))));
+                if (query.Status!.Equals("password", StringComparison.OrdinalIgnoreCase))
+                    q = q.Where(l => l.Policy != null && l.Policy.PasswordHash != null);
+                break;
         }
 
         var total = await q.CountAsync(ct);

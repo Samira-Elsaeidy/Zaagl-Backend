@@ -3,6 +3,7 @@ namespace Zaagl.Modules.Analytics.Contracts;
 /// <summary>One redirect. Bot and crawler hits are recorded too, flagged, and excluded from human counts.</summary>
 public sealed record ClickEvent(
     Guid LinkId,
+    Guid OwnerId,
     DateTime OccurredAt,
     string VisitorHash,
     string? ReferrerHost,
@@ -21,6 +22,7 @@ public interface IClickRecorder
 
 public sealed record LiveClick(
     Guid LinkId,
+    Guid OwnerId,
     DateTime OccurredAt,
     string? ReferrerHost,
     string? Country,
@@ -72,5 +74,19 @@ public interface IAnalyticsQueries
         DateTime? customFrom,
         DateTime? customTo,
         int? retentionDays,
+        CancellationToken cancellationToken);
+
+    /// <summary>Same overview, summed over every link the user owns.</summary>
+    Task<AnalyticsOverview> GetOwnerOverviewAsync(
+        Guid ownerId,
+        AnalyticsRange range,
+        DateTime? customFrom,
+        DateTime? customTo,
+        int? retentionDays,
+        CancellationToken cancellationToken);
+
+    /// <summary>All-time human click totals per link, for the link library. Links without clicks are absent.</summary>
+    Task<IReadOnlyDictionary<Guid, long>> GetClickTotalsAsync(
+        IReadOnlyCollection<Guid> linkIds,
         CancellationToken cancellationToken);
 }

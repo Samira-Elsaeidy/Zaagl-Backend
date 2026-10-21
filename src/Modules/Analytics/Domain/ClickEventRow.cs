@@ -5,6 +5,10 @@ public sealed class ClickEventRow
 {
     public Guid Id { get; set; } = Guid.CreateVersion7();
     public Guid LinkId { get; set; }
+
+    /// <summary>Denormalized from the link so account-wide analytics need no join across modules.</summary>
+    public Guid OwnerId { get; set; }
+
     public DateTime OccurredAt { get; set; }
     public string VisitorHash { get; set; } = "";
     public string? ReferrerHost { get; set; }

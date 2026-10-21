@@ -36,9 +36,19 @@ public sealed record PolicyInput(
 /// <param name="Match">ios | android | desktop for device, ISO-3166 alpha-2 for country, null for split.</param>
 public sealed record RuleInput(string Kind, string? Match, string Url, int Weight = 1, int Priority = 0);
 
-public sealed record ListLinksQuery(string? Search = null, Guid? FolderId = null, string? Tag = null, int Page = 1, int PageSize = 25);
+/// <param name="Status">active | password | expired (expired also covers deactivated and click-limit reached).</param>
+public sealed record ListLinksQuery(
+    string? Search = null,
+    Guid? FolderId = null,
+    string? Tag = null,
+    string? Status = null,
+    int Page = 1,
+    int PageSize = 25);
 
 public sealed record FolderInput(string Name);
+
+/// <summary>Partial update for the two switches that don't need the whole link resent. Null leaves a flag as it is.</summary>
+public sealed record LinkFlagsInput(bool? IsActive = null, bool? PublicStats = null);
 
 // ---- Responses ------------------------------------------------------------
 
