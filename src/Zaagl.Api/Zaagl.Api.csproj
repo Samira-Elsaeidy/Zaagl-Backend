@@ -1,0 +1,33 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.AspNetCore.OpenApi" Version="10.0.1" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Modules\Identity\Zaagl.Modules.Identity.csproj" />
+    <ProjectReference Include="..\Modules\Organizations\Zaagl.Modules.Organizations.csproj" />
+    <ProjectReference Include="..\Modules\Links\Zaagl.Modules.Links.csproj" />
+    <ProjectReference Include="..\Modules\Resolution\Zaagl.Modules.Resolution.csproj" />
+    <ProjectReference Include="..\Modules\Access\Zaagl.Modules.Access.csproj" />
+    <ProjectReference Include="..\Modules\Analytics\Zaagl.Modules.Analytics.csproj" />
+    <ProjectReference Include="..\Modules\Resources\Zaagl.Modules.Resources.csproj" />
+    <ProjectReference Include="..\Modules\Snippets\Zaagl.Modules.Snippets.csproj" />
+    <ProjectReference Include="..\Modules\Files\Zaagl.Modules.Files.csproj" />
+    <ProjectReference Include="..\Modules\Media\Zaagl.Modules.Media.csproj" />
+    <ProjectReference Include="..\Modules\DeveloperTools\Zaagl.Modules.DeveloperTools.csproj" />
+    <ProjectReference Include="..\Modules\Collaboration\Zaagl.Modules.Collaboration.csproj" />
+    <ProjectReference Include="..\Modules\AI\Zaagl.Modules.AI.csproj" />
+    <ProjectReference Include="..\Modules\Billing\Zaagl.Modules.Billing.csproj" />
+    <ProjectReference Include="..\Modules\Notifications\Zaagl.Modules.Notifications.csproj" />
+    <ProjectReference Include="..\Modules\Administration\Zaagl.Modules.Administration.csproj" />
+    <ProjectReference Include="..\Zaagl.SharedKernel\Zaagl.SharedKernel.csproj" />
+  </ItemGroup>
+
+</Project>

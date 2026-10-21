@@ -1,0 +1,6 @@
+@Zaagl.Api_HostAddress = http://localhost:5084
+
+GET {{Zaagl.Api_HostAddress}}/weatherforecast/
+Accept: application/json
+
+###
