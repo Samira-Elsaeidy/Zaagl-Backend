@@ -1,0 +1,32 @@
+# Local development dependencies only. Production compose lives with the deploy config.
+services:
+  postgres:
+    image: postgres:18
+    container_name: zaagl-postgres
+    environment:
+      POSTGRES_DB: zaagl
+      POSTGRES_USER: zaagl
+      POSTGRES_PASSWORD: zaagl_dev
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U zaagl -d zaagl"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  valkey:
+    image: valkey/valkey:8
+    container_name: zaagl-valkey
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "valkey-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+volumes:
+  postgres-data:
