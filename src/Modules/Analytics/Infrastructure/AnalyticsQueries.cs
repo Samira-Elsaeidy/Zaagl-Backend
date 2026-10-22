@@ -53,7 +53,7 @@ public sealed class AnalyticsQueries(AnalyticsDbContext db) : IAnalyticsQueries
         // The array is wrapped in object[] so it binds as one parameter instead of expanding into several.
         var rows = await db.Database.SqlQueryRaw<LinkTotalRow>(
             """
-            SELECT link_id AS "LinkId", COUNT(*)::bigint AS "Clicks"
+            SELECT link_id, COUNT(*)::bigint AS clicks
             FROM analytics.click_events
             WHERE link_id = ANY({0}) AND NOT is_bot
             GROUP BY link_id
@@ -77,7 +77,7 @@ public sealed class AnalyticsQueries(AnalyticsDbContext db) : IAnalyticsQueries
         // Same DbContext, so the queries run one after another. Bots are excluded everywhere.
         var totals = await db.Database.SqlQueryRaw<TotalsRow>(
             $$"""
-            SELECT COUNT(*)::bigint AS "Clicks", COUNT(DISTINCT visitor_hash)::bigint AS "Visitors"
+            SELECT COUNT(*)::bigint AS clicks, COUNT(DISTINCT visitor_hash)::bigint AS visitors
             FROM analytics.click_events
             WHERE {{filterColumn}} = {0} AND occurred_at >= {1} AND occurred_at < {2} AND NOT is_bot
             """, id, from, to).SingleAsync(ct);
@@ -85,8 +85,8 @@ public sealed class AnalyticsQueries(AnalyticsDbContext db) : IAnalyticsQueries
         // `unit` comes from a fixed whitelist (GranularityFor).
         var series = await db.Database.SqlQueryRaw<SeriesRow>(
             $$"""
-            SELECT date_trunc('{{unit}}', occurred_at, 'UTC') AS "Bucket",
-                   COUNT(*)::bigint AS "Clicks", COUNT(DISTINCT visitor_hash)::bigint AS "Visitors"
+            SELECT date_trunc('{{unit}}', occurred_at, 'UTC') AS bucket,
+                   COUNT(*)::bigint AS clicks, COUNT(DISTINCT visitor_hash)::bigint AS visitors
             FROM analytics.click_events
             WHERE {{filterColumn}} = {0} AND occurred_at >= {1} AND occurred_at < {2} AND NOT is_bot
             GROUP BY 1 ORDER BY 1
@@ -110,7 +110,7 @@ public sealed class AnalyticsQueries(AnalyticsDbContext db) : IAnalyticsQueries
         // `column` and `filterColumn` are always literals from this class.
         var rows = await db.Database.SqlQueryRaw<BreakdownRow>(
             $$"""
-            SELECT COALESCE(NULLIF({{column}}, ''), {3}) AS "Name", COUNT(*)::bigint AS "Clicks"
+            SELECT COALESCE(NULLIF({{column}}, ''), {3}) AS name, COUNT(*)::bigint AS clicks
             FROM analytics.click_events
             WHERE {{filterColumn}} = {0} AND occurred_at >= {1} AND occurred_at < {2} AND NOT is_bot
             GROUP BY 1 ORDER BY 2 DESC, 1 LIMIT {{TopN}}
