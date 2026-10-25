@@ -1,19 +1,24 @@
 using FluentValidation;
 using Zaagl.Modules.Links.Contracts;
 using Zaagl.Modules.Links.Domain;
+using Zaagl.SharedKernel.ShortCodes;
 
 namespace Zaagl.Modules.Links.Application;
 
 public sealed class LinkInputValidator : AbstractValidator<LinkInput>
 {
-    public LinkInputValidator()
+    public LinkInputValidator(CodeGenerator codes)
     {
         RuleFor(x => x.DestinationUrl).NotEmpty().MaximumLength(UrlSafety.MaxLength);
 
         RuleFor(x => x.CustomSlug)
             .Must(SlugRules.IsValidFormat)
-            .WithMessage("Slug must be 3-64 characters: letters, digits, '-' or '_', starting with a letter or digit.")
+            .WithMessage($"Slug must be {SlugRules.MinCustomLength}-{SlugRules.MaxLength} characters: letters, digits, '-' or '_', starting with a letter or digit.")
             .Must(s => !SlugRules.IsReserved(s!))
+            .WithMessage("This slug is reserved.")
+            // A custom alias the generator could one day produce would collide with a future generated
+            // code (spec §4.5): reject it now, the same way a reserved word is rejected.
+            .Must(s => !codes.IsGeneratorReachable(s!))
             .WithMessage("This slug is reserved.")
             .When(x => !string.IsNullOrEmpty(x.CustomSlug));
 

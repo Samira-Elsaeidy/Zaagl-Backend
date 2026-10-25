@@ -28,7 +28,8 @@ public static class LinkCache
 public sealed class LinkService(
     LinksDbContext db,
     IPlanProvider plans,
-    ShortCodeGenerator codes,
+    CoordinatorLeaseClient leases,
+    CodeGenerator codes,
     IUrlReputationChecker reputation,
     HybridCache cache,
     IValidator<LinkInput> validator,
@@ -215,8 +216,8 @@ public sealed class LinkService(
     public async Task<SlugAvailabilityDto> CheckSlugAsync(string? slug, CancellationToken ct)
     {
         if (!SlugRules.IsValidFormat(slug))
-            return new(false, "Slug must be 3-64 characters: letters, digits, '-' or '_'.");
-        if (SlugRules.IsReserved(slug!)) return new(false, "This slug is reserved.");
+            return new(false, $"Slug must be {SlugRules.MinCustomLength}-{SlugRules.MaxLength} characters: letters, digits, '-' or '_'.");
+        if (SlugRules.IsReserved(slug!) || codes.IsGeneratorReachable(slug!)) return new(false, "This slug is reserved.");
         var taken = await db.Links.AnyAsync(l => l.SlugKey == SlugRules.Key(slug!), ct);
         return taken ? new(false, "This slug is already taken.") : new(true, null);
     }
@@ -352,10 +353,15 @@ public sealed class LinkService(
         }
     }
 
+    // "Strategy 6": lease the next number from the coordinator (one network call per block of leased
+    // numbers, not per link) and scramble it so consecutive leases don't look consecutive. Uniqueness
+    // is guaranteed by the lease itself (no two callers are ever given the same number) and, as a
+    // belt-and-braces check against a reserved word or a clash with a custom slug, by the database's
+    // unique index on slug_key - the same safety net CreateAsync already relies on for a retry.
     private async Task<string?> NextGeneratedSlugAsync(CancellationToken ct)
     {
-        var next = await db.Database.SqlQuery<long>($"SELECT nextval('links.slug_seq') AS \"Value\"").SingleAsync(ct);
-        var slug = codes.Encode(next);
+        var (length, next) = await leases.NextAsync(ct);
+        var slug = codes.Encode(length, next);
         return SlugRules.IsReserved(slug) ? null : slug;
     }
 

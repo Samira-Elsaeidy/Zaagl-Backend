@@ -19,6 +19,10 @@
   </ItemGroup>
 
   <ItemGroup>
+    <None Include="vectors.json" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
+  <ItemGroup>
     <ProjectReference Include="..\..\src\Modules\Links\Zaagl.Modules.Links.csproj" />
     <ProjectReference Include="..\..\src\Modules\Access\Zaagl.Modules.Access.csproj" />
     <ProjectReference Include="..\..\src\Modules\Resolution\Zaagl.Modules.Resolution.csproj" />

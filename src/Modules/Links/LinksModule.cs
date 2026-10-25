@@ -29,7 +29,29 @@ public static class LinksModule
         services.AddDbContext<LinksDbContext>(o => Configure(o, connection));
         services.AddHttpClient<IUrlReputationChecker, WebRiskChecker>(c => c.Timeout = TimeSpan.FromSeconds(3));
 
-        services.AddSingleton<ShortCodeGenerator>();
+        // Coordinator leases blocks of numbers (which length grows over time, spec §4.2); CodeGenerator
+        // (a 10-round keyed Feistel permutation, spec §5) hides their order and encodes them in base 62.
+        // The scramble key must never change once codes have been issued for a length (spec §5.3).
+        var scrambleKey = configuration["ShortLinks:ScrambleKey"];
+        if (string.IsNullOrWhiteSpace(scrambleKey))
+        {
+            // Dev-only fallback so the app still boots locally. Every restart reshuffles the number
+            // space, so already-issued codes may stop decoding correctly - fine for a throwaway dev
+            // database, never acceptable once real links exist.
+            scrambleKey = Guid.NewGuid().ToString("N");
+            Console.Error.WriteLine(
+                "WARNING: ShortLinks:ScrambleKey is not configured. Using a random key for this run only. " +
+                "Set ShortLinks:ScrambleKey (dotnet user-secrets or an environment variable) before issuing real links.");
+        }
+        services.AddSingleton<ICodePermutation>(new FeistelPermutation(scrambleKey));
+        services.AddSingleton<CodeGenerator>();
+
+        // CoordinatorLeaseClient is a singleton (it holds the current leased block), but its HttpClient
+        // still comes from IHttpClientFactory for pooled connections and DNS refresh.
+        var coordinatorUrl = configuration["Coordinator:BaseUrl"] ?? "http://localhost:5085";
+        services.AddHttpClient(nameof(CoordinatorLeaseClient), c => c.BaseAddress = new Uri(coordinatorUrl));
+        services.AddSingleton(sp =>
+            new CoordinatorLeaseClient(sp.GetRequiredService<IHttpClientFactory>().CreateClient(nameof(CoordinatorLeaseClient))));
         services.AddScoped<IValidator<LinkInput>, LinkInputValidator>();
         services.AddScoped<LinkService>();
         services.AddScoped<FolderService>();

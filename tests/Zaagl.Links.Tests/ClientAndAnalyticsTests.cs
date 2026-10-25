@@ -3,6 +3,7 @@ using Zaagl.Modules.Analytics.Infrastructure;
 using Zaagl.Modules.Links.Application;
 using Zaagl.Modules.Links.Contracts;
 using Zaagl.Modules.Resolution.Application;
+using Zaagl.SharedKernel.ShortCodes;
 
 namespace Zaagl.Links.Tests;
 
@@ -185,7 +186,7 @@ public class CsvAndValidatorTests
         Assert.Equal("line1\nline2", rows[1][0]);
     }
 
-    private readonly LinkInputValidator _validator = new();
+    private readonly LinkInputValidator _validator = new(new CodeGenerator(new FeistelPermutation("test-key-0123456789")));
 
     [Fact]
     public void Minimal_input_is_valid() =>

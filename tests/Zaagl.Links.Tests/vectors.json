@@ -1,0 +1,43 @@
+{
+  "keyBytes": "000102030405060708090A0B0C0D0E0F101112131415161718191A1B1C1D1E1F",
+  "generatorCaps": {
+    "5": 18322656,
+    "6": 1136004711,
+    "7": 70432292124,
+    "8": 4366802111697,
+    "9": 270741730925271,
+    "10": 16785987317366804
+  },
+  "vectors": [
+    { "length": 5, "n": 0, "code": "tg0J9" },
+    { "length": 5, "n": 1, "code": "ku1KS" },
+    { "length": 5, "n": 2, "code": "3h9Wt" },
+    { "length": 5, "n": 1000, "code": "0Iun1" },
+    { "length": 5, "n": 18322655, "code": "UNziA" },
+    { "length": 6, "n": 0, "code": "aQRfei" },
+    { "length": 6, "n": 1, "code": "CpRAGo" },
+    { "length": 6, "n": 2, "code": "fBTF2v" },
+    { "length": 6, "n": 1000, "code": "b4GXqz" },
+    { "length": 6, "n": 1136004710, "code": "Ty3Erk" },
+    { "length": 7, "n": 0, "code": "Qo3KS4c" },
+    { "length": 7, "n": 1, "code": "EpEVAgf" },
+    { "length": 7, "n": 2, "code": "TH3wwN1" },
+    { "length": 7, "n": 1000, "code": "LxXzc6y" },
+    { "length": 7, "n": 70432292123, "code": "BeimEIs" },
+    { "length": 8, "n": 0, "code": "qmq0rlBL" },
+    { "length": 8, "n": 1, "code": "IHOMaN0j" },
+    { "length": 8, "n": 2, "code": "6yrr3IZl" },
+    { "length": 8, "n": 1000, "code": "zUfjclbS" },
+    { "length": 8, "n": 4366802111696, "code": "YeNpdPbT" },
+    { "length": 9, "n": 0, "code": "mptjGDS1I" },
+    { "length": 9, "n": 1, "code": "ubDUHEkDk" },
+    { "length": 9, "n": 2, "code": "70FjFCm1Y" },
+    { "length": 9, "n": 1000, "code": "Iw2fRjJEZ" },
+    { "length": 9, "n": 270741730925270, "code": "wZlf9cgOL" },
+    { "length": 10, "n": 0, "code": "ROnAPCG51I" },
+    { "length": 10, "n": 1, "code": "YSMro7gmdr" },
+    { "length": 10, "n": 2, "code": "jS8qeYHHJN" },
+    { "length": 10, "n": 1000, "code": "iLeU2VJELc" },
+    { "length": 10, "n": 16785987317366803, "code": "SNd21V4KDq" }
+  ]
+}
