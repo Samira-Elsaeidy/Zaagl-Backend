@@ -87,6 +87,8 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Zaagl.Snippets.Tests", "tes
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Zaagl.Coordinator", "src\Zaagl.Coordinator\Zaagl.Coordinator.csproj", "{1CCA5CC9-14A2-458E-9DC8-E878E16B0956}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Zaagl.Coordinator.Tests", "tests\Zaagl.Coordinator.Tests\Zaagl.Coordinator.Tests.csproj", "{04067D99-3672-4133-A0F9-8A5526D00AE6}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -373,6 +375,18 @@ Global
 		{1CCA5CC9-14A2-458E-9DC8-E878E16B0956}.Release|x64.Build.0 = Release|Any CPU
 		{1CCA5CC9-14A2-458E-9DC8-E878E16B0956}.Release|x86.ActiveCfg = Release|Any CPU
 		{1CCA5CC9-14A2-458E-9DC8-E878E16B0956}.Release|x86.Build.0 = Release|Any CPU
+		{04067D99-3672-4133-A0F9-8A5526D00AE6}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{04067D99-3672-4133-A0F9-8A5526D00AE6}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{04067D99-3672-4133-A0F9-8A5526D00AE6}.Debug|x64.ActiveCfg = Debug|Any CPU
+		{04067D99-3672-4133-A0F9-8A5526D00AE6}.Debug|x64.Build.0 = Debug|Any CPU
+		{04067D99-3672-4133-A0F9-8A5526D00AE6}.Debug|x86.ActiveCfg = Debug|Any CPU
+		{04067D99-3672-4133-A0F9-8A5526D00AE6}.Debug|x86.Build.0 = Debug|Any CPU
+		{04067D99-3672-4133-A0F9-8A5526D00AE6}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{04067D99-3672-4133-A0F9-8A5526D00AE6}.Release|Any CPU.Build.0 = Release|Any CPU
+		{04067D99-3672-4133-A0F9-8A5526D00AE6}.Release|x64.ActiveCfg = Release|Any CPU
+		{04067D99-3672-4133-A0F9-8A5526D00AE6}.Release|x64.Build.0 = Release|Any CPU
+		{04067D99-3672-4133-A0F9-8A5526D00AE6}.Release|x86.ActiveCfg = Release|Any CPU
+		{04067D99-3672-4133-A0F9-8A5526D00AE6}.Release|x86.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
@@ -418,5 +432,6 @@ Global
 		{7338C614-7318-42A5-94D8-BE57408335B4} = {0AB3BF05-4346-4AA6-1389-037BE0695223}
 		{B57CF7A5-2620-4EAC-AB66-03C78CEB0C92} = {0AB3BF05-4346-4AA6-1389-037BE0695223}
 		{1CCA5CC9-14A2-458E-9DC8-E878E16B0956} = {827E0CD3-B72D-47B6-A68D-7590B98EB39B}
+		{04067D99-3672-4133-A0F9-8A5526D00AE6} = {0AB3BF05-4346-4AA6-1389-037BE0695223}
 	EndGlobalSection
 EndGlobal

@@ -1,4 +1,8 @@
-# Local development dependencies only. Production compose lives with the deploy config.
+# Local development stack. Spec §3: networks `edge` (reverse proxy + api, not built here - this dev
+# compose publishes api's port directly to the host instead) and `backend` (internal only: api,
+# coordinator, postgres, migrator). Full production hardening (Docker secrets, fixed KnownProxies
+# addresses, an `ops` profile, read-only root filesystems beyond what's already in the Dockerfiles) is
+# deferred - see docs/TRACEABILITY.md phase 6 notes for the exact list of what's real vs. dev-shortcut here.
 services:
   postgres:
     image: postgres:18
@@ -8,9 +12,12 @@ services:
       POSTGRES_USER: zaagl
       POSTGRES_PASSWORD: zaagl_dev
     ports:
-      - "5433:5432"
+      - "5433:5432" # host-side remap only; containers reach it at postgres:5432 (see note in README)
     volumes:
       - postgres-data:/var/lib/postgresql
+      - ./deploy/init-db:/docker-entrypoint-initdb.d:ro
+    networks:
+      - backend
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U zaagl -d zaagl"]
       interval: 5s
@@ -22,11 +29,108 @@ services:
     container_name: zaagl-valkey
     ports:
       - "6379:6379"
+    networks:
+      - backend
     healthcheck:
       test: ["CMD", "valkey-cli", "ping"]
       interval: 5s
       timeout: 3s
       retries: 10
 
+  # Spec §3 `migrator`: one-shot, applies every module's EF Core migrations, exits 0. Not run by default;
+  # `docker compose run --rm migrator` (or it runs automatically via `depends_on: condition:
+  # service_completed_successfully` on api/coordinator below).
+  migrator:
+    build:
+      context: .
+      dockerfile: src/Zaagl.Api/Dockerfile
+    container_name: zaagl-migrator
+    entrypoint: ["dotnet", "Zaagl.Api.dll", "migrate"]
+    environment:
+      ConnectionStrings__Postgres: "Host=postgres;Port=5432;Database=zaagl;Username=zaagl;Password=zaagl_dev"
+      ConnectionStrings__Valkey: "valkey:6379,abortConnect=false"
+      Jwt__Key: "dev-only-signing-key-change-me-0123456789abcdef"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - backend
+    restart: "no"
+
+  coordinator:
+    build:
+      context: .
+      dockerfile: src/Zaagl.Coordinator/Dockerfile
+    container_name: zaagl-coordinator
+    environment:
+      ConnectionStrings__Postgres: "Host=postgres;Port=5432;Database=zaagl;Username=zaagl;Password=zaagl_dev"
+      Coordinator__Token: "dev-coordinator-token"
+      Coordinator__AdminToken: "dev-coordinator-admin-token"
+      Coordinator__StateFilePath: "/state/hwm.json"
+      Allocator__Sink__Type: "LocalFileSystem"
+      Allocator__Sink__LocalFileSystem__Directory: "/state/allocator-sink"
+      Allocator__RequireArchiveConfirmation: "false" # dev Postgres has no WAL archiving configured; see docs/TRACEABILITY.md
+    ports:
+      - "5085:8080" # spec: backend-network-only in production; published here so this dev host can reach it directly
+    volumes:
+      - coordstate:/state
+    depends_on:
+      migrator:
+        condition: service_completed_successfully
+    networks:
+      - backend
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8080/health/live || exit 1"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+  api:
+    build:
+      context: .
+      dockerfile: src/Zaagl.Api/Dockerfile
+    container_name: zaagl-api
+    environment:
+      ConnectionStrings__Postgres: "Host=postgres;Port=5432;Database=zaagl;Username=zaagl;Password=zaagl_dev"
+      ConnectionStrings__Valkey: "valkey:6379,abortConnect=false"
+      Jwt__Key: "dev-only-signing-key-change-me-0123456789abcdef"
+      ShortLinks__ScrambleKey: "dev-only-scramble-key-change-me-0123456789abcdef"
+      Coordinator__BaseUrl: "http://coordinator:8080"
+      Coordinator__Token: "dev-coordinator-token"
+      ASPNETCORE_ENVIRONMENT: "Development"
+    ports:
+      - "5084:8080" # spec: edge-network-only, port not published in production; published here for dev access
+    depends_on:
+      migrator:
+        condition: service_completed_successfully
+      coordinator:
+        condition: service_healthy
+    networks:
+      - backend
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8080/health/live || exit 1"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+  # Spec §3: catches outgoing email in development (dev only - never started in a production compose).
+  mailpit:
+    image: axllent/mailpit
+    container_name: zaagl-mailpit
+    ports:
+      - "8025:8025" # web UI
+      - "1025:1025" # SMTP
+    networks:
+      - backend
+    profiles:
+      - dev
+
+networks:
+  backend:
+    driver: bridge
+
 volumes:
   postgres-data:
+  coordstate:

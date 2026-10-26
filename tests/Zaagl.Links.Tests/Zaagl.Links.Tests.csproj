@@ -27,6 +27,7 @@
     <ProjectReference Include="..\..\src\Modules\Access\Zaagl.Modules.Access.csproj" />
     <ProjectReference Include="..\..\src\Modules\Resolution\Zaagl.Modules.Resolution.csproj" />
     <ProjectReference Include="..\..\src\Modules\Analytics\Zaagl.Modules.Analytics.csproj" />
+    <ProjectReference Include="..\..\src\Zaagl.Api\Zaagl.Api.csproj" />
   </ItemGroup>
 
 </Project>
