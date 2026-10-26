@@ -96,13 +96,17 @@ public sealed class PurgeJob(
             // small, but the recheck is what makes it correct rather than merely likely.
             if (link.PurgeAfter is null || link.PurgeAfter > now) continue;
 
-            var isPremium = (await plans.GetLimitsAsync(link.OwnerId, ct)).Tier == PlanTier.Starter;
-            if (isPremium)
-                await archive.ArchiveAsync(
-                    link.Id, link.OwnerId, link.Slug, link.IsCustom, link.DestinationUrl,
-                    link.CreatedAt, link.Policy?.ExpiresAt ?? link.CreatedAt, now, ct);
-            else
-                await archive.DeleteDailyStatsAsync(link.Id, ct);
+            // Guest links (spec §7.12): no owner, no plan, no statistics ever kept - just delete the row.
+            if (link.OwnerId is { } ownerId)
+            {
+                var isPremium = (await plans.GetLimitsAsync(ownerId, ct)).Tier == PlanTier.Starter;
+                if (isPremium)
+                    await archive.ArchiveAsync(
+                        link.Id, ownerId, link.Slug, link.IsCustom, link.DestinationUrl,
+                        link.CreatedAt, link.Policy?.ExpiresAt ?? link.CreatedAt, now, ct);
+                else
+                    await archive.DeleteDailyStatsAsync(link.Id, ct);
+            }
 
             db.Links.Remove(link);
             purgedSlugKeys.Add(link.SlugKey);

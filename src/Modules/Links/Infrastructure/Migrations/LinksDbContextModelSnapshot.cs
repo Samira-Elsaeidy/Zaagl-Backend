@@ -137,6 +137,10 @@ namespace Zaagl.Modules.Links.Infrastructure.Migrations
                         .HasColumnType("uuid")
                         .HasColumnName("id");
 
+                    b.Property<long>("ClickCount")
+                        .HasColumnType("bigint")
+                        .HasColumnName("click_count");
+
                     b.Property<int?>("CodeLength")
                         .HasColumnType("integer")
                         .HasColumnName("code_length");
@@ -182,6 +186,10 @@ namespace Zaagl.Modules.Links.Infrastructure.Migrations
                         .HasColumnType("uuid")
                         .HasColumnName("folder_id");
 
+                    b.Property<byte[]>("GuestCreatorKey")
+                        .HasColumnType("bytea")
+                        .HasColumnName("guest_creator_key");
+
                     b.Property<bool>("IsActive")
                         .HasColumnType("boolean")
                         .HasColumnName("is_active");
@@ -209,7 +217,7 @@ namespace Zaagl.Modules.Links.Infrastructure.Migrations
                         .HasColumnType("character varying(200)")
                         .HasColumnName("og_title");
 
-                    b.Property<Guid>("OwnerId")
+                    b.Property<Guid?>("OwnerId")
                         .HasColumnType("uuid")
                         .HasColumnName("owner_id");
 
@@ -278,6 +286,8 @@ namespace Zaagl.Modules.Links.Infrastructure.Migrations
                             t.HasCheckConstraint("ck_links_disabled_kind_requires_at", "(disabled_at IS NULL) = (disabled_kind IS NULL)");
 
                             t.HasCheckConstraint("ck_links_generated_columns", "(is_custom AND code_length IS NULL AND code_number IS NULL AND key_version IS NULL) OR (NOT is_custom AND code_length IS NOT NULL AND code_number IS NOT NULL AND key_version IS NOT NULL)");
+
+                            t.HasCheckConstraint("ck_links_owner_xor_guest", "(owner_id IS NULL) <> (guest_creator_key IS NULL)");
                         });
                 });
 

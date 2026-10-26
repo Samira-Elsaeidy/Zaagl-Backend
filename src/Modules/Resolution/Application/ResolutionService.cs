@@ -109,10 +109,18 @@ public sealed partial class ResolutionService(
 
     private void Record(LinkSnapshot link, ClientProfile client, VisitorRequest request, DateTimeOffset now, GeoLocation? known = null)
     {
+        // Spec §7.12: a guest link gets only its aggregate counter, never a raw click_events row or
+        // daily stats - the owned-link analytics pipeline below is for account-owned links only.
+        if (link.OwnerId is not { } ownerId)
+        {
+            _ = links.IncrementGuestClickCountAsync(link.Id, CancellationToken.None);
+            return;
+        }
+
         var location = known ?? Locate(request);
         clicks.TryRecord(new ClickEvent(
             link.Id,
-            link.OwnerId,
+            ownerId,
             now.UtcDateTime,
             VisitorHash(request, now),
             ReferrerHost(request.Referer),

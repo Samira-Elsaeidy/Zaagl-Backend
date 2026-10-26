@@ -26,6 +26,15 @@ public static class LinksModule
 
         services.Configure<LinkOptions>(configuration.GetSection(LinkOptions.Section));
         services.Configure<WebRiskOptions>(configuration.GetSection(WebRiskOptions.Section));
+        services.Configure<GuestOptions>(configuration.GetSection(GuestOptions.Section));
+
+        // Spec §7.12: changing GUEST_KEY only resets guest quotas, it never affects already-issued links -
+        // same dev-only-fallback shape as ShortLinks:ScrambleKey above.
+        var guestKey = GuestIdentity.ResolveGuestKey(configuration["GUEST_KEY"]);
+        if (string.IsNullOrWhiteSpace(configuration["GUEST_KEY"]))
+            Console.Error.WriteLine("WARNING: GUEST_KEY is not configured. Using a random key for this run only.");
+        services.AddSingleton(new GuestKeyProvider(guestKey));
+        services.AddSingleton<GuestRateLimiter>();
 
         services.AddDbContext<LinksDbContext>(o => Configure(o, connection));
         services.AddHttpClient<IUrlReputationChecker, WebRiskChecker>(c => c.Timeout = TimeSpan.FromSeconds(3));
@@ -92,6 +101,7 @@ public static class LinksModule
         services.AddScoped<ILinkResolver>(sp => sp.GetRequiredService<LinkResolver>());
         services.AddScoped<ILinkDirectory>(sp => sp.GetRequiredService<LinkResolver>());
         services.AddHostedService<PurgeJob>();
+        services.AddHostedService<GuestQuotaCleanupJob>();
 
         services.AddSingleton<IModuleMigrator>(sp =>
             new ModuleMigrator<LinksDbContext>("links", sp.GetRequiredService<IServiceScopeFactory>()));

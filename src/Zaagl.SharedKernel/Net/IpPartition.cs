@@ -24,4 +24,20 @@ public static class IpPartition
         // bottom 64 bits stay zero
         return "v6/64:" + new IPAddress(prefix);
     }
+
+    /// <summary>Spec §7.12: the two wider IPv6 quota prefixes (/56, /48), so one allocation can't evade
+    /// the per-/64 guest quota by rotating addresses within it. Null for IPv4 (not needed there).</summary>
+    public static string? WidePrefixKey(IPAddress? address, int bits)
+    {
+        if (address is null || address.AddressFamily != AddressFamily.InterNetworkV6 || address.IsIPv4MappedToIPv6)
+            return null;
+
+        var bytes = address.GetAddressBytes();
+        if (bytes.Length != 16) return null;
+
+        Span<byte> prefix = stackalloc byte[16];
+        var fullBytes = bits / 8;
+        bytes.AsSpan(0, fullBytes).CopyTo(prefix);
+        return $"v6/{bits}:" + new IPAddress(prefix);
+    }
 }

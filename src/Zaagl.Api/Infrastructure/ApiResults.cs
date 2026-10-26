@@ -16,7 +16,8 @@ public static class ApiResults
             "not_found" => StatusCodes.Status404NotFound,
             "conflict" => StatusCodes.Status409Conflict,
             "expired" => StatusCodes.Status410Gone,
-            "service_unavailable" => StatusCodes.Status503ServiceUnavailable,
+            "too_many_requests" => StatusCodes.Status429TooManyRequests,
+            "service_unavailable" or "guest_creation_paused" => StatusCodes.Status503ServiceUnavailable,
             _ => StatusCodes.Status400BadRequest,
         };
         return Results.Problem(

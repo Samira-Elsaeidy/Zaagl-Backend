@@ -33,6 +33,10 @@ public sealed class LinkResolver(LinksDbContext db, RedirectsDataSource redirect
         return rows > 0;
     }
 
+    public async Task IncrementGuestClickCountAsync(Guid linkId, CancellationToken cancellationToken) =>
+        await db.Links.Where(l => l.Id == linkId)
+            .ExecuteUpdateAsync(s => s.SetProperty(l => l.ClickCount, l => l.ClickCount + 1), cancellationToken);
+
     public async Task<OwnedLink?> FindOwnedAsync(Guid userId, Guid linkId, CancellationToken cancellationToken) =>
         await db.Links.AsNoTracking()
             .Where(l => l.Id == linkId && l.OwnerId == userId)
@@ -55,7 +59,8 @@ public sealed class LinkResolver(LinksDbContext db, RedirectsDataSource redirect
     {
         await using var conn = await redirects.Value.OpenConnectionAsync(ct);
 
-        Guid id, ownerId;
+        Guid id;
+        Guid? ownerId;
         string slug, destinationUrl;
         bool isActive, publicStats;
         string? passwordHash, fallbackUrl, ogTitle, ogDescription, ogImageUrl, disabledKind;
@@ -78,7 +83,7 @@ public sealed class LinkResolver(LinksDbContext db, RedirectsDataSource redirect
             if (!await reader.ReadAsync(ct)) return null;
 
             id = reader.GetGuid(0);
-            ownerId = reader.GetGuid(1);
+            ownerId = reader.IsDBNull(1) ? null : reader.GetGuid(1);
             slug = reader.GetString(2);
             destinationUrl = reader.GetString(3);
             isActive = reader.GetBoolean(4);

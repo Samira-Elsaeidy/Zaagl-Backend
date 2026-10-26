@@ -49,11 +49,27 @@ no assertion) is deferred - not built in this phase.
 | Creation faulted until key fingerprint matches coordinator | Live verification: API started with a wrong key -> `/health/issuer` shows `KeyMismatch`, `POST /api/links` returns `503`; fixed key -> `Ok`, creation succeeds | **Not unit-tested**, live-verified only |
 | `/health/issuer` states (KeyUnverified/KeyMismatch/Waiting/Ok/Faulted) | Live verification (KeyMismatch and Ok observed) | Partially live-verified; `Waiting` and `Faulted` not exercised |
 
+## Guest creation (spec §7.12)
+
+| Item | Test | Status |
+|---|---|---|
+| Guest identified only by IP partition, never a stored IP (`guestCreatorKey = HMAC-SHA256(GUEST_KEY, tag+partition)`, 16 bytes) | `GuestCreationTests` (direct), live verification (`isGuest: true` response, no account) | Covered |
+| 20/day rolling-24h quota per creator key, hard and transactional (locked bucket rows, summed, refused at the limit) | `GuestCreationTests.Quota_*` against real Postgres | Covered |
+| Wider /56, /48 IPv6 ceilings so one allocation can't evade the /64 quota | `GuestCreationTests.Different_prefix_keys_have_independent_quotas`, `Wide_prefix_keys_are_null_for_ipv4_and_present_for_ipv6` | Covered |
+| 5/minute token bucket, global hourly ceiling pausing the heaviest partitions first | `GuestRateLimiterTests`; live verification (6th request in one minute -> `429`) | Covered, **in-memory per instance only** (matches spec's explicit "counted in memory per instance" for these two, not the 24h quota) |
+| No alias can ever take over a generated code or vice versa; guest aliases share the same slug rules as account aliases | Reuses existing `SlugRules`/generator-reachability checks (§4.5), unchanged | Covered (inherited, not re-tested here) |
+| Fixed 7-day expiry, shorter allowed, no quarantine (`purge_after = expires_at`) | Live verification (`policy.expiresAt` 7 days out); `PurgeJob` already deletes guest links outright (no archive, no owner) once purgeable | Covered |
+| Guest links cannot be renewed, edited, deleted, listed or queried via owner endpoints | Unaffected pre-existing `RequireAuthorization()` on those routes (a guest link's `OwnerId` can never match an authenticated caller) | Covered by construction, no guest-specific negative test added this phase |
+| Aggregate click counter only, no raw `click_events`, no daily stats | `ResolutionService.Record` branches on `OwnerId is null`; `Link.ClickCount` incremented | **Partially covered**: the branch exists and was live-verified (redirect still works); no automated test asserts zero `click_events` rows for a guest click, and the increment is fire-and-forget (never awaited) to keep the redirect path fast, so a crash between redirect and increment can lose a count - accepted, matches the spec's own "aggregate... for abuse detection" framing, not an exact-count guarantee |
+| CAPTCHA (Turnstile) on guest creation | **Not built.** `ICaptchaVerifier` seam does not exist yet | **Not started** - tracked for the abuse-controls phase (§7.15), where it's also needed for registration, resend-confirmation, forgot-password and reports, so it's built once for all of them rather than only for guests now |
+| Global ceiling's "pause the heaviest partitions first" | `GuestRateLimiterTests.Global_ceiling_pauses_the_partition_with_the_most_creations_first` | Covered via a fair-share approximation (partition count vs. `GlobalPerHour / active partitions`), not the spec's unspecified exact algorithm |
+| An admin can view and disable a guest link | Not built - no admin link endpoints exist yet in this build | **Not started** |
+
 ## Deferred entirely (not started this phase)
 
-Every MUST NOT and guarantee tied to: host routing (§1.2), guest tier (§7.12), quarantine/purge
-lifecycle (§4.3, §7.8), accounts rework beyond the fingerprint check (§7.4), email (§7.10), abuse
-controls (§7.15), the allocator sink as a real S3-compatible bucket (§6.4), chaos/failpoint test suites
-(§8.2, §8.3), NetArchTest architecture rules, Stryker mutation testing, and `tools/traceability-check`
-itself. None of these have rows here because fabricating "covered" rows for unbuilt work is explicitly
-against this document's purpose.
+Every MUST NOT and guarantee tied to: quarantine/purge lifecycle beyond what §7.8's purge job already
+covers, accounts rework beyond the fingerprint check (§7.4), email (§7.10), alias restore freeze (§7.11),
+account deletion and export (§7.14), abuse controls (§7.15) including CAPTCHA, the allocator sink as a
+real S3-compatible bucket (§6.4), chaos/failpoint test suites (§8.2, §8.3), NetArchTest architecture
+rules, Stryker mutation testing, and `tools/traceability-check` itself. None of these have rows here
+because fabricating "covered" rows for unbuilt work is explicitly against this document's purpose.

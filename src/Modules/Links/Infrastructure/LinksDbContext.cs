@@ -34,6 +34,8 @@ public sealed class LinksDbContext(DbContextOptions<LinksDbContext> options) : D
             e.Property(x => x.OgImageUrl).HasMaxLength(2048);
             e.Property(x => x.DisabledKind).HasMaxLength(20);
             e.Property(x => x.DisabledReason).HasMaxLength(500);
+            e.ToTable(t => t.HasCheckConstraint("ck_links_owner_xor_guest",
+                "(owner_id IS NULL) <> (guest_creator_key IS NULL)"));
             e.HasIndex(x => x.SlugKey).IsUnique();
             e.HasIndex(x => new { x.OwnerId, x.CreatedAt });
             e.HasIndex(x => x.FolderId);

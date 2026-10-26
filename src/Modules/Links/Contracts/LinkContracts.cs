@@ -72,7 +72,8 @@ public sealed record LinkDto(
     PolicyDto Policy,
     IReadOnlyList<RuleDto> Rules,
     DateTime CreatedAt,
-    DateTime UpdatedAt);
+    DateTime UpdatedAt,
+    bool IsGuest = false);
 
 public sealed record PagedResult<T>(IReadOnlyList<T> Items, int Total, int Page, int PageSize);
 
@@ -128,7 +129,7 @@ public static class LinkStateCalculator
 /// <summary>Everything the redirect path needs about a link; cached as one unit.</summary>
 public sealed record LinkSnapshot(
     Guid Id,
-    Guid OwnerId,
+    Guid? OwnerId,
     string Slug,
     string DestinationUrl,
     bool IsActive,
@@ -162,6 +163,10 @@ public interface ILinkResolver
 
     /// <summary>Atomically consumes one click of a click-limited link. False when the limit is already reached.</summary>
     Task<bool> TryConsumeClickAsync(Guid linkId, CancellationToken cancellationToken);
+
+    /// <summary>Spec §7.12: guest links get no statistics and no raw click_events, only this aggregate
+    /// counter (visible to admins, used for abuse detection, e.g. Abuse:GuestClickAlertThreshold).</summary>
+    Task IncrementGuestClickCountAsync(Guid linkId, CancellationToken cancellationToken);
 }
 
 public sealed record OwnedLink(Guid Id, string Slug);

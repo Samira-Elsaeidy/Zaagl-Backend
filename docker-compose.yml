@@ -96,6 +96,7 @@ services:
       ConnectionStrings__Valkey: "valkey:6379,abortConnect=false"
       Jwt__Key: "dev-only-signing-key-change-me-0123456789abcdef"
       ShortLinks__ScrambleKey: "dev-only-scramble-key-change-me-0123456789abcdef"
+      GUEST_KEY: "dev-only-guest-key-change-me-0123456789abcdef"
       Coordinator__BaseUrl: "http://coordinator:8080"
       Coordinator__Token: "dev-coordinator-token"
       ASPNETCORE_ENVIRONMENT: "Development"

@@ -41,6 +41,7 @@ public sealed class LinkService(
     ILinkCacheInvalidator invalidator,
     IValidator<LinkInput> validator,
     IOptions<LinkOptions> options,
+    IOptions<GuestOptions> guestOptions,
     TimeProvider time)
 {
     private const int MaxSlugAttempts = 5;
@@ -211,6 +212,168 @@ public sealed class LinkService(
             await invalidator.NotifyChangedAsync([link.SlugKey], ct);
 
             // ---- Phase D: response ---------------------------------------------
+            return Result<LinkDto>.Ok(ToDto(link));
+        }
+
+        return Error.Conflict("Could not allocate a unique slug. Please try again.");
+    }
+
+    /// <summary>Spec §7.12: a guest creation (no account). <paramref name="creatorKey"/> identifies the
+    /// caller (HMAC of its IP partition) and is also the idempotency scope; <paramref name="quotaChecks"/>
+    /// is every prefix-level quota that applies (creator key, and for IPv6 also /56 and /48), each checked
+    /// and incremented inside the same transaction as the insert, in key order, so two guest creations for
+    /// the same partition serialise instead of racing past the limit.</summary>
+    public async Task<Result<LinkDto>> CreateGuestAsync(
+        byte[] creatorKey, IReadOnlyList<GuestQuotaCheck> quotaChecks, LinkInput input, CancellationToken ct,
+        string? idempotencyKey = null)
+    {
+        var customSlugRaw = string.IsNullOrWhiteSpace(input.CustomSlug) ? null : input.CustomSlug.Trim();
+        byte[]? requestHash = idempotencyKey is null ? null : ComputeRequestHash(input, customSlugRaw);
+        var scope = $"g:{Convert.ToHexString(creatorKey)}";
+
+        if (idempotencyKey is not null)
+        {
+            var existing = await db.IdempotencyKeys.AsNoTracking()
+                .FirstOrDefaultAsync(k => k.Scope == scope && k.Key == idempotencyKey, ct);
+            if (existing is { Status: "done" })
+            {
+                return existing.RequestHash.AsSpan().SequenceEqual(requestHash)
+                    ? Result<LinkDto>.Ok(System.Text.Json.JsonSerializer.Deserialize<LinkDto>(existing.ResponseBody!)!)
+                    : Error.Validation("idempotency-mismatch: this key was already used with a different request.");
+            }
+        }
+
+        if (!creationGate.CanCreate)
+            return Error.ServiceUnavailable($"Link creation is temporarily unavailable ({creationGate.State}). Try again shortly.");
+
+        var limits = PlanLimits.Guest;
+        var prepared = await PrepareAsync(null, input, limits, isCreate: true, ct);
+        if (prepared.Error is not null) return prepared.Error;
+        var n = prepared.Value!;
+
+        var now = time.GetUtcNow().UtcDateTime;
+        var maxExpiresAt = now.AddDays(guestOptions.Value.ExpiryDays);
+        // Spec §7.12: default and maximum 7 days; a shorter requested expiry is allowed, a longer one is not.
+        DateTime expiresAt;
+        if (input.Policy?.ExpiresAt is { } requested)
+        {
+            var requestedUtc = requested.ToUniversalTime();
+            if (requestedUtc <= now) return Error.Validation("The expiry date must be in the future.");
+            if (requestedUtc > maxExpiresAt) return Error.Validation($"Guest links cannot expire more than {guestOptions.Value.ExpiryDays} days from now.");
+            expiresAt = requestedUtc;
+        }
+        else
+        {
+            expiresAt = maxExpiresAt;
+        }
+
+        var customSlug = customSlugRaw;
+
+        for (var attempt = 0; attempt < (customSlug is null ? MaxSlugAttempts : 1); attempt++)
+        {
+            string slug;
+            int? codeLength = null;
+            long? codeNumber = null;
+            if (customSlug is not null)
+            {
+                slug = customSlug;
+            }
+            else
+            {
+                var (length, number) = await leases.NextAsync(ct);
+                var generated = codes.Encode(length, number);
+                if (SlugRules.IsReserved(generated)) continue;
+                slug = generated;
+                codeLength = length;
+                codeNumber = number;
+            }
+
+            await using var tx = await db.Database.BeginTransactionAsync(ct);
+            await db.Database.ExecuteSqlRawAsync("SET LOCAL lock_timeout = '3s'", ct);
+
+            // Spec §7.12: hard, transactional, checked before the insert - a rollback (slug collision,
+            // idempotency replay) also rolls back any quota already claimed by this attempt.
+            if (await GuestQuotaStore.CheckAndIncrementAllAsync(db, quotaChecks, now, ct) is { } exceeded)
+            {
+                await tx.RollbackAsync(ct);
+                return Error.TooManyRequests($"quota: the guest link limit for this network ({exceeded}) has been reached.");
+            }
+
+            if (idempotencyKey is not null)
+            {
+                var claimed = await TryClaimIdempotencyKeyAsync(scope, idempotencyKey, requestHash!, ct);
+                if (claimed.AlreadyDone is { } stored)
+                {
+                    await tx.RollbackAsync(ct);
+                    return stored.Mismatch
+                        ? Error.Validation("idempotency-mismatch: this key was already used with a different request.")
+                        : Result<LinkDto>.Ok(stored.Dto!);
+                }
+            }
+
+            if (customSlug is not null)
+            {
+                await db.Database.ExecuteSqlInterpolatedAsync(
+                    $"SELECT pg_advisory_xact_lock(hashtextextended('zaagl.alias:' || {customSlug}, 0))", ct);
+
+                var key = SlugRules.Key(customSlug);
+                var existingRow = await db.Links.Include(l => l.Policy)
+                    .FirstOrDefaultAsync(l => l.SlugKey == key, ct);
+                if (existingRow is not null)
+                {
+                    var existingState = LinkStateCalculator.Compute(
+                        existingRow.PurgeAfter, existingRow.DeletedAt, existingRow.DisabledAt, existingRow.Policy?.ExpiresAt, now);
+                    if (existingState == LinkState.Purgeable)
+                    {
+                        db.Links.Remove(existingRow);
+                    }
+                    else
+                    {
+                        await tx.RollbackAsync(ct);
+                        return Error.Conflict("This slug is already taken.");
+                    }
+                }
+            }
+
+            var link = new Link
+            {
+                OwnerId = null,
+                GuestCreatorKey = creatorKey,
+                Slug = slug,
+                SlugKey = SlugRules.Key(slug),
+                IsCustom = customSlug is not null,
+                CodeLength = codeLength,
+                CodeNumber = codeNumber,
+                KeyVersion = customSlug is null ? CodeGenerator.KeyVersion : null,
+            };
+            ApplyInput(link, input, n);
+            // Guests get a fixed expiry and no quarantine: purge_after = expires_at exactly (spec §7.12,
+            // §1.1 "Quarantine after expiry: none"), overriding whatever ApplyInput set from input.Policy.
+            var policy = link.Policy ??= new AccessPolicy { LinkId = link.Id };
+            policy.ExpiresAt = expiresAt;
+            link.PurgeAfter = expiresAt;
+            db.Links.Add(link);
+
+            try
+            {
+                await db.SaveChangesAsync(ct);
+            }
+            catch (DbUpdateException ex) when (ex.InnerException is PostgresException { SqlState: PostgresErrorCodes.UniqueViolation })
+            {
+                await tx.RollbackAsync(ct);
+                db.ChangeTracker.Clear();
+                if (customSlug is not null) return Error.Conflict("This slug is already taken.");
+                continue;
+            }
+
+            if (idempotencyKey is not null)
+                await CompleteIdempotencyKeyAsync(scope, idempotencyKey, ToDto(link), ct);
+
+            await tx.CommitAsync(ct);
+
+            await cache.RemoveAsync(LinkCache.Key(link.SlugKey), ct);
+            await invalidator.NotifyChangedAsync([link.SlugKey], ct);
+
             return Result<LinkDto>.Ok(ToDto(link));
         }
 
@@ -467,7 +630,7 @@ public sealed class LinkService(
     // ---- Internals --------------------------------------------------------
 
     private async Task<Result<Normalized>> PrepareAsync(
-        Guid userId, LinkInput input, PlanLimits limits, bool isCreate, CancellationToken ct)
+        Guid? userId, LinkInput input, PlanLimits limits, bool isCreate, CancellationToken ct)
     {
         var validation = await validator.ValidateAsync(input, ct);
         if (!validation.IsValid)
@@ -479,9 +642,13 @@ public sealed class LinkService(
         if (normalized.Error is not null) return normalized.Error;
         var n = normalized.Value!;
 
-        if (input.FolderId is { } folderId
-            && !await db.Folders.AnyAsync(f => f.Id == folderId && f.OwnerId == userId, ct))
-            return Error.Validation("Folder not found.");
+        if (input.FolderId is { } folderId)
+        {
+            // Spec §7.12: guest links have no owner, so they can never reference a folder.
+            if (userId is not { } uid) return Error.Validation("Guests cannot use folders.");
+            if (!await db.Folders.AnyAsync(f => f.Id == folderId && f.OwnerId == uid, ct))
+                return Error.Validation("Folder not found.");
+        }
 
         var urls = n.Rules.Select(r => r.Url).Append(n.Destination).Distinct();
         foreach (var url in urls)
@@ -627,7 +794,8 @@ public sealed class LinkService(
         l.Rules.OrderBy(r => r.Priority).ThenBy(r => r.Id)
             .Select(r => new RuleDto(r.Kind, r.Match, r.Url, r.Weight, r.Priority)).ToList(),
         l.CreatedAt,
-        l.UpdatedAt);
+        l.UpdatedAt,
+        l.OwnerId is null);
 
     private static string? Clean(string? value) => string.IsNullOrWhiteSpace(value) ? null : value.Trim();
 

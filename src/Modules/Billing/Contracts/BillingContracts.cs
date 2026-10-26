@@ -27,6 +27,10 @@ public sealed record PlanLimits(
         PlanTier.Starter => new(PlanTier.Starter, null, true, 365, true, DefaultExpiryDays: 365, MaxExpiryDays: 1095),
         _ => new(PlanTier.Free, 50, false, 7, false, DefaultExpiryDays: 30, MaxExpiryDays: 90),
     };
+
+    /// <summary>Spec §7.12: guests get generated links and custom aliases, a fixed 7-day expiry, and no
+    /// premium gates (password, click limits, routing rules) - their own per-IP quota replaces MonthlyLinks.</summary>
+    public static PlanLimits Guest { get; } = new(PlanTier.Free, null, true, null, false, DefaultExpiryDays: 7, MaxExpiryDays: 7);
 }
 
 public interface IPlanProvider

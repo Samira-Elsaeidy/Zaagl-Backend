@@ -21,7 +21,18 @@ public static class DisabledKinds
 public sealed class Link
 {
     public Guid Id { get; set; } = Guid.CreateVersion7();
-    public Guid OwnerId { get; set; }
+
+    /// <summary>Null for a guest link (spec §7.12): guests are identified only by <see cref="GuestCreatorKey"/>,
+    /// never by an account, and a guest link cannot be managed by anyone (no renewal, edit, delete, stats).</summary>
+    public Guid? OwnerId { get; set; }
+
+    /// <summary>Guest links only: HMAC-SHA256(GUEST_KEY, ip-partition-tag) truncated to 16 bytes. Doubles as
+    /// the idempotency scope for guest creation.</summary>
+    public byte[]? GuestCreatorKey { get; set; }
+
+    /// <summary>Guest links only (spec §7.12): the only statistic a guest link ever gets, an aggregate
+    /// counter for abuse detection. Owned links get the full analytics pipeline instead (never this).</summary>
+    public long ClickCount { get; set; }
 
     /// <summary>Slug as the user sees it (case preserved).</summary>
     public string Slug { get; set; } = "";

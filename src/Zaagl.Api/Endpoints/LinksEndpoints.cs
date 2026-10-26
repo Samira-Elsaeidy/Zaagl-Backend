@@ -1,9 +1,11 @@
 using System.Security.Claims;
+using Microsoft.Extensions.Options;
 using Zaagl.Api.Infrastructure;
 using Zaagl.Modules.Analytics.Contracts;
 using Zaagl.Modules.Links.Application;
 using Zaagl.Modules.Links.Contracts;
 using Zaagl.SharedKernel;
+using Zaagl.SharedKernel.Net;
 
 namespace Zaagl.Api.Endpoints;
 
@@ -30,14 +32,44 @@ public static class LinksEndpoints
             return Results.Ok(new PagedResult<LinkListItem>(items, page.Total, page.Page, page.PageSize));
         });
 
-        links.MapPost("", async (LinkInput input, ClaimsPrincipal user, LinkService service, HttpContext http, CancellationToken ct) =>
+        links.MapPost("", async (
+                LinkInput input, ClaimsPrincipal user, LinkService service, HttpContext http,
+                GuestKeyProvider guestKey, GuestRateLimiter guestLimiter, IOptions<GuestOptions> guestOptions,
+                CancellationToken ct) =>
             {
                 // Spec §7.2: an Idempotency-Key (1-128 printable ASCII) makes a retried create safe to resend.
                 var idempotencyKey = http.Request.Headers["Idempotency-Key"].ToString();
                 if (string.IsNullOrEmpty(idempotencyKey)) idempotencyKey = null;
-                return ApiResults.From(await service.CreateAsync(user.GetUserId(), input, ct, idempotencyKey),
+
+                if (user.Identity?.IsAuthenticated == true)
+                {
+                    return ApiResults.From(await service.CreateAsync(user.GetUserId(), input, ct, idempotencyKey),
+                        dto => Results.Created($"/api/links/{dto.Id}", dto));
+                }
+
+                // Spec §7.12: no credentials -> a guest link, identified only by its IP partition.
+                var opts = guestOptions.Value;
+                if (!opts.Enabled)
+                    return ApiResults.Problem(Error.ServiceUnavailable("Guest link creation is currently disabled."));
+
+                var address = http.Connection.RemoteIpAddress;
+                var partition = IpPartition.Key(address);
+                if (!guestLimiter.TryGlobalCeiling(partition, opts.GlobalPerHour))
+                    return ApiResults.Problem(new Error("guest_creation_paused", "Guest link creation is temporarily paused for this network. Try again shortly."));
+                if (!guestLimiter.TryPerMinute(partition, opts.PerMinute))
+                    return ApiResults.Problem(Error.TooManyRequests("Too many requests. Try again in a minute."));
+
+                var creatorKey = GuestIdentity.DeriveKey(guestKey.Key, partition);
+                var checks = new List<GuestQuotaCheck> { new("creator-key", creatorKey, opts.LinksPerDay) };
+                if (IpPartition.WidePrefixKey(address, 56) is { } prefix56)
+                    checks.Add(new("/56", GuestIdentity.DeriveKey(guestKey.Key, prefix56), opts.LinksPerDayPer56));
+                if (IpPartition.WidePrefixKey(address, 48) is { } prefix48)
+                    checks.Add(new("/48", GuestIdentity.DeriveKey(guestKey.Key, prefix48), opts.LinksPerDayPer48));
+
+                return ApiResults.From(await service.CreateGuestAsync(creatorKey, checks, input, ct, idempotencyKey),
                     dto => Results.Created($"/api/links/{dto.Id}", dto));
             })
+            .AllowAnonymous()
             .RequireRateLimiting("link-write");
 
         links.MapPost("/{id:guid}/renew", async (Guid id, RenewRequest request, ClaimsPrincipal user, LinkService service, CancellationToken ct) =>
