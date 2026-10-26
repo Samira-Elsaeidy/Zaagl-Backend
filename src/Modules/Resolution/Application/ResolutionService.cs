@@ -56,7 +56,7 @@ public sealed partial class ResolutionService(
         var outcome = gate.Evaluate(link, now);
 
         // Link-preview crawlers get the custom Open Graph tags instead of a redirect.
-        if (client.IsPreviewCrawler && link.HasOpenGraph && outcome != AccessOutcome.Expired)
+        if (client.IsPreviewCrawler && link.HasOpenGraph && outcome is not (AccessOutcome.Expired or AccessOutcome.Purgeable))
         {
             Record(link, client, request, now);
             return new(ResolveKind.Preview, Preview: new(link.Slug, link.OgTitle, link.OgDescription, link.OgImageUrl, link.DestinationUrl));
@@ -64,6 +64,8 @@ public sealed partial class ResolutionService(
 
         switch (outcome)
         {
+            case AccessOutcome.Purgeable:
+                return new(ResolveKind.NotFound);
             case AccessOutcome.Expired:
                 return new(ResolveKind.Expired, link.FallbackUrl);
             case AccessOutcome.Locked:
@@ -80,7 +82,8 @@ public sealed partial class ResolutionService(
         if (link is null) return Error.NotFound("Link not found.");
 
         var now = time.GetUtcNow();
-        if (gate.Evaluate(link, now) == AccessOutcome.Expired) return new Error("expired", "This link has expired.");
+        if (gate.Evaluate(link, now) is AccessOutcome.Expired or AccessOutcome.Purgeable)
+            return new Error("expired", "This link has expired.");
 
         if (link.HasPassword && !gate.VerifyPassword(link, password))
             return Error.Unauthorized("Incorrect password.");

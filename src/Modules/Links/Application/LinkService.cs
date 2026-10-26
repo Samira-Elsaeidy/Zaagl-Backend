@@ -8,6 +8,7 @@ using Zaagl.Modules.Links.Contracts;
 using Zaagl.Modules.Links.Domain;
 using Zaagl.Modules.Links.Infrastructure;
 using Zaagl.SharedKernel;
+using Zaagl.SharedKernel.Coordination;
 using Zaagl.SharedKernel.ShortCodes;
 
 namespace Zaagl.Modules.Links.Application;
@@ -18,6 +19,10 @@ public sealed class LinkOptions
 
     /// <summary>Public origin of short links; its host is blocked as a destination to prevent redirect loops.</summary>
     public string BaseUrl { get; set; } = "https://zaa.gl";
+
+    /// <summary>Spec §1.1: how long an owned link answers 410 (quarantined, renewable) after it expires,
+    /// before it becomes purgeable. Spec default 90, minimum 30. Guest links get none (handled separately).</summary>
+    public int QuarantineDays { get; set; } = 90;
 }
 
 public static class LinkCache
@@ -30,10 +35,13 @@ public sealed class LinkService(
     IPlanProvider plans,
     CoordinatorLeaseClient leases,
     CodeGenerator codes,
+    CreationGate creationGate,
     IUrlReputationChecker reputation,
     HybridCache cache,
+    ILinkCacheInvalidator invalidator,
     IValidator<LinkInput> validator,
-    IOptions<LinkOptions> options)
+    IOptions<LinkOptions> options,
+    TimeProvider time)
 {
     private const int MaxSlugAttempts = 5;
 
@@ -46,16 +54,43 @@ public sealed class LinkService(
         List<RuleInput> Rules,
         string[] Tags);
 
-    // ---- Create -----------------------------------------------------------
+    // ---- Create -------------------------------------------------------------
+    // Spec §7.2's four phases, same names used below: A (identify/parse, no rules), B (stateless
+    // validation), C (one transaction, no external calls inside it), D (response).
 
-    public async Task<Result<LinkDto>> CreateAsync(Guid userId, LinkInput input, CancellationToken ct)
+    public async Task<Result<LinkDto>> CreateAsync(Guid userId, LinkInput input, CancellationToken ct, string? idempotencyKey = null)
     {
+        // ---- Phase A: identify the request ------------------------------------
+        var customSlugRaw = string.IsNullOrWhiteSpace(input.CustomSlug) ? null : input.CustomSlug.Trim();
+        byte[]? requestHash = idempotencyKey is null ? null : ComputeRequestHash(input, customSlugRaw);
+        var scope = $"u:{userId}";
+
+        // Idempotency fast path (spec §7.2 step 4): a stored "done" response replays exactly as stored,
+        // whatever the current plan/quota/clock/availability now says. Checked before any business rule.
+        if (idempotencyKey is not null)
+        {
+            var existing = await db.IdempotencyKeys.AsNoTracking()
+                .FirstOrDefaultAsync(k => k.Scope == scope && k.Key == idempotencyKey, ct);
+            if (existing is { Status: "done" })
+            {
+                return existing.RequestHash.AsSpan().SequenceEqual(requestHash)
+                    ? Result<LinkDto>.Ok(System.Text.Json.JsonSerializer.Deserialize<LinkDto>(existing.ResponseBody!)!)
+                    : Error.Validation("idempotency-mismatch: this key was already used with a different request.");
+            }
+        }
+
+        // ---- Phase B: stateless validation and preparation --------------------
+        // Spec §5.4: both generated AND alias creation are gated on a successful key-fingerprint match
+        // with the coordinator. Everything else (redirects, reads, renewals, deletes) is unaffected.
+        if (!creationGate.CanCreate)
+            return Error.ServiceUnavailable($"Link creation is temporarily unavailable ({creationGate.State}). Try again shortly.");
+
         var limits = await plans.GetLimitsAsync(userId, ct);
 
         if (limits.MonthlyLinks is { } cap)
         {
-            var now = DateTime.UtcNow;
-            var monthStart = new DateTime(now.Year, now.Month, 1, 0, 0, 0, DateTimeKind.Utc);
+            var now0 = DateTime.UtcNow;
+            var monthStart = new DateTime(now0.Year, now0.Month, 1, 0, 0, 0, DateTimeKind.Utc);
             var used = await db.Links.CountAsync(l => l.OwnerId == userId && l.CreatedAt >= monthStart, ct);
             if (used >= cap)
                 return Error.PlanRequired($"The Free plan allows {cap} links per month. Upgrade to Starter for unlimited links.");
@@ -68,46 +103,167 @@ public sealed class LinkService(
         if (input.Policy?.ExpiresAt is { } expires && expires <= DateTime.UtcNow)
             return Error.Validation("The expiry date must be in the future.");
 
-        var customSlug = string.IsNullOrWhiteSpace(input.CustomSlug) ? null : input.CustomSlug.Trim();
+        var customSlug = customSlugRaw;
 
         for (var attempt = 0; attempt < (customSlug is null ? MaxSlugAttempts : 1); attempt++)
         {
-            var slug = customSlug ?? await NextGeneratedSlugAsync(ct);
-            if (slug is null) continue;
+            string slug;
+            int? codeLength = null;
+            long? codeNumber = null;
+            if (customSlug is not null)
+            {
+                slug = customSlug;
+            }
+            else
+            {
+                var (length, number) = await leases.NextAsync(ct);
+                var generated = codes.Encode(length, number);
+                if (SlugRules.IsReserved(generated)) continue; // skipped per spec §7.2 step 6; the number is simply not reused for a slug
+                slug = generated;
+                codeLength = length;
+                codeNumber = number;
+            }
+
+            // ---- Phase C: one transaction, no external calls inside it --------
+            await using var tx = await db.Database.BeginTransactionAsync(ct);
+            await db.Database.ExecuteSqlRawAsync("SET LOCAL lock_timeout = '3s'", ct);
+
+            if (idempotencyKey is not null)
+            {
+                var claimed = await TryClaimIdempotencyKeyAsync(scope, idempotencyKey, requestHash!, ct);
+                if (claimed.AlreadyDone is { } stored)
+                {
+                    await tx.RollbackAsync(ct);
+                    return stored.Mismatch
+                        ? Error.Validation("idempotency-mismatch: this key was already used with a different request.")
+                        : Result<LinkDto>.Ok(stored.Dto!);
+                }
+            }
+
+            if (customSlug is not null)
+            {
+                // Serialise concurrent creators of the same alias (spec §7.2 step 10.2): without this,
+                // two requests for the same brand-new alias could both pass the "does it exist" check.
+                await db.Database.ExecuteSqlInterpolatedAsync(
+                    $"SELECT pg_advisory_xact_lock(hashtextextended('zaagl.alias:' || {customSlug}, 0))", ct);
+
+                // Spec §7.2 step 10.4: inspect any existing row for this slug, under the lock.
+                var key = SlugRules.Key(customSlug);
+                var existingRow = await db.Links.Include(l => l.Policy)
+                    .FirstOrDefaultAsync(l => l.SlugKey == key, ct);
+                if (existingRow is not null)
+                {
+                    var existingState = LinkStateCalculator.Compute(
+                        existingRow.PurgeAfter, existingRow.DeletedAt, existingRow.DisabledAt, existingRow.Policy?.ExpiresAt, DateTime.UtcNow);
+                    if (existingState == LinkState.Purgeable)
+                    {
+                        db.Links.Remove(existingRow); // reclaim: the predecessor is purged inside this same transaction
+                    }
+                    else
+                    {
+                        await tx.RollbackAsync(ct);
+                        return existingRow.OwnerId == userId
+                            ? Error.Conflict("You already own this slug. Renew it instead of creating it again.")
+                            : Error.Conflict("This slug is already taken.");
+                    }
+                }
+            }
 
             var link = new Link
             {
                 OwnerId = userId,
                 Slug = slug,
                 SlugKey = SlugRules.Key(slug),
+                IsCustom = customSlug is not null,
+                CodeLength = codeLength,
+                CodeNumber = codeNumber,
+                KeyVersion = customSlug is null ? CodeGenerator.KeyVersion : null,
             };
             ApplyInput(link, input, n);
+            RecomputePurgeAfter(link);
             db.Links.Add(link);
 
             try
             {
                 await db.SaveChangesAsync(ct);
             }
-            catch (DbUpdateException ex) when (ex.InnerException is PostgresException { SqlState: PostgresErrorCodes.UniqueViolation })
+            catch (DbUpdateException ex) when (ex.InnerException is PostgresException { SqlState: PostgresErrorCodes.UniqueViolation } pg)
             {
+                await tx.RollbackAsync(ct);
                 db.ChangeTracker.Clear();
-                if (customSlug is not null) return Error.Conflict("This slug is already taken.");
-                continue; // generated slug collided case-insensitively; take the next number
+                if (customSlug is not null)
+                {
+                    // Classify per spec §7.2 step 11: an alias conflict against another alias is a normal
+                    // race (someone else just took it); against the generated-number index it would be an
+                    // allocator integrity failure, which cannot happen here since this branch never sets
+                    // CodeNumber - so any unique violation on this insert is the slug_key constraint.
+                    return Error.Conflict("This slug is already taken.");
+                }
+                continue; // generated slug collided case-insensitively (SlugKey); take the next leased number
             }
 
+            if (idempotencyKey is not null)
+                await CompleteIdempotencyKeyAsync(scope, idempotencyKey, ToDto(link), ct);
+
+            await tx.CommitAsync(ct);
+
             await cache.RemoveAsync(LinkCache.Key(link.SlugKey), ct);
+            await invalidator.NotifyChangedAsync([link.SlugKey], ct);
+
+            // ---- Phase D: response ---------------------------------------------
             return Result<LinkDto>.Ok(ToDto(link));
         }
 
         return Error.Conflict("Could not allocate a unique slug. Please try again.");
     }
 
+    private sealed record ClaimOutcome((LinkDto? Dto, bool Mismatch)? AlreadyDone);
+
+    private async Task<ClaimOutcome> TryClaimIdempotencyKeyAsync(string scope, string key, byte[] requestHash, CancellationToken ct)
+    {
+        // INSERT ... ON CONFLICT DO NOTHING: a row appearing means this request owns the key; no row means
+        // another transaction already claimed it (it may still be "pending" - PostgreSQL made our insert
+        // wait for that transaction's outcome, so by the time we reach here it is either "done" or gone).
+        var inserted = await db.Database.ExecuteSqlInterpolatedAsync(
+            $"INSERT INTO links.idempotency_keys (scope, key, request_hash, status, created_at) VALUES ({scope}, {key}, {requestHash}, 'pending', {DateTime.UtcNow}) ON CONFLICT DO NOTHING", ct);
+        if (inserted > 0) return new ClaimOutcome(null); // we own it, proceed
+
+        var row = await db.IdempotencyKeys.AsNoTracking().FirstOrDefaultAsync(k => k.Scope == scope && k.Key == key, ct);
+        if (row is null) return new ClaimOutcome(null); // raced and lost, then the other rolled back; proceed as owner
+        if (!row.RequestHash.AsSpan().SequenceEqual(requestHash)) return new ClaimOutcome((null, true));
+        if (row.Status == "done")
+            return new ClaimOutcome((System.Text.Json.JsonSerializer.Deserialize<LinkDto>(row.ResponseBody!), false));
+        return new ClaimOutcome(null); // still pending somehow; proceed as owner (best effort for this phase)
+    }
+
+    private async Task CompleteIdempotencyKeyAsync(string scope, string key, LinkDto dto, CancellationToken ct)
+    {
+        var json = System.Text.Json.JsonSerializer.Serialize(dto);
+        await db.Database.ExecuteSqlInterpolatedAsync(
+            $"UPDATE links.idempotency_keys SET status = 'done', status_code = 201, response_body = {json}::jsonb WHERE scope = {scope} AND key = {key}", ct);
+    }
+
+    private static byte[] ComputeRequestHash(LinkInput input, string? customSlug)
+    {
+        // Spec §7.2 step 3's exact shape, adapted to this app's field names.
+        var expiry = input.Policy?.ExpiresAt?.ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ss.fffZ", System.Globalization.CultureInfo.InvariantCulture) ?? "";
+        var material = $"{input.DestinationUrl}\n{customSlug ?? ""}\n{expiry}";
+        return System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(material));
+    }
+
+    /// <summary>purge_after = expires_at + QuarantineDays for an owned link with an expiry; null (never
+    /// purged by age) when there's no expiry at all, matching this app's existing "expiry is optional"
+    /// design rather than the spec's "every link expires" (guests, where purge_after = expires_at exactly,
+    /// are a future phase).</summary>
+    private void RecomputePurgeAfter(Link link) =>
+        link.PurgeAfter = link.Policy?.ExpiresAt is { } exp ? exp.AddDays(options.Value.QuarantineDays) : null;
+
     // ---- Update -----------------------------------------------------------
 
     public async Task<Result<LinkDto>> UpdateAsync(Guid userId, Guid id, LinkInput input, CancellationToken ct)
     {
         var link = await db.Links.Include(l => l.Policy).Include(l => l.Rules)
-            .FirstOrDefaultAsync(l => l.Id == id && l.OwnerId == userId, ct);
+            .FirstOrDefaultAsync(l => l.Id == id && l.OwnerId == userId && l.DeletedAt == null, ct);
         if (link is null) return Error.NotFound("Link not found.");
 
         var limits = await plans.GetLimitsAsync(userId, ct);
@@ -116,25 +272,89 @@ public sealed class LinkService(
 
         if (input.Rules is not null) db.Destinations.RemoveRange(link.Rules);
         ApplyInput(link, input, prepared.Value!);
-        link.UpdatedAt = DateTime.UtcNow;
+        RecomputePurgeAfter(link);
+        link.UpdatedAt = time.GetUtcNow().UtcDateTime;
         await db.SaveChangesAsync(ct);
 
         await cache.RemoveAsync(LinkCache.Key(link.SlugKey), ct);
+        await invalidator.NotifyChangedAsync([link.SlugKey], ct);
+        return Result<LinkDto>.Ok(ToDto(link));
+    }
+
+    /// <summary>Spec §7.4 renewal: forward-only, re-derives purge_after, never calls the coordinator,
+    /// works during an alias restore freeze (there is none yet in this build). Only an Active or
+    /// Quarantined link is renewable; see the spec §4.3 state table.</summary>
+    public async Task<Result<LinkDto>> RenewAsync(Guid userId, Guid id, DateTime? requestedExpiresAt, CancellationToken ct)
+    {
+        var link = await db.Links.Include(l => l.Policy).Include(l => l.Rules)
+            .FirstOrDefaultAsync(l => l.Id == id && l.OwnerId == userId, ct);
+        if (link is null) return Error.NotFound("Link not found.");
+
+        var now = time.GetUtcNow().UtcDateTime;
+        var state = LinkStateCalculator.Compute(link.PurgeAfter, link.DeletedAt, link.DisabledAt, link.Policy?.ExpiresAt, now);
+        switch (state)
+        {
+            case LinkState.Purgeable: return Error.NotFound("Link not found.");
+            case LinkState.Deleted or LinkState.Disabled: return Error.Conflict("This link cannot be renewed.");
+        }
+
+        var currentExpiry = link.Policy?.ExpiresAt;
+        var limits = await plans.GetLimitsAsync(userId, ct);
+        var newExpiry = (requestedExpiresAt ?? now.AddDays(limits.DefaultExpiryDays)).ToUniversalTime();
+
+        if (currentExpiry is { } current && newExpiry <= current)
+            return Error.Validation("renewal-must-extend: the new expiry must be later than the current one.");
+        if (newExpiry <= now)
+            return Error.Validation("The new expiry must be in the future.");
+        if (limits.MaxExpiryDays is { } maxDays && newExpiry > now.AddDays(maxDays))
+            return Error.Validation($"The new expiry cannot be more than {maxDays} days from now.");
+
+        await using var tx = await db.Database.BeginTransactionAsync(ct);
+        await db.Database.ExecuteSqlRawAsync("SET LOCAL lock_timeout = '3s'", ct);
+
+        var policy = link.Policy ??= new AccessPolicy { LinkId = link.Id };
+        policy.ExpiresAt = newExpiry;
+        link.PurgeAfter = newExpiry.AddDays(options.Value.QuarantineDays);
+        link.UpdatedAt = now;
+        await db.SaveChangesAsync(ct);
+        await tx.CommitAsync(ct);
+
+        await cache.RemoveAsync(LinkCache.Key(link.SlugKey), ct);
+        await invalidator.NotifyChangedAsync([link.SlugKey], ct);
         return Result<LinkDto>.Ok(ToDto(link));
     }
 
     public async Task<Result<LinkDto>> SetFlagsAsync(Guid userId, Guid id, LinkFlagsInput flags, CancellationToken ct)
     {
         var link = await db.Links.Include(l => l.Policy).Include(l => l.Rules)
-            .FirstOrDefaultAsync(l => l.Id == id && l.OwnerId == userId, ct);
+            .FirstOrDefaultAsync(l => l.Id == id && l.OwnerId == userId && l.DeletedAt == null, ct);
         if (link is null) return Error.NotFound("Link not found.");
 
-        if (flags.IsActive is { } active) link.IsActive = active;
+        // IsActive is this app's pre-existing on/off switch; it's kept as a plain synonym for the spec's
+        // "user-disabled" kind (§4.3) rather than a second, independent liveness signal - turning it off
+        // sets DisabledAt/DisabledKind, turning it on clears them, but only when the link was disabled by
+        // this same switch (an admin/abuse/safety disable, once those exist, must not be undone by it).
+        if (flags.IsActive is { } active)
+        {
+            link.IsActive = active;
+            if (!active)
+            {
+                link.DisabledAt = time.GetUtcNow().UtcDateTime;
+                link.DisabledKind = DisabledKinds.UserDisabled;
+            }
+            else if (link.DisabledKind == DisabledKinds.UserDisabled)
+            {
+                link.DisabledAt = null;
+                link.DisabledKind = null;
+                link.DisabledReason = null;
+            }
+        }
         if (flags.PublicStats is { } publicStats) link.PublicStats = publicStats;
-        link.UpdatedAt = DateTime.UtcNow;
+        link.UpdatedAt = time.GetUtcNow().UtcDateTime;
         await db.SaveChangesAsync(ct);
 
-        await cache.RemoveAsync(LinkCache.Key(link.SlugKey), ct); // the redirect path caches IsActive
+        await cache.RemoveAsync(LinkCache.Key(link.SlugKey), ct);
+        await invalidator.NotifyChangedAsync([link.SlugKey], ct);
         return Result<LinkDto>.Ok(ToDto(link));
     }
 
@@ -143,7 +363,7 @@ public sealed class LinkService(
     public async Task<LinkDto?> GetAsync(Guid userId, Guid id, CancellationToken ct)
     {
         var link = await db.Links.AsNoTracking().Include(l => l.Policy).Include(l => l.Rules)
-            .FirstOrDefaultAsync(l => l.Id == id && l.OwnerId == userId, ct);
+            .FirstOrDefaultAsync(l => l.Id == id && l.OwnerId == userId && l.DeletedAt == null, ct);
         return link is null ? null : ToDto(link);
     }
 
@@ -152,7 +372,8 @@ public sealed class LinkService(
         var page = Math.Max(1, query.Page);
         var pageSize = Math.Clamp(query.PageSize, 1, 100);
 
-        var q = db.Links.AsNoTracking().Where(l => l.OwnerId == userId);
+        // Deleted links are owner-invisible per spec §4.3's state table ("Visible to owner: no").
+        var q = db.Links.AsNoTracking().Where(l => l.OwnerId == userId && l.DeletedAt == null);
         if (!string.IsNullOrWhiteSpace(query.Search))
         {
             var pattern = $"%{EscapeLike(query.Search.Trim())}%";
@@ -195,14 +416,24 @@ public sealed class LinkService(
         return new(links.Select(ToDto).ToList(), total, page, pageSize);
     }
 
+    /// <summary>Spec §4.3: delete is soft. The row (and its alias/slug) stays reserved until purge_after,
+    /// so nobody can take over a just-deleted alias immediately; an admin can still see deleted links
+    /// (not built in this phase). purge_after only ever moves earlier here, never later.</summary>
     public async Task<bool> DeleteAsync(Guid userId, Guid id, CancellationToken ct)
     {
-        var link = await db.Links.FirstOrDefaultAsync(l => l.Id == id && l.OwnerId == userId, ct);
+        var link = await db.Links.Include(l => l.Policy)
+            .FirstOrDefaultAsync(l => l.Id == id && l.OwnerId == userId && l.DeletedAt == null, ct);
         if (link is null) return false;
 
-        db.Links.Remove(link); // policy and rules cascade
+        var now = time.GetUtcNow().UtcDateTime;
+        link.DeletedAt = now;
+        var shortenedPurge = now.AddDays(options.Value.QuarantineDays);
+        link.PurgeAfter = link.PurgeAfter is { } existing && existing < shortenedPurge ? existing : shortenedPurge;
+        link.UpdatedAt = now;
         await db.SaveChangesAsync(ct);
+
         await cache.RemoveAsync(LinkCache.Key(link.SlugKey), ct);
+        await invalidator.NotifyChangedAsync([link.SlugKey], ct);
         return true;
     }
 
@@ -218,8 +449,19 @@ public sealed class LinkService(
         if (!SlugRules.IsValidFormat(slug))
             return new(false, $"Slug must be {SlugRules.MinCustomLength}-{SlugRules.MaxLength} characters: letters, digits, '-' or '_'.");
         if (SlugRules.IsReserved(slug!) || codes.IsGeneratorReachable(slug!)) return new(false, "This slug is reserved.");
-        var taken = await db.Links.AnyAsync(l => l.SlugKey == SlugRules.Key(slug!), ct);
-        return taken ? new(false, "This slug is already taken.") : new(true, null);
+
+        // Spec §4.3: "an alias is free when no row has that code, OR the row is purgeable" - a deleted
+        // link whose quarantine hasn't ended yet still holds its slug.
+        var now = time.GetUtcNow().UtcDateTime;
+        var key = SlugRules.Key(slug!);
+        var row = await db.Links.AsNoTracking()
+            .Where(l => l.SlugKey == key)
+            .Select(l => new { l.PurgeAfter, l.DeletedAt, l.DisabledAt, Expires = l.Policy != null ? l.Policy.ExpiresAt : null })
+            .FirstOrDefaultAsync(ct);
+        if (row is null) return new(true, null);
+
+        var state = LinkStateCalculator.Compute(row.PurgeAfter, row.DeletedAt, row.DisabledAt, row.Expires, now);
+        return state == LinkState.Purgeable ? new(true, null) : new(false, "This slug is already taken.");
     }
 
     // ---- Internals --------------------------------------------------------

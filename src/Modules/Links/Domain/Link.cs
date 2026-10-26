@@ -10,6 +10,14 @@ public static class RuleKinds
     public static readonly string[] Devices = ["ios", "android", "desktop"];
 }
 
+public static class DisabledKinds
+{
+    public const string Admin = "admin";
+    public const string UserDisabled = "user-disabled";
+    public const string Abuse = "abuse";
+    public const string Safety = "safety";
+}
+
 public sealed class Link
 {
     public Guid Id { get; set; } = Guid.CreateVersion7();
@@ -35,6 +43,30 @@ public sealed class Link
 
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
+
+    // ---- Spec §4.3: generated-vs-custom, state and lifecycle -----------------
+
+    /// <summary>False for a user-chosen alias, true for a generator-produced slug.</summary>
+    public bool IsCustom { get; set; }
+
+    /// <summary>Generated links only: the leased number's base-62 length (5-10).</summary>
+    public int? CodeLength { get; set; }
+
+    /// <summary>Generated links only: the leased number before Feistel scrambling.</summary>
+    public long? CodeNumber { get; set; }
+
+    /// <summary>Generated links only: which scramble key version produced this code. Always 1 in this build.</summary>
+    public short? KeyVersion { get; set; }
+
+    /// <summary>expires_at + Links:QuarantineDays for owned links; recomputed on every renewal. Null = never expires.</summary>
+    public DateTime? PurgeAfter { get; set; }
+
+    public DateTime? DeletedAt { get; set; }
+
+    /// <summary>One of <see cref="DisabledKinds"/>, or null when not disabled.</summary>
+    public string? DisabledKind { get; set; }
+    public string? DisabledReason { get; set; }
+    public DateTime? DisabledAt { get; set; }
 
     public AccessPolicy? Policy { get; set; }
     public List<LinkDestination> Rules { get; set; } = [];
@@ -70,5 +102,21 @@ public sealed class Folder
     public Guid Id { get; set; } = Guid.CreateVersion7();
     public Guid OwnerId { get; set; }
     public string Name { get; set; } = "";
+    public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
+}
+
+/// <summary>
+/// Spec §4.4/§7.2: one row per (scope, key). `scope` is "u:&lt;userId&gt;" for an account creator.
+/// Guard against two different request bodies reusing the same key (`RequestHash` mismatch -&gt; 422) and,
+/// once `Status` is "done", replay the exact stored response regardless of current plan/quota/clock.
+/// </summary>
+public sealed class IdempotencyKey
+{
+    public string Scope { get; set; } = "";
+    public string Key { get; set; } = "";
+    public byte[] RequestHash { get; set; } = [];
+    public string Status { get; set; } = "pending"; // "pending" | "done"
+    public int? StatusCode { get; set; }
+    public string? ResponseBody { get; set; } // jsonb
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
 }

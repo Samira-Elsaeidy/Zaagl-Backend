@@ -6,6 +6,7 @@ using Zaagl.Modules.Links.Application;
 using Zaagl.Modules.Links.Contracts;
 using Zaagl.Modules.Links.Infrastructure;
 using Zaagl.SharedKernel;
+using Zaagl.SharedKernel.Coordination;
 using Zaagl.SharedKernel.Persistence;
 using Zaagl.SharedKernel.ShortCodes;
 
@@ -29,6 +30,17 @@ public static class LinksModule
         services.AddDbContext<LinksDbContext>(o => Configure(o, connection));
         services.AddHttpClient<IUrlReputationChecker, WebRiskChecker>(c => c.Timeout = TimeSpan.FromSeconds(3));
 
+        // Spec §7.0: redirects get their own small, fast-timeout pool so a slow creation transaction can
+        // never starve (or be starved by) a redirect lookup.
+        services.AddSingleton(RedirectsDataSource.Create(connection));
+
+        // Spec §7.3: NOTIFY-based cache invalidation, real but secondary in this single-instance dev
+        // environment (see LinkCacheInvalidation.cs's doc comment) - the main "db" pool is reused for it,
+        // since it only sends short-lived SELECT pg_notify(...) calls, not the redirect hot path.
+        services.AddSingleton(Npgsql.NpgsqlDataSource.Create(connection));
+        services.AddSingleton<ILinkCacheInvalidator, PgNotifyLinkCacheInvalidator>();
+        services.AddHostedService<LinkCacheInvalidationListener>();
+
         // Coordinator leases blocks of numbers (which length grows over time, spec §4.2); CodeGenerator
         // (a 10-round keyed Feistel permutation, spec §5) hides their order and encodes them in base 62.
         // The scramble key must never change once codes have been issued for a length (spec §5.3).
@@ -46,12 +58,32 @@ public static class LinksModule
         services.AddSingleton<ICodePermutation>(new FeistelPermutation(scrambleKey));
         services.AddSingleton<CodeGenerator>();
 
+        // Spec §5.4: the coordinator never receives the scramble key, only this fingerprint. Recorded
+        // once at coordinator init and compared on every lease and by CreationGate's background poll.
+        var keyFingerprint = KeyFingerprint.Compute(scrambleKey);
+        var coordinatorToken = configuration["Coordinator:Token"] ?? "";
+
         // CoordinatorLeaseClient is a singleton (it holds the current leased block), but its HttpClient
         // still comes from IHttpClientFactory for pooled connections and DNS refresh.
         var coordinatorUrl = configuration["Coordinator:BaseUrl"] ?? "http://localhost:5085";
-        services.AddHttpClient(nameof(CoordinatorLeaseClient), c => c.BaseAddress = new Uri(coordinatorUrl));
-        services.AddSingleton(sp =>
-            new CoordinatorLeaseClient(sp.GetRequiredService<IHttpClientFactory>().CreateClient(nameof(CoordinatorLeaseClient))));
+        services.AddHttpClient(nameof(CoordinatorLeaseClient), c =>
+        {
+            c.BaseAddress = new Uri(coordinatorUrl);
+            if (!string.IsNullOrEmpty(coordinatorToken))
+                c.DefaultRequestHeaders.Authorization = new("Bearer", coordinatorToken);
+        });
+        services.AddSingleton(sp => new CoordinatorLeaseClient(
+            sp.GetRequiredService<IHttpClientFactory>().CreateClient(nameof(CoordinatorLeaseClient)), keyFingerprint));
+
+        services.AddHttpClient(nameof(CreationGate), c =>
+        {
+            c.BaseAddress = new Uri(coordinatorUrl);
+            if (!string.IsNullOrEmpty(coordinatorToken))
+                c.DefaultRequestHeaders.Authorization = new("Bearer", coordinatorToken);
+        });
+        services.AddSingleton(sp => new CreationGate(
+            sp.GetRequiredService<IHttpClientFactory>().CreateClient(nameof(CreationGate)), keyFingerprint));
+        services.AddHostedService<CreationGatePoller>();
         services.AddScoped<IValidator<LinkInput>, LinkInputValidator>();
         services.AddScoped<LinkService>();
         services.AddScoped<FolderService>();
@@ -59,6 +91,7 @@ public static class LinksModule
         services.AddScoped<LinkResolver>();
         services.AddScoped<ILinkResolver>(sp => sp.GetRequiredService<LinkResolver>());
         services.AddScoped<ILinkDirectory>(sp => sp.GetRequiredService<LinkResolver>());
+        services.AddHostedService<PurgeJob>();
 
         services.AddSingleton<IModuleMigrator>(sp =>
             new ModuleMigrator<LinksDbContext>("links", sp.GetRequiredService<IServiceScopeFactory>()));

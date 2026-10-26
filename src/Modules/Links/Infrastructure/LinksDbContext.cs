@@ -12,6 +12,7 @@ public sealed class LinksDbContext(DbContextOptions<LinksDbContext> options) : D
     public DbSet<AccessPolicy> AccessPolicies => Set<AccessPolicy>();
     public DbSet<LinkDestination> Destinations => Set<LinkDestination>();
     public DbSet<Folder> Folders => Set<Folder>();
+    public DbSet<IdempotencyKey> IdempotencyKeys => Set<IdempotencyKey>();
 
     protected override void OnModelCreating(ModelBuilder b)
     {
@@ -31,13 +32,33 @@ public sealed class LinksDbContext(DbContextOptions<LinksDbContext> options) : D
             e.Property(x => x.OgTitle).HasMaxLength(200);
             e.Property(x => x.OgDescription).HasMaxLength(500);
             e.Property(x => x.OgImageUrl).HasMaxLength(2048);
+            e.Property(x => x.DisabledKind).HasMaxLength(20);
+            e.Property(x => x.DisabledReason).HasMaxLength(500);
             e.HasIndex(x => x.SlugKey).IsUnique();
             e.HasIndex(x => new { x.OwnerId, x.CreatedAt });
             e.HasIndex(x => x.FolderId);
             e.HasIndex(x => x.Tags).HasMethod("gin");
+            e.HasIndex(x => x.PurgeAfter);
+            // Generated-link numbers are unique per length, mirroring spec §4.3's partial unique index.
+            e.HasIndex(x => new { x.CodeLength, x.CodeNumber }).IsUnique()
+                .HasFilter("\"code_number\" IS NOT NULL").HasDatabaseName("ix_links_code_number");
+            e.ToTable(t => t.HasCheckConstraint("ck_links_disabled_kind_requires_at", "(disabled_at IS NULL) = (disabled_kind IS NULL)"));
+            e.ToTable(t => t.HasCheckConstraint("ck_links_generated_columns",
+                "(is_custom AND code_length IS NULL AND code_number IS NULL AND key_version IS NULL) " +
+                "OR (NOT is_custom AND code_length IS NOT NULL AND code_number IS NOT NULL AND key_version IS NOT NULL)"));
 
             e.HasOne(x => x.Policy).WithOne().HasForeignKey<AccessPolicy>(p => p.LinkId).OnDelete(DeleteBehavior.Cascade);
             e.HasMany(x => x.Rules).WithOne().HasForeignKey(r => r.LinkId).OnDelete(DeleteBehavior.Cascade);
+        });
+
+        b.Entity<IdempotencyKey>(e =>
+        {
+            e.ToTable("idempotency_keys");
+            e.HasKey(x => new { x.Scope, x.Key });
+            e.Property(x => x.Scope).HasMaxLength(80);
+            e.Property(x => x.Key).HasMaxLength(128);
+            e.Property(x => x.Status).HasMaxLength(10);
+            e.Property(x => x.ResponseBody).HasColumnType("jsonb");
         });
 
         b.Entity<AccessPolicy>(e =>

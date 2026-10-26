@@ -90,15 +90,68 @@ namespace Zaagl.Modules.Links.Infrastructure.Migrations
                     b.ToTable("folders", "links");
                 });
 
+            modelBuilder.Entity("Zaagl.Modules.Links.Domain.IdempotencyKey", b =>
+                {
+                    b.Property<string>("Scope")
+                        .HasMaxLength(80)
+                        .HasColumnType("character varying(80)")
+                        .HasColumnName("scope");
+
+                    b.Property<string>("Key")
+                        .HasMaxLength(128)
+                        .HasColumnType("character varying(128)")
+                        .HasColumnName("key");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at");
+
+                    b.Property<byte[]>("RequestHash")
+                        .IsRequired()
+                        .HasColumnType("bytea")
+                        .HasColumnName("request_hash");
+
+                    b.Property<string>("ResponseBody")
+                        .HasColumnType("jsonb")
+                        .HasColumnName("response_body");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasMaxLength(10)
+                        .HasColumnType("character varying(10)")
+                        .HasColumnName("status");
+
+                    b.Property<int?>("StatusCode")
+                        .HasColumnType("integer")
+                        .HasColumnName("status_code");
+
+                    b.HasKey("Scope", "Key")
+                        .HasName("pk_idempotency_keys");
+
+                    b.ToTable("idempotency_keys", "links");
+                });
+
             modelBuilder.Entity("Zaagl.Modules.Links.Domain.Link", b =>
                 {
                     b.Property<Guid>("Id")
                         .HasColumnType("uuid")
                         .HasColumnName("id");
 
+                    b.Property<int?>("CodeLength")
+                        .HasColumnType("integer")
+                        .HasColumnName("code_length");
+
+                    b.Property<long?>("CodeNumber")
+                        .HasColumnType("bigint")
+                        .HasColumnName("code_number");
+
                     b.Property<DateTime>("CreatedAt")
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("created_at");
+
+                    b.Property<DateTime?>("DeletedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("deleted_at");
 
                     b.Property<string>("Description")
                         .HasMaxLength(1000)
@@ -111,6 +164,20 @@ namespace Zaagl.Modules.Links.Infrastructure.Migrations
                         .HasColumnType("character varying(2048)")
                         .HasColumnName("destination_url");
 
+                    b.Property<DateTime?>("DisabledAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("disabled_at");
+
+                    b.Property<string>("DisabledKind")
+                        .HasMaxLength(20)
+                        .HasColumnType("character varying(20)")
+                        .HasColumnName("disabled_kind");
+
+                    b.Property<string>("DisabledReason")
+                        .HasMaxLength(500)
+                        .HasColumnType("character varying(500)")
+                        .HasColumnName("disabled_reason");
+
                     b.Property<Guid?>("FolderId")
                         .HasColumnType("uuid")
                         .HasColumnName("folder_id");
@@ -118,6 +185,14 @@ namespace Zaagl.Modules.Links.Infrastructure.Migrations
                     b.Property<bool>("IsActive")
                         .HasColumnType("boolean")
                         .HasColumnName("is_active");
+
+                    b.Property<bool>("IsCustom")
+                        .HasColumnType("boolean")
+                        .HasColumnName("is_custom");
+
+                    b.Property<short?>("KeyVersion")
+                        .HasColumnType("smallint")
+                        .HasColumnName("key_version");
 
                     b.Property<string>("OgDescription")
                         .HasMaxLength(500)
@@ -141,6 +216,10 @@ namespace Zaagl.Modules.Links.Infrastructure.Migrations
                     b.Property<bool>("PublicStats")
                         .HasColumnType("boolean")
                         .HasColumnName("public_stats");
+
+                    b.Property<DateTime?>("PurgeAfter")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("purge_after");
 
                     b.Property<string>("Slug")
                         .IsRequired()
@@ -174,6 +253,9 @@ namespace Zaagl.Modules.Links.Infrastructure.Migrations
                     b.HasIndex("FolderId")
                         .HasDatabaseName("ix_links_folder_id");
 
+                    b.HasIndex("PurgeAfter")
+                        .HasDatabaseName("ix_links_purge_after");
+
                     b.HasIndex("SlugKey")
                         .IsUnique()
                         .HasDatabaseName("ix_links_slug_key");
@@ -183,10 +265,20 @@ namespace Zaagl.Modules.Links.Infrastructure.Migrations
 
                     NpgsqlIndexBuilderExtensions.HasMethod(b.HasIndex("Tags"), "gin");
 
+                    b.HasIndex("CodeLength", "CodeNumber")
+                        .IsUnique()
+                        .HasDatabaseName("ix_links_code_number")
+                        .HasFilter("\"code_number\" IS NOT NULL");
+
                     b.HasIndex("OwnerId", "CreatedAt")
                         .HasDatabaseName("ix_links_owner_id_created_at");
 
-                    b.ToTable("links", "links");
+                    b.ToTable("links", "links", t =>
+                        {
+                            t.HasCheckConstraint("ck_links_disabled_kind_requires_at", "(disabled_at IS NULL) = (disabled_kind IS NULL)");
+
+                            t.HasCheckConstraint("ck_links_generated_columns", "(is_custom AND code_length IS NULL AND code_number IS NULL AND key_version IS NULL) OR (NOT is_custom AND code_length IS NOT NULL AND code_number IS NOT NULL AND key_version IS NOT NULL)");
+                        });
                 });
 
             modelBuilder.Entity("Zaagl.Modules.Links.Domain.LinkDestination", b =>

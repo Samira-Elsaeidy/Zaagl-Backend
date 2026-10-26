@@ -86,6 +86,45 @@ public sealed record BulkResult(int Total, int Created, int Failed, IReadOnlyLis
 
 // ---- Cross-module contracts ----------------------------------------------
 
+/// <summary>
+/// Spec §4.3's five-state model, computed fresh every time - never stored, so it can never go stale.
+/// </summary>
+public enum LinkState
+{
+    /// <summary>now &gt;= PurgeAfter. The row may still physically exist (no purge job runs yet in this
+    /// build), but it is already gone as far as any caller is concerned: 404.</summary>
+    Purgeable,
+    /// <summary>DeletedAt is set. 410, visible to the owner only (admin view, in a later phase).</summary>
+    Deleted,
+    /// <summary>DisabledAt is set (user-disabled, admin, abuse, or safety). 410, visible to the owner.</summary>
+    Disabled,
+    /// <summary>now &gt;= ExpiresAt, nothing else set. 410, renewable.</summary>
+    Quarantined,
+    /// <summary>Otherwise: redirects normally (subject to the access-policy gates: password, click limit, routing).</summary>
+    Active,
+}
+
+public static class LinkStateCalculator
+{
+    /// <summary>
+    /// Total function, spec §4.3's table literally, evaluated top to bottom, first match wins:
+    /// purgeable, then deleted, then disabled, then quarantined, then active. Click limits are NOT part
+    /// of this function - like the spec, they're a separate access-policy gate layered on top of an
+    /// Active link (see AccessGate), not a stored state.
+    /// </summary>
+    public static LinkState Compute(DateTime? purgeAfter, DateTime? deletedAt, DateTime? disabledAt, DateTime? expiresAt, DateTime now)
+    {
+        if (purgeAfter is { } p && now >= p) return LinkState.Purgeable;
+        if (deletedAt is not null) return LinkState.Deleted;
+        if (disabledAt is not null) return LinkState.Disabled;
+        if (expiresAt is { } e && now >= e) return LinkState.Quarantined;
+        return LinkState.Active;
+    }
+
+    public static LinkState Compute(LinkSnapshot link, DateTime now) =>
+        Compute(link.PurgeAfter, link.DeletedAt, link.DisabledAt, link.ExpiresAt, now);
+}
+
 /// <summary>Everything the redirect path needs about a link; cached as one unit.</summary>
 public sealed record LinkSnapshot(
     Guid Id,
@@ -101,7 +140,11 @@ public sealed record LinkSnapshot(
     string? OgDescription,
     string? OgImageUrl,
     bool PublicStats,
-    IReadOnlyList<RuleDto> Rules)
+    IReadOnlyList<RuleDto> Rules,
+    DateTime? PurgeAfter = null,
+    DateTime? DeletedAt = null,
+    DateTime? DisabledAt = null,
+    string? DisabledKind = null)
 {
     [JsonIgnore] public bool HasPassword => !string.IsNullOrEmpty(PasswordHash);
 

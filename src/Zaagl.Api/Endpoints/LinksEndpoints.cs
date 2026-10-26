@@ -10,6 +10,8 @@ namespace Zaagl.Api.Endpoints;
 /// <summary>A link plus its all-time human click count, as shown in the link library.</summary>
 public sealed record LinkListItem(LinkDto Link, long Clicks);
 
+public sealed record RenewRequest(DateTime? ExpiresAt);
+
 public static class LinksEndpoints
 {
     private const long MaxCsvBytes = 1_048_576;
@@ -28,9 +30,18 @@ public static class LinksEndpoints
             return Results.Ok(new PagedResult<LinkListItem>(items, page.Total, page.Page, page.PageSize));
         });
 
-        links.MapPost("", async (LinkInput input, ClaimsPrincipal user, LinkService service, CancellationToken ct) =>
-                ApiResults.From(await service.CreateAsync(user.GetUserId(), input, ct),
-                    dto => Results.Created($"/api/links/{dto.Id}", dto)))
+        links.MapPost("", async (LinkInput input, ClaimsPrincipal user, LinkService service, HttpContext http, CancellationToken ct) =>
+            {
+                // Spec §7.2: an Idempotency-Key (1-128 printable ASCII) makes a retried create safe to resend.
+                var idempotencyKey = http.Request.Headers["Idempotency-Key"].ToString();
+                if (string.IsNullOrEmpty(idempotencyKey)) idempotencyKey = null;
+                return ApiResults.From(await service.CreateAsync(user.GetUserId(), input, ct, idempotencyKey),
+                    dto => Results.Created($"/api/links/{dto.Id}", dto));
+            })
+            .RequireRateLimiting("link-write");
+
+        links.MapPost("/{id:guid}/renew", async (Guid id, RenewRequest request, ClaimsPrincipal user, LinkService service, CancellationToken ct) =>
+                ApiResults.From(await service.RenewAsync(user.GetUserId(), id, request.ExpiresAt, ct)))
             .RequireRateLimiting("link-write");
 
         links.MapGet("/{id:guid}", async (Guid id, ClaimsPrincipal user, LinkService service, CancellationToken ct) =>
