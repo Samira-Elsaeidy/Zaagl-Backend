@@ -90,3 +90,41 @@ public interface IAnalyticsQueries
         IReadOnlyCollection<Guid> linkIds,
         CancellationToken cancellationToken);
 }
+
+/// <summary>A purged link kept for a premium owner's history (spec §4.4 <c>link_archive</c>, §7.9 archive endpoints).</summary>
+public sealed record ArchivedLink(
+    Guid LinkId,
+    string Code,
+    bool IsCustom,
+    string TargetUrl,
+    DateTime CreatedAt,
+    DateTime ExpiresAt,
+    DateTime PurgedAt);
+
+public sealed record PagedArchive(IReadOnlyList<ArchivedLink> Items, string? NextCursor);
+
+public sealed record ArchivedLinkStats(IReadOnlyList<SeriesPoint> Series);
+
+public interface IArchiveQueries
+{
+    Task<PagedArchive> ListAsync(Guid ownerId, int limit, string? cursor, CancellationToken cancellationToken);
+
+    Task<ArchivedLink?> FindAsync(Guid ownerId, Guid linkId, CancellationToken cancellationToken);
+
+    Task<ArchivedLinkStats> GetStatsAsync(Guid linkId, CancellationToken cancellationToken);
+}
+
+/// <summary>
+/// Spec §7.8 PurgeLink: a premium owner's purged link is archived here so its code/target/dates and daily
+/// stats stay queryable until the owner deletes the account. Called by the Links module's purge job (cross-
+/// module through Contracts only, per this solution's module-boundary rule) - never by anything else.
+/// </summary>
+public interface IArchiveWriter
+{
+    Task ArchiveAsync(
+        Guid linkId, Guid ownerId, string code, bool isCustom, string targetUrl,
+        DateTime createdAt, DateTime expiresAt, DateTime purgedAt, CancellationToken cancellationToken);
+
+    /// <summary>Free-plan (or deleted-account) purge: the link's daily stats are deleted, never archived.</summary>
+    Task DeleteDailyStatsAsync(Guid linkId, CancellationToken cancellationToken);
+}

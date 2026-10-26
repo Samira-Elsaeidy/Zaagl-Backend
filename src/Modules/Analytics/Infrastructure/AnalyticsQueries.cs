@@ -1,5 +1,6 @@
 using Microsoft.EntityFrameworkCore;
 using Zaagl.Modules.Analytics.Contracts;
+using Zaagl.Modules.Analytics.Domain;
 
 // EF1002: the only values interpolated into SQL text are column names and the date_trunc unit, which are string
 // literals or come from GranularityFor's fixed whitelist. All user-influenced values (ids, dates) are bound parameters.
@@ -160,4 +161,79 @@ public sealed class AnalyticsQueries(AnalyticsDbContext db) : IAnalyticsQueries
 
     private static DateTime Utc(DateTime value) =>
         value.Kind == DateTimeKind.Utc ? value : value.ToUniversalTime();
+}
+
+/// <summary>Spec §7.8 PurgeLink's archive step, called from the Links module's purge job inside its own
+/// transaction (this writes through the same DbContext instance passed to it so both land in one commit -
+/// see PurgeService for why that matters).</summary>
+public sealed class ArchiveWriter(AnalyticsDbContext db) : IArchiveWriter
+{
+    public async Task ArchiveAsync(
+        Guid linkId, Guid ownerId, string code, bool isCustom, string targetUrl,
+        DateTime createdAt, DateTime expiresAt, DateTime purgedAt, CancellationToken ct)
+    {
+        if (await db.LinkArchive.AnyAsync(a => a.LinkId == linkId, ct)) return; // already archived (idempotent)
+        db.LinkArchive.Add(new LinkArchiveRow
+        {
+            LinkId = linkId,
+            OwnerId = ownerId,
+            Code = code,
+            IsCustom = isCustom,
+            TargetUrl = targetUrl,
+            CreatedAt = createdAt,
+            ExpiresAt = expiresAt,
+            PurgedAt = purgedAt,
+        });
+        await db.SaveChangesAsync(ct);
+    }
+
+    public async Task DeleteDailyStatsAsync(Guid linkId, CancellationToken ct) =>
+        await db.LinkDailyStats.Where(d => d.LinkId == linkId).ExecuteDeleteAsync(ct);
+}
+
+/// <summary>Spec §7.9 archive endpoints, backed by <c>analytics.link_archive</c> (populated by the purge
+/// job - empty until a link is actually purged, but the read path is correct now).</summary>
+public sealed class ArchiveQueries(AnalyticsDbContext db) : IArchiveQueries
+{
+    public async Task<PagedArchive> ListAsync(Guid ownerId, int limit, string? cursor, CancellationToken ct)
+    {
+        limit = Math.Clamp(limit, 1, 100);
+        DateTime? before = null;
+        if (!string.IsNullOrEmpty(cursor) && DateTime.TryParse(cursor, null,
+                System.Globalization.DateTimeStyles.RoundtripKind, out var parsed))
+            before = parsed;
+
+        var query = db.LinkArchive.AsNoTracking().Where(a => a.OwnerId == ownerId);
+        if (before is { } b) query = query.Where(a => a.PurgedAt < b);
+
+        var rows = await query.OrderByDescending(a => a.PurgedAt).Take(limit + 1).ToListAsync(ct);
+        var hasMore = rows.Count > limit;
+        if (hasMore) rows.RemoveAt(rows.Count - 1);
+
+        var items = rows.Select(ToDto).ToList();
+        var next = hasMore ? rows[^1].PurgedAt.ToString("O") : null;
+        return new PagedArchive(items, next);
+    }
+
+    public async Task<ArchivedLink?> FindAsync(Guid ownerId, Guid linkId, CancellationToken ct)
+    {
+        var row = await db.LinkArchive.AsNoTracking()
+            .FirstOrDefaultAsync(a => a.OwnerId == ownerId && a.LinkId == linkId, ct);
+        return row is null ? null : ToDto(row);
+    }
+
+    public async Task<ArchivedLinkStats> GetStatsAsync(Guid linkId, CancellationToken ct)
+    {
+        // Raw click_events age out with retention (spec §4.4); daily stats are kept for premium owners
+        // until account deletion, so they outlive the raw events and are the source here.
+        var rows = await db.LinkDailyStats.AsNoTracking()
+            .Where(s => s.LinkId == linkId)
+            .OrderBy(s => s.Day)
+            .ToListAsync(ct);
+        var series = rows.Select(s => new SeriesPoint(s.Day.ToDateTime(TimeOnly.MinValue, DateTimeKind.Utc), s.Clicks, 0)).ToList();
+        return new ArchivedLinkStats(series);
+    }
+
+    private static ArchivedLink ToDto(Domain.LinkArchiveRow a) =>
+        new(a.LinkId, a.Code, a.IsCustom, a.TargetUrl, a.CreatedAt, a.ExpiresAt, a.PurgedAt);
 }

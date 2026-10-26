@@ -22,8 +22,11 @@ public static class AnalyticsModule
 
         services.AddDbContext<AnalyticsDbContext>(o => Configure(o, connection));
         services.AddSingleton<ClickChannel>();
+        services.AddSingleton<RawEventBudget>();
         services.AddSingleton<IClickRecorder, ClickRecorder>();
         services.AddScoped<IAnalyticsQueries, AnalyticsQueries>();
+        services.AddScoped<IArchiveQueries, ArchiveQueries>();
+        services.AddScoped<IArchiveWriter, ArchiveWriter>();
         services.AddHostedService<ClickWriterService>();
         services.AddHostedService<PartitionMaintenanceService>();
 

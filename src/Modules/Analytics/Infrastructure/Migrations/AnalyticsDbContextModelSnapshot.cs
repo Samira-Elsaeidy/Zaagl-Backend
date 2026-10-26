@@ -23,6 +23,24 @@ namespace Zaagl.Modules.Analytics.Infrastructure.Migrations
 
             NpgsqlModelBuilderExtensions.UseIdentityByDefaultColumns(modelBuilder);
 
+            modelBuilder.Entity("Zaagl.Modules.Analytics.Domain.AnalyticsSettingRow", b =>
+                {
+                    b.Property<string>("Key")
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)")
+                        .HasColumnName("key");
+
+                    b.Property<string>("Value")
+                        .IsRequired()
+                        .HasColumnType("text")
+                        .HasColumnName("value");
+
+                    b.HasKey("Key")
+                        .HasName("pk_settings");
+
+                    b.ToTable("settings", "analytics");
+                });
+
             modelBuilder.Entity("Zaagl.Modules.Analytics.Domain.ClickEventRow", b =>
                 {
                     b.Property<Guid>("Id")
@@ -92,6 +110,79 @@ namespace Zaagl.Modules.Analytics.Infrastructure.Migrations
                         .HasDatabaseName("ix_click_events_owner_id_occurred_at");
 
                     b.ToTable("click_events", "analytics");
+                });
+
+            modelBuilder.Entity("Zaagl.Modules.Analytics.Domain.LinkArchiveRow", b =>
+                {
+                    b.Property<Guid>("LinkId")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid")
+                        .HasColumnName("link_id");
+
+                    b.Property<string>("Code")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)")
+                        .HasColumnName("code");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at");
+
+                    b.Property<DateTime>("ExpiresAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("expires_at");
+
+                    b.Property<bool>("IsCustom")
+                        .HasColumnType("boolean")
+                        .HasColumnName("is_custom");
+
+                    b.Property<Guid>("OwnerId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("owner_id");
+
+                    b.Property<DateTime>("PurgedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("purged_at");
+
+                    b.Property<string>("TargetUrl")
+                        .IsRequired()
+                        .HasColumnType("text")
+                        .HasColumnName("target_url");
+
+                    b.HasKey("LinkId")
+                        .HasName("pk_link_archive");
+
+                    b.HasIndex("OwnerId", "PurgedAt")
+                        .HasDatabaseName("ix_link_archive_owner_id_purged_at");
+
+                    b.ToTable("link_archive", "analytics");
+                });
+
+            modelBuilder.Entity("Zaagl.Modules.Analytics.Domain.LinkDailyStatRow", b =>
+                {
+                    b.Property<Guid>("LinkId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("link_id");
+
+                    b.Property<DateOnly>("Day")
+                        .HasColumnType("date")
+                        .HasColumnName("day");
+
+                    b.Property<long>("BotClicks")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bigint")
+                        .HasDefaultValue(0L)
+                        .HasColumnName("bot_clicks");
+
+                    b.Property<long>("Clicks")
+                        .HasColumnType("bigint")
+                        .HasColumnName("clicks");
+
+                    b.HasKey("LinkId", "Day")
+                        .HasName("pk_link_daily_stats");
+
+                    b.ToTable("link_daily_stats", "analytics");
                 });
 #pragma warning restore 612, 618
         }

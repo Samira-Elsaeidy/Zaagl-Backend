@@ -9,6 +9,9 @@ public sealed class AnalyticsDbContext(DbContextOptions<AnalyticsDbContext> opti
     public const string Schema = "analytics";
 
     public DbSet<ClickEventRow> ClickEvents => Set<ClickEventRow>();
+    public DbSet<LinkDailyStatRow> LinkDailyStats => Set<LinkDailyStatRow>();
+    public DbSet<LinkArchiveRow> LinkArchive => Set<LinkArchiveRow>();
+    public DbSet<AnalyticsSettingRow> Settings => Set<AnalyticsSettingRow>();
 
     protected override void OnModelCreating(ModelBuilder b)
     {
@@ -30,6 +33,30 @@ public sealed class AnalyticsDbContext(DbContextOptions<AnalyticsDbContext> opti
             e.Property(x => x.DeviceType).HasMaxLength(20).IsRequired();
             e.HasIndex(x => new { x.LinkId, x.OccurredAt });
             e.HasIndex(x => new { x.OwnerId, x.OccurredAt });
+        });
+
+        b.Entity<LinkDailyStatRow>(e =>
+        {
+            e.ToTable("link_daily_stats");
+            e.HasKey(x => new { x.LinkId, x.Day });
+            e.Property(x => x.BotClicks).HasDefaultValue(0L);
+        });
+
+        b.Entity<LinkArchiveRow>(e =>
+        {
+            e.ToTable("link_archive");
+            e.HasKey(x => x.LinkId);
+            e.Property(x => x.Code).HasMaxLength(64).IsRequired();
+            e.Property(x => x.TargetUrl).IsRequired();
+            e.HasIndex(x => new { x.OwnerId, x.PurgedAt });
+        });
+
+        b.Entity<AnalyticsSettingRow>(e =>
+        {
+            e.ToTable("settings");
+            e.HasKey(x => x.Key);
+            e.Property(x => x.Key).HasMaxLength(100);
+            e.Property(x => x.Value).IsRequired();
         });
     }
 }

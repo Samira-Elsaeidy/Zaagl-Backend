@@ -9,17 +9,23 @@ public enum PlanTier
 /// <param name="MonthlyLinks">Null means unlimited.</param>
 /// <param name="AnalyticsRetentionDays">Null means unlimited.</param>
 /// <param name="AdvancedGates">Password, click limits and geo / device / A-B routing.</param>
+/// <param name="DefaultExpiryDays">Spec §1.1: how far out a new link expires when the caller doesn't ask
+/// for a specific date.</param>
+/// <param name="MaxExpiryDays">Spec §1.1: the furthest out a link (or a renewal) may set its expiry.
+/// Null means no cap (not used by either plan today, kept for symmetry with DefaultExpiryDays).</param>
 public sealed record PlanLimits(
     PlanTier Tier,
     int? MonthlyLinks,
     bool CustomSlugs,
     int? AnalyticsRetentionDays,
-    bool AdvancedGates)
+    bool AdvancedGates,
+    int DefaultExpiryDays = 30,
+    int? MaxExpiryDays = 90)
 {
     public static PlanLimits For(PlanTier tier) => tier switch
     {
-        PlanTier.Starter => new(PlanTier.Starter, null, true, 365, true),
-        _ => new(PlanTier.Free, 50, false, 7, false),
+        PlanTier.Starter => new(PlanTier.Starter, null, true, 365, true, DefaultExpiryDays: 365, MaxExpiryDays: 1095),
+        _ => new(PlanTier.Free, 50, false, 7, false, DefaultExpiryDays: 30, MaxExpiryDays: 90),
     };
 }
 

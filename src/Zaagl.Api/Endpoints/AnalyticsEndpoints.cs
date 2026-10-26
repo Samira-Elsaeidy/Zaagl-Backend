@@ -54,6 +54,28 @@ public static class AnalyticsEndpoints
             .WithTags("Analytics").AllowAnonymous();
     }
 
+    public static void MapArchive(this IEndpointRouteBuilder app)
+    {
+        // Spec §7.9: GET /api/archive, GET /api/archive/{linkId}/stats. Populated by the purge job
+        // (phase 5/6, not built yet) - these endpoints are correct now and return an empty list until then.
+        app.MapGet("/api/archive", async (
+                string? cursor, int? limit, ClaimsPrincipal user, IArchiveQueries archive, CancellationToken ct) =>
+            {
+                var userId = user.GetUserId();
+                return Results.Ok(await archive.ListAsync(userId, limit ?? 50, cursor, ct));
+            })
+            .WithTags("Analytics").RequireAuthorization();
+
+        app.MapGet("/api/archive/{linkId:guid}/stats", async (
+                Guid linkId, ClaimsPrincipal user, IArchiveQueries archive, CancellationToken ct) =>
+            {
+                var userId = user.GetUserId();
+                if (await archive.FindAsync(userId, linkId, ct) is null) return ApiResults.NotFound("Archived link not found.");
+                return Results.Ok(await archive.GetStatsAsync(linkId, ct));
+            })
+            .WithTags("Analytics").RequireAuthorization();
+    }
+
     private static bool TryParseRange(string? value, out AnalyticsRange range)
     {
         range = AnalyticsRange.Last7Days;
