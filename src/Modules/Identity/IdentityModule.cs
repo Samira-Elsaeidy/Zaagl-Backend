@@ -1,6 +1,7 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
 using Zaagl.Modules.Identity.Application;
 using Zaagl.Modules.Identity.Infrastructure;
 using Zaagl.SharedKernel;
@@ -21,11 +22,23 @@ public static class IdentityModule
             ?? throw new InvalidOperationException("ConnectionStrings:Postgres is not configured.");
 
         services.Configure<JwtOptions>(configuration.GetSection(JwtOptions.Section));
+        services.Configure<AdminBootstrapOptions>(configuration.GetSection(AdminBootstrapOptions.Section));
         services.AddDbContext<IdentityDbContext>(o => Configure(o, connection));
+        services.AddMemoryCache();
         services.AddSingleton<TokenService>();
+        services.AddSingleton<SecurityStampValidator>();
         services.AddScoped<IdentityService>();
         services.AddSingleton<IModuleMigrator>(sp =>
             new ModuleMigrator<IdentityDbContext>("identity", sp.GetRequiredService<IServiceScopeFactory>()));
+        services.AddHostedService<AdminBootstrapHostedService>();
+        services.AddHostedService<UnconfirmedAccountCleanupJob>();
         return services;
     }
+}
+
+public sealed class AdminBootstrapOptions
+{
+    public const string Section = "AdminBootstrap";
+    public string? Email { get; set; }
+    public string? Password { get; set; }
 }

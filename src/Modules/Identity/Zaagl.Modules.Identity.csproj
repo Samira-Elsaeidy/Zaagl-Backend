@@ -2,6 +2,12 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\Zaagl.SharedKernel\Zaagl.SharedKernel.csproj" />
+    <ProjectReference Include="..\Billing\Zaagl.Modules.Billing.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Lets the test project generate a valid TOTP code directly, without reflection. -->
+    <InternalsVisibleTo Include="Zaagl.Links.Tests" />
   </ItemGroup>
 
   <ItemGroup>

@@ -25,12 +25,12 @@ public sealed class ApiKeyAuthenticationHandler(
             return AuthenticateResult.NoResult();
 
         var identity = Context.RequestServices.GetRequiredService<IdentityService>();
-        var userId = await identity.ValidateApiKeyAsync(header.ToString(), Context.RequestAborted);
-        if (userId is null) return AuthenticateResult.Fail("Invalid API key.");
+        var validated = await identity.ValidateApiKeyAsync(header.ToString(), Context.RequestAborted);
+        if (validated is null) return AuthenticateResult.Fail("Invalid API key.");
 
-        var principal = new ClaimsPrincipal(new ClaimsIdentity(
-            [new Claim("sub", userId.Value.ToString()), new Claim("auth_method", "api_key")],
-            Scheme.Name));
+        var claims = new List<Claim> { new("sub", validated.UserId.ToString()), new("auth_method", "api_key") };
+        claims.AddRange(validated.Scopes.Select(s => new Claim("scope", s)));
+        var principal = new ClaimsPrincipal(new ClaimsIdentity(claims, Scheme.Name));
         return AuthenticateResult.Success(new AuthenticationTicket(principal, Scheme.Name));
     }
 }

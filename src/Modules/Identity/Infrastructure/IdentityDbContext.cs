@@ -11,6 +11,9 @@ public sealed class IdentityDbContext(DbContextOptions<IdentityDbContext> option
     public DbSet<User> Users => Set<User>();
     public DbSet<ExternalLogin> ExternalLogins => Set<ExternalLogin>();
     public DbSet<ApiKey> ApiKeys => Set<ApiKey>();
+    public DbSet<EmailToken> EmailTokens => Set<EmailToken>();
+    public DbSet<RefreshToken> RefreshTokens => Set<RefreshToken>();
+    public DbSet<LoginFailure> LoginFailures => Set<LoginFailure>();
 
     protected override void OnModelCreating(ModelBuilder b)
     {
@@ -22,6 +25,8 @@ public sealed class IdentityDbContext(DbContextOptions<IdentityDbContext> option
             e.HasKey(x => x.Id);
             e.Property(x => x.Email).HasMaxLength(320).IsRequired();
             e.Property(x => x.DisplayName).HasMaxLength(200).IsRequired();
+            e.Property(x => x.Role).HasMaxLength(50);
+            e.Property(x => x.DisabledReason).HasMaxLength(500);
             e.HasIndex(x => x.Email).IsUnique();
         });
 
@@ -44,6 +49,33 @@ public sealed class IdentityDbContext(DbContextOptions<IdentityDbContext> option
             e.Property(x => x.KeyHash).HasMaxLength(64).IsRequired();
             e.HasIndex(x => x.KeyHash).IsUnique();
             e.HasIndex(x => x.UserId);
+        });
+
+        b.Entity<EmailToken>(e =>
+        {
+            e.ToTable("email_tokens");
+            e.HasKey(x => x.Id);
+            e.Property(x => x.TokenHash).HasMaxLength(64).IsRequired();
+            e.HasIndex(x => x.TokenHash).IsUnique();
+            e.HasIndex(x => new { x.UserId, x.Kind });
+        });
+
+        b.Entity<RefreshToken>(e =>
+        {
+            e.ToTable("refresh_tokens");
+            e.HasKey(x => x.Id);
+            e.Property(x => x.TokenHash).HasMaxLength(64).IsRequired();
+            e.HasIndex(x => x.TokenHash).IsUnique();
+            e.HasIndex(x => x.FamilyId);
+            e.HasIndex(x => x.UserId);
+        });
+
+        b.Entity<LoginFailure>(e =>
+        {
+            e.ToTable("login_failures");
+            e.HasKey(x => x.Id);
+            e.Property(x => x.IpPartition).HasMaxLength(64).IsRequired();
+            e.HasIndex(x => new { x.UserId, x.IpPartition, x.CreatedAt });
         });
     }
 }
