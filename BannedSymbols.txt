@@ -1,0 +1,9 @@
+M:System.DateTime.get_Now;Use TimeProvider instead (spec §2).
+M:System.DateTime.get_UtcNow;Use TimeProvider instead (spec §2).
+M:System.DateTimeOffset.get_Now;Use TimeProvider instead (spec §2).
+M:System.DateTimeOffset.get_UtcNow;Use TimeProvider instead (spec §2).
+T:System.Random;Use RandomNumberGenerator for anything security-relevant (spec §2, MUST-NOT #16).
+M:Microsoft.EntityFrameworkCore.RelationalDatabaseFacadeExtensions.SqlQuery``1(Microsoft.EntityFrameworkCore.Infrastructure.DatabaseFacade,System.Runtime.CompilerServices.FormattableString);Use a raw Npgsql command, not Database.SqlQuery (spec §2, MUST-NOT #18).
+M:Microsoft.EntityFrameworkCore.RelationalDatabaseFacadeExtensions.SqlQueryRaw``1(Microsoft.EntityFrameworkCore.Infrastructure.DatabaseFacade,System.String,System.Object[]);Use a raw Npgsql command, not Database.SqlQueryRaw (spec §2, MUST-NOT #18).
+M:Microsoft.EntityFrameworkCore.RelationalDatabaseFacadeExtensions.EnsureCreated(Microsoft.EntityFrameworkCore.Infrastructure.DatabaseFacade);Never use EnsureCreated; migrations only (spec §2, MUST-NOT #20).
+M:Microsoft.EntityFrameworkCore.RelationalDatabaseFacadeExtensions.EnsureCreatedAsync(Microsoft.EntityFrameworkCore.Infrastructure.DatabaseFacade,System.Threading.CancellationToken);Never use EnsureCreated; migrations only (spec §2, MUST-NOT #20).

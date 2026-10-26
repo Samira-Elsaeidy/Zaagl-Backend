@@ -8,6 +8,7 @@ public sealed record Error(string Code, string Message)
     public static Error Unauthorized(string message = "Unauthorized.") => new("unauthorized", message);
     public static Error Forbidden(string message) => new("forbidden", message);
     public static Error PlanRequired(string message) => new("plan_required", message);
+    public static Error ServiceUnavailable(string message) => new("service_unavailable", message);
 }
 
 public readonly record struct Result<T>(T? Value, Error? Error)

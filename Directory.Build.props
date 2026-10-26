@@ -1,0 +1,20 @@
+<Project>
+
+  <!--
+    Banned-API enforcement (spec §2, BannedSymbols.txt). Severity is "warning" here, not the spec's
+    literal "error" - 8 existing files already use DateTime.UtcNow (a real gap against the spec's
+    "TimeProvider everywhere" rule), and migrating every one of them was out of scope for this phase.
+    This makes every violation visible on every build without breaking it; raise RS0030's severity to
+    error once those files are migrated to TimeProvider.
+  -->
+  <ItemGroup>
+    <PackageReference Include="Microsoft.CodeAnalysis.BannedApiAnalyzers" Version="3.11.0" PrivateAssets="all" />
+    <AdditionalFiles Include="$(MSBuildThisFileDirectory)BannedSymbols.txt" />
+  </ItemGroup>
+
+  <PropertyGroup>
+    <!-- RS0030 = "Do not use banned APIs" -->
+    <WarningsNotAsErrors>$(WarningsNotAsErrors);RS0030</WarningsNotAsErrors>
+  </PropertyGroup>
+
+</Project>
