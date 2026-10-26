@@ -1,4 +1,5 @@
 using System.Security.Claims;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Options;
 using Zaagl.Api.Infrastructure;
 using Zaagl.Modules.Analytics.Contracts;
@@ -35,6 +36,7 @@ public static class LinksEndpoints
         links.MapPost("", async (
                 LinkInput input, ClaimsPrincipal user, LinkService service, HttpContext http,
                 GuestKeyProvider guestKey, GuestRateLimiter guestLimiter, IOptions<GuestOptions> guestOptions,
+                ICaptchaVerifier captcha, IConfiguration config,
                 CancellationToken ct) =>
             {
                 // Spec §7.2: an Idempotency-Key (1-128 printable ASCII) makes a retried create safe to resend.
@@ -51,6 +53,12 @@ public static class LinksEndpoints
                 var opts = guestOptions.Value;
                 if (!opts.Enabled)
                     return ApiResults.Problem(Error.ServiceUnavailable("Guest link creation is currently disabled."));
+
+                var captchaToken = http.Request.Headers["Captcha-Token"].ToString();
+                var frontendHost = Uri.TryCreate(config["Frontend:BaseUrl"], UriKind.Absolute, out var frontendUri) ? frontendUri.Host : "";
+                var verified = await captcha.VerifyAsync(
+                    string.IsNullOrEmpty(captchaToken) ? null : captchaToken, "guest-link", frontendHost, ct);
+                if (!verified.IsSuccess) return ApiResults.Problem(verified.Error!);
 
                 var address = http.Connection.RemoteIpAddress;
                 var partition = IpPartition.Key(address);

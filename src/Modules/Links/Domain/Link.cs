@@ -41,6 +41,14 @@ public sealed class Link
     public string SlugKey { get; set; } = "";
 
     public string DestinationUrl { get; set; } = "";
+
+    /// <summary>Normalised host of DestinationUrl (punycode, lower-case, no trailing dot). Spec §7.6:
+    /// used by the destination blocklist, takedowns and re-checks so they never re-parse the URL.</summary>
+    public string TargetHost { get; set; } = "";
+
+    /// <summary>Spec §7.15: null means never checked (outage, budget exhausted, or just created and not
+    /// yet picked up) - fail-open, the link still redirects. Reset to null when a re-check lookup errors.</summary>
+    public DateTime? SafetyCheckedAt { get; set; }
     public string? Title { get; set; }
     public string? Description { get; set; }
     public Guid? FolderId { get; set; }
@@ -106,6 +114,46 @@ public sealed class LinkDestination
     public string Url { get; set; } = "";
     public int Weight { get; set; } = 1;
     public int Priority { get; set; }
+}
+
+public static class BlockedDestinationKinds
+{
+    public const string Host = "host";
+    public const string HostSuffix = "host-suffix";
+    public const string UrlPrefix = "url-prefix";
+}
+
+/// <summary>Spec §7.15: checked in Phase B, in PATCH and by takedowns. Seeded with Safety:DenyRedirectorHosts.</summary>
+public sealed class BlockedDestination
+{
+    public Guid Id { get; set; } = Guid.CreateVersion7();
+    public string Kind { get; set; } = "";
+    public string Pattern { get; set; } = "";
+    public string Reason { get; set; } = "";
+    public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
+}
+
+/// <summary>Spec §7.15: a custom alias taken down for abuse or by the safety check is never released,
+/// even after purge, unless the takedown is reversed with the audited reinstate.</summary>
+public sealed class BlockedAlias
+{
+    public string SlugKey { get; set; } = "";
+    public string Reason { get; set; } = "";
+    public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
+}
+
+/// <summary>Spec §7.15: evidence kept for Abuse:EvidenceRetentionDays after a takedown, independent of
+/// whether the link itself still exists.</summary>
+public sealed class AbuseEvidence
+{
+    public Guid Id { get; set; } = Guid.CreateVersion7();
+    public Guid LinkId { get; set; }
+    public string Slug { get; set; } = "";
+    public string TargetUrl { get; set; } = "";
+    public string DisabledKind { get; set; } = "";
+    public string? Reason { get; set; }
+    public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
+    public DateTime KeepUntil { get; set; }
 }
 
 public sealed class Folder

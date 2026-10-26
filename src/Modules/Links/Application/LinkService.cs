@@ -37,6 +37,7 @@ public sealed class LinkService(
     CodeGenerator codes,
     CreationGate creationGate,
     IUrlReputationChecker reputation,
+    IDestinationBlocklist blocklist,
     HybridCache cache,
     ILinkCacheInvalidator invalidator,
     IValidator<LinkInput> validator,
@@ -53,7 +54,9 @@ public sealed class LinkService(
         string? Fallback,
         string? OgImage,
         List<RuleInput> Rules,
-        string[] Tags);
+        string[] Tags,
+        string TargetHost,
+        bool SafetyChecked);
 
     // ---- Create -------------------------------------------------------------
     // Spec §7.2's four phases, same names used below: A (identify/parse, no rules), B (stateless
@@ -150,6 +153,15 @@ public sealed class LinkService(
 
                 // Spec §7.2 step 10.4: inspect any existing row for this slug, under the lock.
                 var key = SlugRules.Key(customSlug);
+
+                // Spec §7.15/R3a: a code taken down for abuse or by the safety check is never released,
+                // even after purge, unless the takedown is reversed with the audited reinstate.
+                if (await db.BlockedAliases.AnyAsync(a => a.SlugKey == key, ct))
+                {
+                    await tx.RollbackAsync(ct);
+                    return Error.Conflict("alias-unavailable: this slug was taken down and is not available.");
+                }
+
                 var existingRow = await db.Links.Include(l => l.Policy)
                     .FirstOrDefaultAsync(l => l.SlugKey == key, ct);
                 if (existingRow is not null)
@@ -181,6 +193,7 @@ public sealed class LinkService(
                 KeyVersion = customSlug is null ? CodeGenerator.KeyVersion : null,
             };
             ApplyInput(link, input, n);
+            link.SafetyCheckedAt = n.SafetyChecked ? time.GetUtcNow().UtcDateTime : null;
             RecomputePurgeAfter(link);
             db.Links.Add(link);
 
@@ -317,6 +330,12 @@ public sealed class LinkService(
                     $"SELECT pg_advisory_xact_lock(hashtextextended('zaagl.alias:' || {customSlug}, 0))", ct);
 
                 var key = SlugRules.Key(customSlug);
+                if (await db.BlockedAliases.AnyAsync(a => a.SlugKey == key, ct))
+                {
+                    await tx.RollbackAsync(ct);
+                    return Error.Conflict("alias-unavailable: this slug was taken down and is not available.");
+                }
+
                 var existingRow = await db.Links.Include(l => l.Policy)
                     .FirstOrDefaultAsync(l => l.SlugKey == key, ct);
                 if (existingRow is not null)
@@ -347,6 +366,7 @@ public sealed class LinkService(
                 KeyVersion = customSlug is null ? CodeGenerator.KeyVersion : null,
             };
             ApplyInput(link, input, n);
+            link.SafetyCheckedAt = n.SafetyChecked ? now : null;
             // Guests get a fixed expiry and no quarantine: purge_after = expires_at exactly (spec §7.12,
             // §1.1 "Quarantine after expiry: none"), overriding whatever ApplyInput set from input.Policy.
             var policy = link.Policy ??= new AccessPolicy { LinkId = link.Id };
@@ -435,6 +455,7 @@ public sealed class LinkService(
 
         if (input.Rules is not null) db.Destinations.RemoveRange(link.Rules);
         ApplyInput(link, input, prepared.Value!);
+        link.SafetyCheckedAt = prepared.Value!.SafetyChecked ? time.GetUtcNow().UtcDateTime : null;
         RecomputePurgeAfter(link);
         link.UpdatedAt = time.GetUtcNow().UtcDateTime;
         await db.SaveChangesAsync(ct);
@@ -650,15 +671,20 @@ public sealed class LinkService(
                 return Error.Validation("Folder not found.");
         }
 
+        if (await blocklist.IsBlockedAsync(n.TargetHost, n.Destination, ct))
+            return Error.Validation("destination-blocked: this destination is not allowed.");
+
         var urls = n.Rules.Select(r => r.Url).Append(n.Destination).Distinct();
+        var allChecked = true;
         foreach (var url in urls)
         {
             var result = await reputation.CheckAsync(url, ct);
             if (!result.IsSafe)
-                return Error.Validation($"This URL was flagged as unsafe ({FriendlyThreat(result.Threat)}) and cannot be shortened.");
+                return Error.Validation($"destination-unsafe: this URL was flagged as unsafe ({FriendlyThreat(result.Threat)}) and cannot be shortened.");
+            allChecked &= result.Checked;
         }
 
-        return Result<Normalized>.Ok(n);
+        return Result<Normalized>.Ok(n with { SafetyChecked = allChecked });
     }
 
     private static Error? CheckPlan(LinkInput input, PlanLimits limits)
@@ -718,12 +744,14 @@ public sealed class LinkService(
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToArray();
 
-        return Result<Normalized>.Ok(new(destination, fallback, ogImage, rules, tags));
+        var targetHost = new Uri(destination).IdnHost.TrimEnd('.').ToLowerInvariant();
+        return Result<Normalized>.Ok(new(destination, fallback, ogImage, rules, tags, targetHost, SafetyChecked: true));
     }
 
     private static void ApplyInput(Link link, LinkInput input, Normalized n)
     {
         link.DestinationUrl = n.Destination;
+        link.TargetHost = n.TargetHost;
         link.Title = Clean(input.Title);
         link.Description = Clean(input.Description);
         link.FolderId = input.FolderId;

@@ -26,6 +26,59 @@ namespace Zaagl.Modules.Links.Infrastructure.Migrations
             modelBuilder.HasSequence("slug_seq")
                 .StartsAt(1000L);
 
+            modelBuilder.Entity("Zaagl.Modules.Links.Domain.AbuseEvidence", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at");
+
+                    b.Property<string>("DisabledKind")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("character varying(20)")
+                        .HasColumnName("disabled_kind");
+
+                    b.Property<DateTime>("KeepUntil")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("keep_until");
+
+                    b.Property<Guid>("LinkId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("link_id");
+
+                    b.Property<string>("Reason")
+                        .HasMaxLength(500)
+                        .HasColumnType("character varying(500)")
+                        .HasColumnName("reason");
+
+                    b.Property<string>("Slug")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)")
+                        .HasColumnName("slug");
+
+                    b.Property<string>("TargetUrl")
+                        .IsRequired()
+                        .HasMaxLength(2048)
+                        .HasColumnType("character varying(2048)")
+                        .HasColumnName("target_url");
+
+                    b.HasKey("Id")
+                        .HasName("pk_abuse_evidence");
+
+                    b.HasIndex("KeepUntil")
+                        .HasDatabaseName("ix_abuse_evidence_keep_until");
+
+                    b.HasIndex("LinkId")
+                        .HasDatabaseName("ix_abuse_evidence_link_id");
+
+                    b.ToTable("abuse_evidence", "links");
+                });
+
             modelBuilder.Entity("Zaagl.Modules.Links.Domain.AccessPolicy", b =>
                 {
                     b.Property<Guid>("LinkId")
@@ -58,6 +111,67 @@ namespace Zaagl.Modules.Links.Infrastructure.Migrations
                         .HasName("pk_access_policies");
 
                     b.ToTable("access_policies", "links");
+                });
+
+            modelBuilder.Entity("Zaagl.Modules.Links.Domain.BlockedAlias", b =>
+                {
+                    b.Property<string>("SlugKey")
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)")
+                        .HasColumnName("slug_key");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at");
+
+                    b.Property<string>("Reason")
+                        .IsRequired()
+                        .HasMaxLength(500)
+                        .HasColumnType("character varying(500)")
+                        .HasColumnName("reason");
+
+                    b.HasKey("SlugKey")
+                        .HasName("pk_blocked_aliases");
+
+                    b.ToTable("blocked_aliases", "links");
+                });
+
+            modelBuilder.Entity("Zaagl.Modules.Links.Domain.BlockedDestination", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at");
+
+                    b.Property<string>("Kind")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("character varying(20)")
+                        .HasColumnName("kind");
+
+                    b.Property<string>("Pattern")
+                        .IsRequired()
+                        .HasMaxLength(255)
+                        .HasColumnType("character varying(255)")
+                        .HasColumnName("pattern");
+
+                    b.Property<string>("Reason")
+                        .IsRequired()
+                        .HasMaxLength(500)
+                        .HasColumnType("character varying(500)")
+                        .HasColumnName("reason");
+
+                    b.HasKey("Id")
+                        .HasName("pk_blocked_destinations");
+
+                    b.HasIndex("Kind", "Pattern")
+                        .IsUnique()
+                        .HasDatabaseName("ix_blocked_destinations_kind_pattern");
+
+                    b.ToTable("blocked_destinations", "links");
                 });
 
             modelBuilder.Entity("Zaagl.Modules.Links.Domain.Folder", b =>
@@ -229,6 +343,10 @@ namespace Zaagl.Modules.Links.Infrastructure.Migrations
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("purge_after");
 
+                    b.Property<DateTime?>("SafetyCheckedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("safety_checked_at");
+
                     b.Property<string>("Slug")
                         .IsRequired()
                         .HasMaxLength(64)
@@ -245,6 +363,12 @@ namespace Zaagl.Modules.Links.Infrastructure.Migrations
                         .IsRequired()
                         .HasColumnType("text[]")
                         .HasColumnName("tags");
+
+                    b.Property<string>("TargetHost")
+                        .IsRequired()
+                        .HasMaxLength(255)
+                        .HasColumnType("character varying(255)")
+                        .HasColumnName("target_host");
 
                     b.Property<string>("Title")
                         .HasMaxLength(200)
@@ -264,6 +388,9 @@ namespace Zaagl.Modules.Links.Infrastructure.Migrations
                     b.HasIndex("PurgeAfter")
                         .HasDatabaseName("ix_links_purge_after");
 
+                    b.HasIndex("SafetyCheckedAt")
+                        .HasDatabaseName("ix_links_safety_checked_at");
+
                     b.HasIndex("SlugKey")
                         .IsUnique()
                         .HasDatabaseName("ix_links_slug_key");
@@ -272,6 +399,9 @@ namespace Zaagl.Modules.Links.Infrastructure.Migrations
                         .HasDatabaseName("ix_links_tags");
 
                     NpgsqlIndexBuilderExtensions.HasMethod(b.HasIndex("Tags"), "gin");
+
+                    b.HasIndex("TargetHost")
+                        .HasDatabaseName("ix_links_target_host");
 
                     b.HasIndex("CodeLength", "CodeNumber")
                         .IsUnique()

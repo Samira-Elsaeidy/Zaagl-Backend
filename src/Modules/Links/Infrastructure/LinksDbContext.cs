@@ -13,6 +13,9 @@ public sealed class LinksDbContext(DbContextOptions<LinksDbContext> options) : D
     public DbSet<LinkDestination> Destinations => Set<LinkDestination>();
     public DbSet<Folder> Folders => Set<Folder>();
     public DbSet<IdempotencyKey> IdempotencyKeys => Set<IdempotencyKey>();
+    public DbSet<BlockedDestination> BlockedDestinations => Set<BlockedDestination>();
+    public DbSet<BlockedAlias> BlockedAliases => Set<BlockedAlias>();
+    public DbSet<AbuseEvidence> AbuseEvidence => Set<AbuseEvidence>();
 
     protected override void OnModelCreating(ModelBuilder b)
     {
@@ -27,6 +30,7 @@ public sealed class LinksDbContext(DbContextOptions<LinksDbContext> options) : D
             e.Property(x => x.Slug).HasMaxLength(64).IsRequired();
             e.Property(x => x.SlugKey).HasMaxLength(64).IsRequired();
             e.Property(x => x.DestinationUrl).HasMaxLength(2048).IsRequired();
+            e.Property(x => x.TargetHost).HasMaxLength(255).IsRequired();
             e.Property(x => x.Title).HasMaxLength(200);
             e.Property(x => x.Description).HasMaxLength(1000);
             e.Property(x => x.OgTitle).HasMaxLength(200);
@@ -41,6 +45,8 @@ public sealed class LinksDbContext(DbContextOptions<LinksDbContext> options) : D
             e.HasIndex(x => x.FolderId);
             e.HasIndex(x => x.Tags).HasMethod("gin");
             e.HasIndex(x => x.PurgeAfter);
+            e.HasIndex(x => x.TargetHost);
+            e.HasIndex(x => x.SafetyCheckedAt);
             // Generated-link numbers are unique per length, mirroring spec §4.3's partial unique index.
             e.HasIndex(x => new { x.CodeLength, x.CodeNumber }).IsUnique()
                 .HasFilter("\"code_number\" IS NOT NULL").HasDatabaseName("ix_links_code_number");
@@ -90,6 +96,38 @@ public sealed class LinksDbContext(DbContextOptions<LinksDbContext> options) : D
             e.Property(x => x.Id).ValueGeneratedNever();
             e.Property(x => x.Name).HasMaxLength(100).IsRequired();
             e.HasIndex(x => new { x.OwnerId, x.Name }).IsUnique();
+        });
+
+        b.Entity<BlockedDestination>(e =>
+        {
+            e.ToTable("blocked_destinations");
+            e.HasKey(x => x.Id);
+            e.Property(x => x.Id).ValueGeneratedNever();
+            e.Property(x => x.Kind).HasMaxLength(20).IsRequired();
+            e.Property(x => x.Pattern).HasMaxLength(255).IsRequired();
+            e.Property(x => x.Reason).HasMaxLength(500).IsRequired();
+            e.HasIndex(x => new { x.Kind, x.Pattern }).IsUnique();
+        });
+
+        b.Entity<BlockedAlias>(e =>
+        {
+            e.ToTable("blocked_aliases");
+            e.HasKey(x => x.SlugKey);
+            e.Property(x => x.SlugKey).HasMaxLength(64);
+            e.Property(x => x.Reason).HasMaxLength(500).IsRequired();
+        });
+
+        b.Entity<AbuseEvidence>(e =>
+        {
+            e.ToTable("abuse_evidence");
+            e.HasKey(x => x.Id);
+            e.Property(x => x.Id).ValueGeneratedNever();
+            e.Property(x => x.Slug).HasMaxLength(64).IsRequired();
+            e.Property(x => x.TargetUrl).HasMaxLength(2048).IsRequired();
+            e.Property(x => x.DisabledKind).HasMaxLength(20).IsRequired();
+            e.Property(x => x.Reason).HasMaxLength(500);
+            e.HasIndex(x => x.LinkId);
+            e.HasIndex(x => x.KeepUntil);
         });
     }
 }

@@ -27,6 +27,9 @@ public static class LinksModule
         services.Configure<LinkOptions>(configuration.GetSection(LinkOptions.Section));
         services.Configure<WebRiskOptions>(configuration.GetSection(WebRiskOptions.Section));
         services.Configure<GuestOptions>(configuration.GetSection(GuestOptions.Section));
+        services.Configure<SafetyOptions>(configuration.GetSection(SafetyOptions.Section));
+        services.Configure<AbuseOptions>(configuration.GetSection(AbuseOptions.Section));
+        services.Configure<CaptchaOptions>(configuration.GetSection(CaptchaOptions.Section));
 
         // Spec §7.12: changing GUEST_KEY only resets guest quotas, it never affects already-issued links -
         // same dev-only-fallback shape as ShortLinks:ScrambleKey above.
@@ -102,6 +105,16 @@ public static class LinksModule
         services.AddScoped<ILinkDirectory>(sp => sp.GetRequiredService<LinkResolver>());
         services.AddHostedService<PurgeJob>();
         services.AddHostedService<GuestQuotaCleanupJob>();
+        services.AddScoped<IDestinationBlocklist, DestinationBlocklist>();
+        services.AddScoped<TakedownService>();
+        services.AddHostedService<SafetyRecheckJob>();
+
+        var captchaEnabled = configuration.GetValue("Captcha:Enabled", true);
+        var turnstileSecret = configuration["Captcha:Secret"];
+        if (captchaEnabled && !string.IsNullOrWhiteSpace(turnstileSecret))
+            services.AddHttpClient<ICaptchaVerifier, TurnstileVerifier>(c => c.Timeout = TimeSpan.FromSeconds(3));
+        else
+            services.AddSingleton<ICaptchaVerifier, NoOpCaptchaVerifier>();
 
         services.AddSingleton<IModuleMigrator>(sp =>
             new ModuleMigrator<LinksDbContext>("links", sp.GetRequiredService<IServiceScopeFactory>()));
