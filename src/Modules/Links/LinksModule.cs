@@ -110,6 +110,7 @@ public static class LinksModule
         services.AddScoped<AliasFreezeChecker>();
         services.AddScoped<TakedownService>();
         services.AddScoped<ReportService>();
+        services.AddScoped<ILinkDigestSource, LinkDigestSource>();
         services.AddHostedService<SafetyRecheckJob>();
 
         var captchaEnabled = configuration.GetValue("Captcha:Enabled", true);

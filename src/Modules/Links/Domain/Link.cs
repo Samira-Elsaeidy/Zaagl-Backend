@@ -82,6 +82,12 @@ public sealed class Link
 
     public DateTime? DeletedAt { get; set; }
 
+    // ---- Spec §7.10: at most one digest email per stage per link (not per day globally - a renewal
+    // after a stage was queued but before it was sent drops the stale item at send time instead).
+    public DateTime? ExpiringNoticeQueuedAt { get; set; }
+    public DateTime? ExpiredNoticeQueuedAt { get; set; }
+    public DateTime? PurgeNoticeQueuedAt { get; set; }
+
     /// <summary>One of <see cref="DisabledKinds"/>, or null when not disabled.</summary>
     public string? DisabledKind { get; set; }
     public string? DisabledReason { get; set; }

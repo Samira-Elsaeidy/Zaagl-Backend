@@ -113,6 +113,24 @@ public sealed record AliasFreezeDto(Guid Id, DateTime StartsAt, DateTime Until, 
 public sealed record DeclareRestoreRequest(string Reason);
 public sealed record EndFreezeRequest(string Reason);
 
+// ---- Email digests (spec §7.10): read-only cross-module source for the Identity-side digest job,
+// same pattern as IArchiveWriter (Links -> Analytics) but in the other direction (Identity -> Links).
+
+public sealed record DigestCandidate(Guid LinkId, Guid OwnerId, string Slug, DateTime ExpiresAt);
+
+public static class DigestStages
+{
+    public const string Expiring = "expiring";
+    public const string Expired = "expired";
+    public const string Purge = "purge";
+}
+
+public interface ILinkDigestSource
+{
+    Task<IReadOnlyList<DigestCandidate>> GetCandidatesAsync(string stage, DateTime now, CancellationToken ct);
+    Task MarkQueuedAsync(string stage, IReadOnlyList<Guid> linkIds, DateTime now, CancellationToken ct);
+}
+
 public sealed record BulkRowResult(int Row, bool Ok, string? Slug, string? Error);
 
 public sealed record BulkResult(int Total, int Created, int Failed, IReadOnlyList<BulkRowResult> Rows);

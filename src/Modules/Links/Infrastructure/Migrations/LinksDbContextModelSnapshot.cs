@@ -426,6 +426,14 @@ namespace Zaagl.Modules.Links.Infrastructure.Migrations
                         .HasColumnType("character varying(500)")
                         .HasColumnName("disabled_reason");
 
+                    b.Property<DateTime?>("ExpiredNoticeQueuedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("expired_notice_queued_at");
+
+                    b.Property<DateTime?>("ExpiringNoticeQueuedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("expiring_notice_queued_at");
+
                     b.Property<Guid?>("FolderId")
                         .HasColumnType("uuid")
                         .HasColumnName("folder_id");
@@ -472,6 +480,10 @@ namespace Zaagl.Modules.Links.Infrastructure.Migrations
                     b.Property<DateTime?>("PurgeAfter")
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("purge_after");
+
+                    b.Property<DateTime?>("PurgeNoticeQueuedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("purge_notice_queued_at");
 
                     b.Property<DateTime?>("SafetyCheckedAt")
                         .HasColumnType("timestamp with time zone")

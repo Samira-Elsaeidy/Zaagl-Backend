@@ -82,6 +82,139 @@ namespace Zaagl.Modules.Identity.Infrastructure.Migrations
                     b.ToTable("api_keys", "identity");
                 });
 
+            modelBuilder.Entity("Zaagl.Modules.Identity.Domain.EmailOutbox", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<int>("Attempts")
+                        .HasColumnType("integer")
+                        .HasColumnName("attempts");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at");
+
+                    b.Property<DateOnly?>("DigestDate")
+                        .HasColumnType("date")
+                        .HasColumnName("digest_date");
+
+                    b.Property<string>("Kind")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("character varying(20)")
+                        .HasColumnName("kind");
+
+                    b.Property<string>("LastError")
+                        .HasMaxLength(1000)
+                        .HasColumnType("character varying(1000)")
+                        .HasColumnName("last_error");
+
+                    b.Property<DateTime?>("LockedUntil")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("locked_until");
+
+                    b.Property<string>("PayloadJson")
+                        .IsRequired()
+                        .HasColumnType("jsonb")
+                        .HasColumnName("payload_json");
+
+                    b.Property<string>("RecipientEmail")
+                        .HasMaxLength(320)
+                        .HasColumnType("character varying(320)")
+                        .HasColumnName("recipient_email");
+
+                    b.Property<DateTime>("SendAfter")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("send_after");
+
+                    b.Property<DateTime?>("SentAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("sent_at");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasMaxLength(10)
+                        .HasColumnType("character varying(10)")
+                        .HasColumnName("status");
+
+                    b.Property<Guid?>("UserId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("user_id");
+
+                    b.HasKey("Id")
+                        .HasName("pk_email_outbox");
+
+                    b.HasIndex("Status", "SendAfter")
+                        .HasDatabaseName("ix_email_outbox_status_send_after");
+
+                    b.HasIndex("UserId", "Kind", "DigestDate")
+                        .IsUnique()
+                        .HasDatabaseName("ix_email_outbox_user_id_kind_digest_date")
+                        .HasFilter("digest_date IS NOT NULL");
+
+                    b.ToTable("email_outbox", "identity");
+                });
+
+            modelBuilder.Entity("Zaagl.Modules.Identity.Domain.EmailOutboxItem", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<DateTime>("ExpiresAtSnapshot")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("expires_at_snapshot");
+
+                    b.Property<Guid>("LinkId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("link_id");
+
+                    b.Property<Guid>("OutboxId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("outbox_id");
+
+                    b.Property<string>("Slug")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)")
+                        .HasColumnName("slug");
+
+                    b.HasKey("Id")
+                        .HasName("pk_email_outbox_items");
+
+                    b.HasIndex("OutboxId")
+                        .HasDatabaseName("ix_email_outbox_items_outbox_id");
+
+                    b.ToTable("email_outbox_items", "identity");
+                });
+
+            modelBuilder.Entity("Zaagl.Modules.Identity.Domain.EmailSuppression", b =>
+                {
+                    b.Property<string>("Email")
+                        .HasMaxLength(320)
+                        .HasColumnType("character varying(320)")
+                        .HasColumnName("email");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at");
+
+                    b.Property<string>("Reason")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)")
+                        .HasColumnName("reason");
+
+                    b.HasKey("Email")
+                        .HasName("pk_email_suppressions");
+
+                    b.ToTable("email_suppressions", "identity");
+                });
+
             modelBuilder.Entity("Zaagl.Modules.Identity.Domain.EmailToken", b =>
                 {
                     b.Property<Guid>("Id")
@@ -316,6 +449,21 @@ namespace Zaagl.Modules.Identity.Infrastructure.Migrations
                         .HasDatabaseName("ix_users_email");
 
                     b.ToTable("users", "identity");
+                });
+
+            modelBuilder.Entity("Zaagl.Modules.Identity.Domain.EmailOutboxItem", b =>
+                {
+                    b.HasOne("Zaagl.Modules.Identity.Domain.EmailOutbox", null)
+                        .WithMany("Items")
+                        .HasForeignKey("OutboxId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired()
+                        .HasConstraintName("fk_email_outbox_items_email_outbox_outbox_id");
+                });
+
+            modelBuilder.Entity("Zaagl.Modules.Identity.Domain.EmailOutbox", b =>
+                {
+                    b.Navigation("Items");
                 });
 #pragma warning restore 612, 618
         }

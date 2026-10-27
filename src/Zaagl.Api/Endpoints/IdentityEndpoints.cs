@@ -162,6 +162,39 @@ public static class IdentityEndpoints
 
         keys.MapDelete("/{id:guid}", async (Guid id, ClaimsPrincipal user, IdentityService identity, CancellationToken ct) =>
             await identity.RevokeApiKeyAsync(user.GetUserId(), id, ct) ? Results.NoContent() : ApiResults.NotFound("API key not found."));
+
+        // ---- Email webhook (spec §7.10): hard bounce / complaint events add an address to the
+        // suppression list. Signed with HMAC-SHA256 over the raw body, header "X-Signature" (hex).
+        app.MapPost("/api/webhooks/email", async (HttpRequest request, IdentityService identity,
+                Microsoft.Extensions.Options.IOptions<EmailOptions> options, CancellationToken ct) =>
+            {
+                request.EnableBuffering();
+                using var reader = new StreamReader(request.Body, leaveOpen: true);
+                var body = await reader.ReadToEndAsync(ct);
+                request.Body.Position = 0;
+
+                var secret = options.Value.WebhookSecret;
+                var signature = request.Headers["X-Signature"].ToString();
+                if (string.IsNullOrEmpty(secret) || string.IsNullOrEmpty(signature))
+                    return Results.Unauthorized();
+
+                var expected = Convert.ToHexStringLower(System.Security.Cryptography.HMACSHA256.HashData(
+                    System.Text.Encoding.UTF8.GetBytes(secret), System.Text.Encoding.UTF8.GetBytes(body)));
+                if (!System.Security.Cryptography.CryptographicOperations.FixedTimeEquals(
+                        System.Text.Encoding.UTF8.GetBytes(expected), System.Text.Encoding.UTF8.GetBytes(signature.ToLowerInvariant())))
+                    return Results.Unauthorized();
+
+                using var doc = System.Text.Json.JsonDocument.Parse(body);
+                if (doc.RootElement.TryGetProperty("email", out var emailEl)
+                    && doc.RootElement.TryGetProperty("event", out var eventEl)
+                    && eventEl.GetString() is "bounce" or "complaint")
+                {
+                    await identity.SuppressEmailAsync(emailEl.GetString() ?? "", eventEl.GetString()!, ct);
+                }
+                return Results.NoContent();
+            })
+            .WithTags("Webhooks")
+            .AllowAnonymous();
     }
 
     /// <summary>Spec §7.4: a minimal page that reads the token out of the URL fragment (never sent to

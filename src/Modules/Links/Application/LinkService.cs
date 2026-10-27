@@ -525,6 +525,10 @@ public sealed class LinkService(
         policy.ExpiresAt = newExpiry;
         link.PurgeAfter = newExpiry.AddDays(options.Value.QuarantineDays);
         link.UpdatedAt = now;
+        // Spec §7.10: a renewal lets the link qualify for its warning stages again against the new dates.
+        link.ExpiringNoticeQueuedAt = null;
+        link.ExpiredNoticeQueuedAt = null;
+        link.PurgeNoticeQueuedAt = null;
         await db.SaveChangesAsync(ct);
         await tx.CommitAsync(ct);
 

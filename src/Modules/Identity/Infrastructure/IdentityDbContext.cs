@@ -14,6 +14,9 @@ public sealed class IdentityDbContext(DbContextOptions<IdentityDbContext> option
     public DbSet<EmailToken> EmailTokens => Set<EmailToken>();
     public DbSet<RefreshToken> RefreshTokens => Set<RefreshToken>();
     public DbSet<LoginFailure> LoginFailures => Set<LoginFailure>();
+    public DbSet<EmailOutbox> EmailOutbox => Set<EmailOutbox>();
+    public DbSet<EmailOutboxItem> EmailOutboxItems => Set<EmailOutboxItem>();
+    public DbSet<EmailSuppression> EmailSuppressions => Set<EmailSuppression>();
 
     protected override void OnModelCreating(ModelBuilder b)
     {
@@ -76,6 +79,37 @@ public sealed class IdentityDbContext(DbContextOptions<IdentityDbContext> option
             e.HasKey(x => x.Id);
             e.Property(x => x.IpPartition).HasMaxLength(64).IsRequired();
             e.HasIndex(x => new { x.UserId, x.IpPartition, x.CreatedAt });
+        });
+
+        b.Entity<EmailOutbox>(e =>
+        {
+            e.ToTable("email_outbox");
+            e.HasKey(x => x.Id);
+            e.Property(x => x.Kind).HasMaxLength(20).IsRequired();
+            e.Property(x => x.RecipientEmail).HasMaxLength(320);
+            e.Property(x => x.PayloadJson).HasColumnType("jsonb");
+            e.Property(x => x.Status).HasMaxLength(10).IsRequired();
+            e.Property(x => x.LastError).HasMaxLength(1000);
+            e.HasIndex(x => new { x.Status, x.SendAfter });
+            // Spec §7.10: at most one digest email per stage per user per day.
+            e.HasIndex(x => new { x.UserId, x.Kind, x.DigestDate }).IsUnique().HasFilter("digest_date IS NOT NULL");
+            e.HasMany(x => x.Items).WithOne().HasForeignKey(i => i.OutboxId).OnDelete(DeleteBehavior.Cascade);
+        });
+
+        b.Entity<EmailOutboxItem>(e =>
+        {
+            e.ToTable("email_outbox_items");
+            e.HasKey(x => x.Id);
+            e.Property(x => x.Slug).HasMaxLength(64).IsRequired();
+            e.HasIndex(x => x.OutboxId);
+        });
+
+        b.Entity<EmailSuppression>(e =>
+        {
+            e.ToTable("email_suppressions");
+            e.HasKey(x => x.Email);
+            e.Property(x => x.Email).HasMaxLength(320);
+            e.Property(x => x.Reason).HasMaxLength(200).IsRequired();
         });
     }
 }

@@ -3,6 +3,7 @@
   <ItemGroup>
     <ProjectReference Include="..\..\Zaagl.SharedKernel\Zaagl.SharedKernel.csproj" />
     <ProjectReference Include="..\Billing\Zaagl.Modules.Billing.csproj" />
+    <ProjectReference Include="..\Links\Zaagl.Modules.Links.csproj" />
   </ItemGroup>
 
   <ItemGroup>

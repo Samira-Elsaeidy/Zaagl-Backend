@@ -79,14 +79,37 @@ no assertion) is deferred - not built in this phase.
 | Reinstating a wrong takedown (`POST .../reinstate`), bulk takedowns by host/creator-key/owner, reports endpoint, admin disable/enable | **Not built.** No admin HTTP API exists at all yet (no `Admin` role check wired to any route) | **Not started** - `TakedownService`/`SafetyRecheckJob` are real and used internally, but every admin-facing route in spec §7.9's table (`/api/admin/*`, `/api/reports`) is still missing |
 | `app.blocked_aliases` entries are checked in alias creation so a blocked alias can never be reclaimed | `AbuseControlsTests.Blocked_alias_cannot_be_reclaimed_by_a_new_creation`; checked under the alias advisory lock in both `CreateAsync` and `CreateGuestAsync` | Covered for creation. **Not yet re-checked on renewal** (renewal never changes the slug, so this matters only if a future feature lets an owner move a link to a different alias - not built) |
 
+## Admin API (spec §7.9, §7.11, §7.15)
+
+| Item | Test | Status |
+|---|---|---|
+| Admin route gating: role + TOTP (session JWT only carries role "Admin" after TOTP passed at login) + `Admin:AllowedNetworks` CIDR | `AdminNetworkHandler`/the `Admin` authorization policy (built Phase 3, connected to routes this phase) | **Not live-verified end-to-end this phase** (needs a TOTP-enrolled admin + a real request walk); mechanism itself unchanged from Phase 3 |
+| User list/disable(+links)/enable(+links) | `AdminApiTests.Owner_links_disabled_and_restored_as_user_disabled_kind_only` (Links-side query); Identity-side methods not unit-tested this phase | Partially covered |
+| Link admin view/disable/enable/reinstate | Exercised indirectly via `TakedownService`/blocklist/reputation tests; no test drives the admin endpoints themselves | **Not directly tested** - the HTTP layer is thin composition over already-tested services |
+| Bulk takedowns (host/creator-key/owner/date filter, chunked at 1,000, dry-run) | `AdminApiTests.Bulk_takedown_by_host_disables_matching_links_and_skips_others` | Covered for the host filter; creator-key/owner/date filters and `blockDestination`/`dryRun` paths not separately tested |
+| Public reports + admin list/resolve | `AdminApiTests.Report_lifecycle_create_list_resolve` | Covered |
+| Blocked-destinations/blocked-aliases/alias-denylist CRUD | Entities and uniqueness constraints only; no dedicated CRUD test | **Not directly tested** |
+| Alias freezes: manual declare/list/end, 60s-cached active-freeze check wired into both create paths | `AdminApiTests.Alias_freeze_checker_*` (2 tests) | Covered for the checker. **The automatic coordinator-driven sync job is not built** - only the manual/operator source exists (spec's heuristic detection via `restore_detected_at` is not wired) |
+| Allocator view | Thin proxy to the coordinator's `/v1/status`; not tested | **Not tested** |
+
+## Email (spec §7.10)
+
+| Item | Test | Status |
+|---|---|---|
+| Transactional outbox + dispatcher (claim batch, suppress, cancel-if-stale, send, retry/backoff, permanent-failure suppression) | `EmailJobsTests` (6 tests) against real Postgres | Covered |
+| Account emails: confirm-email, password-reset, account-exists, security-notice | Queued from `IdentityService`; confirm-email/password-reset send-path covered by `EmailJobsTests`; account-exists/security-notice covered by template/dispatch tests, not by a full registration-to-send integration test | Mostly covered |
+| **Documented deviation**: confirm-email/password-reset tokens are generated eagerly at queue time (unchanged from Phase 3), not by the dispatcher at send time - the outbox payload for these two kinds does hold the raw token, unlike the spec's literal text. See the doc comment on `EmailOutbox` for the full rationale (avoiding a breaking rework of 13 already-passing Phase 3 tests for a marginal reduction in token exposure window). | N/A (deliberate, documented) | **Deviation, not a gap** |
+| Daily digest: expiring/expired/purge qualification rules, one email per stage per user per day (partial unique index), item re-validation at send time | `EmailJobsTests.Digest_job_queues_at_most_one_per_stage_per_user_per_day`; `LinkDigestSource`'s SQL rules not separately tested against real link rows | Partially covered - the job itself is tested with a fake candidate source, not against real `Link` rows going through every qualification rule |
+| Email suppression webhook (`POST /api/webhooks/email`, HMAC-signed) | Not tested | **Not tested** - signature verification and the bounce/complaint branch exist but have no automated test |
+| Templates: plain text + simple HTML | `EmailTemplates` static methods, inline strings (no templating engine, no separate files under `src/Zaagl.Api/Email/Templates` as the spec's literal text suggests) | **Scoped simplification**, documented here rather than built as a templating layer |
+| Outbox/idempotency-key/refresh-token/abuse-evidence cleanup jobs (spec §7.8's "other" row) | Not built | **Not started** |
+| "Once a day at `Notifications:DailyRunUtc`" | Implemented as "once per UTC day, after `Email:DailyRunUtc` has passed" via a 15-minute poll loop, not a precise scheduler - acceptable for a single-instance year-1 deployment | Covered with a noted simplification |
+
 ## Deferred entirely (not started this phase)
 
-Every MUST NOT and guarantee tied to: the full admin HTTP API (users, admin link view/disable/enable/
-reinstate, reports, bulk takedowns, blocked-destinations/blocked-aliases/alias-denylist CRUD, alias-freeze
-endpoints, allocator view) and its `Admin` role + TOTP + `Admin:AllowedNetworks` gating end-to-end,
-quarantine/purge lifecycle beyond what §7.8's purge job already covers, accounts rework beyond the
-fingerprint check (§7.4), email (§7.10), alias restore freeze (§7.11), account deletion and export
-(§7.14), the allocator sink as a real S3-compatible bucket (§6.4), chaos/failpoint test suites (§8.2,
-§8.3), NetArchTest architecture rules, Stryker mutation testing, and `tools/traceability-check` itself.
-None of these have rows here because fabricating "covered" rows for unbuilt work is explicitly against
+Every MUST NOT and guarantee tied to: account deletion and export (§7.14), the automatic coordinator-driven
+alias-restore-freeze sync job (§7.11 - the manual/operator path is built, see above), the allocator sink as
+a real S3-compatible bucket (§6.4), chaos/failpoint test suites (§8.2, §8.3), NetArchTest architecture
+rules, Stryker mutation testing, and `tools/traceability-check` itself. None of these have rows here
+because fabricating "covered" rows for unbuilt work is explicitly against
 this document's purpose.

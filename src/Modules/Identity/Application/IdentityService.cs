@@ -79,6 +79,7 @@ public sealed class IdentityService(
         }
         else
         {
+            await EmailQueue.QueueAccountEmailAsync(db, existing.Id, EmailKinds.AccountExists, null, null, ct);
             logger.LogInformation("Register: address {Email} already has a confirmed account; queued account-exists notice.", email);
         }
 
@@ -95,8 +96,8 @@ public sealed class IdentityService(
             TokenHash = hash,
             ExpiresAt = DateTime.UtcNow.Add(ConfirmTokenLifetime),
         });
-        await db.SaveChangesAsync(ct);
-        logger.LogInformation("Queued confirm-email for user {UserId}: token {Token} (dev-mode, no real email yet).", user.Id, raw);
+        await EmailQueue.QueueAccountEmailAsync(db, user.Id, EmailKinds.ConfirmEmail, new ConfirmEmailPayload(raw), null, ct);
+        logger.LogInformation("Queued confirm-email for user {UserId} (dev-mode devOnlyConfirmToken also returned).", user.Id);
         return raw;
     }
 
@@ -140,8 +141,8 @@ public sealed class IdentityService(
             TokenHash = hash,
             ExpiresAt = DateTime.UtcNow.Add(ResetTokenLifetime),
         });
-        await db.SaveChangesAsync(ct);
-        logger.LogInformation("Queued password-reset for user {UserId}: token {Token} (dev-mode, no real email yet).", user.Id, raw);
+        await EmailQueue.QueueAccountEmailAsync(db, user.Id, EmailKinds.PasswordReset, new PasswordResetPayload(raw), null, ct);
+        logger.LogInformation("Queued password-reset for user {UserId} (dev-mode devOnlyConfirmToken also returned).", user.Id);
         return raw;
     }
 
@@ -166,7 +167,9 @@ public sealed class IdentityService(
             .ExecuteUpdateAsync(s => s.SetProperty(k => k.RevokedAt, DateTime.UtcNow), ct);
 
         await db.SaveChangesAsync(ct);
-        logger.LogInformation("Password reset for user {UserId}: all refresh tokens and API keys revoked, security-notice would be queued here.", userId);
+        await EmailQueue.QueueAccountEmailAsync(db, userId, EmailKinds.SecurityNotice,
+            new SecurityNoticePayload("Your password was just reset and every other session was signed out."), user.Email, ct);
+        logger.LogInformation("Password reset for user {UserId}: all refresh tokens and API keys revoked, security-notice queued.", userId);
         return Result<bool>.Ok(true);
     }
 
@@ -407,6 +410,15 @@ public sealed class IdentityService(
         db.ApiKeys.Add(key);
         await db.SaveChangesAsync(ct);
         return Result<CreatedApiKeyDto>.Ok(new(new(key.Id, key.Name, key.Prefix, key.Scopes, key.CreatedAt, null), secret));
+    }
+
+    /// <summary>Spec §7.10: the email webhook adds an address on a hard bounce or complaint.</summary>
+    public async Task SuppressEmailAsync(string email, string reason, CancellationToken ct)
+    {
+        var normalized = NormalizeEmail(email);
+        if (normalized is null || await db.EmailSuppressions.AnyAsync(s => s.Email == normalized, ct)) return;
+        db.EmailSuppressions.Add(new EmailSuppression { Email = normalized, Reason = reason });
+        await db.SaveChangesAsync(ct);
     }
 
     public async Task<bool> RevokeApiKeyAsync(Guid userId, Guid keyId, CancellationToken ct) =>
