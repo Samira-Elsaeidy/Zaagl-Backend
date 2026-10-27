@@ -46,6 +46,7 @@ if (app.Services.GetRequiredService<Zaagl.SharedKernel.Testing.IFailpoints>() is
 var hwmStore = app.Services.GetRequiredService<HwmStore>();
 var sink = app.Services.GetRequiredService<IAllocatorSink>();
 var reservations = app.Services.GetRequiredService<ReservationService>();
+var failpoints = app.Services.GetRequiredService<Zaagl.SharedKernel.Testing.IFailpoints>();
 var recovery = app.Services.GetRequiredService<RecoveryService>();
 
 var gate = new SemaphoreSlim(1, 1);
@@ -182,6 +183,7 @@ app.MapPost("/v1/leases", async (LeaseRequest body) =>
                 await tx.RollbackAsync();
                 return Results.StatusCode(StatusCodes.Status503ServiceUnavailable);
             }
+            await failpoints.HitAsync("coordinator.after-length-marker");
 
             currentLength = nextLength;
             nextOffset = 0;
@@ -210,6 +212,7 @@ app.MapPost("/v1/leases", async (LeaseRequest body) =>
                 });
             try { await hwmStore.WriteAsync(newHwm, CancellationToken.None); }
             catch (Exception) { await tx.RollbackAsync(); return Results.StatusCode(StatusCodes.Status503ServiceUnavailable); }
+            await failpoints.HitAsync("coordinator.after-hwm-fsync");
         }
 
         // Step 7a: archive-confirmed reservation must also cover this lease.
@@ -246,7 +249,9 @@ app.MapPost("/v1/leases", async (LeaseRequest body) =>
             leaseId = (long)(await insertCmd.ExecuteScalarAsync())!;
         }
 
+        await failpoints.HitAsync("coordinator.before-commit");
         await tx.CommitAsync();
+        await failpoints.HitAsync("coordinator.after-commit-before-response");
         return Results.Ok(new LeaseResponse(leaseId, body.PoolId, currentLength, 1, start, end));
     }
     finally

@@ -72,7 +72,7 @@ no assertion) is deferred - not built in this phase.
 | Destination reputation check (Web Risk), cached 24h per URL, 400ms timeout, fail-open on timeout/error | Unchanged mechanism from Phase 0, now wrapped with budget+cache (`WebRiskChecker`); live-verified `ApiKey` empty -> skipped | Covered for the fail-open/skip paths; **no automated test calls the real Web Risk API** (needs a live key) |
 | Shared monthly lookup budget, one row per month, atomic reserve-before-lookup, exhausted -> fail-open | `WebRiskChecker.TryReserveBudgetAsync` (private; exercised indirectly) | **Not directly unit-tested** - would need a key-configured test double; tracked as a gap |
 | Destination blocklist: host, host-suffix, url-prefix; seeded `Safety:DenyRedirectorHosts` | `AbuseControlsTests` (4 tests) against real Postgres | Covered |
-| Checked in Phase B (create) | `LinkService.PrepareAsync` calls `IDestinationBlocklist` before the reputation lookup | Covered by construction; **not checked again in PATCH yet** (`UpdateAsync` calls the same `PrepareAsync`, so it IS re-checked on update too - confirmed by code path, not a dedicated test) |
+| Destination blocklist checked inside the transaction that creates/edits the link (spec §11 rule 37) | **Fixed.** Previously checked in `PrepareAsync` (Phase B, before the transaction opens) - a real MUST-NOT violation, found and fixed after the fact. Now checked inside the transaction in `CreateAsync`, `CreateGuestAsync` and `UpdateAsync`, right after the transaction opens (the reputation lookup, an external call, correctly stays in Phase B per rule 7 - only the local blocklist query moved) | Covered by construction in all three callers; no dedicated regression test added for the "inside vs. outside the transaction" distinction itself (hard to assert without inspecting transaction state directly) |
 | Takedown routine: sets disabled fields (overwriting admin/user-disabled), blocks a custom alias, writes abuse evidence | `AbuseControlsTests.Takedown_*` (2 tests) | Covered |
 | Destination re-check job, every 6h, claims a batch under a short lock, looks up outside the transaction, disables on an unsafe verdict, resets `SafetyCheckedAt` to null on a fail-open lookup so it retries | `AbuseControlsTests.Recheck_*` (3 tests) | Covered |
 | CAPTCHA (Turnstile), required by default, 300s token freshness, action+hostname bound to real tokens (sandbox test secrets skip that binding, matching their canned response) | `CaptchaTests` (NoOp only); live verification against the real Cloudflare sandbox endpoint (missing token -> `captcha-required`; the documented always-pass test token -> guest link created) | Covered for guest creation only. **Not wired into** registration, resend-confirmation, forgot-password or reports - those endpoints don't exist yet (Identity module predates this phase) or are deferred below |
@@ -130,16 +130,28 @@ exercised by a more targeted test elsewhere:
 | Ordinary admin enable of a safety/abuse-disabled link → `409`; reinstate works | `Ordinary_enable_is_refused_for_a_takedown_but_reinstate_clears_it` |
 | Unconfirmed account cannot sign in | `Unconfirmed_account_cannot_sign_in_even_with_the_correct_password` |
 
-**Not built**: the other ~36 rows of spec's §8.2 table (coordinator failpoint-at-every-step tests, HWM
-crash-recovery simulation, WAL-archive-stopped/incomplete scenarios, the 1,000,000-unknown-codes memory
-test, guest-quota-30-parallel-requests race, and the rest); the container-level chaos suite
-(`scripts/chaos.sh`, real kill/reboot/restore on the real clock, spec §8.2's "suite (b)"); the in-process
-shared-`FakeTimeProvider` harness driving both the API and the coordinator together (spec §8.3's "suite
-(a)" as a dedicated mechanism - individual tests in this project use their own ad hoc fake clocks per
-file, not one shared harness); the failpoints themselves (`IFailpoints`' no-op/production seam exists from
-Phase 1, but no test registers a non-no-op implementation); and the global invariant checks spec lists
-after "every scenario" (zero `code_integrity_failures_total`, no code appears twice in the whole
-acknowledged log, etc. - these would need the load generator and checker spec describes, neither built).
+**Coordinator failpoint tests** (`tests/Zaagl.Coordinator.Tests/StartupCheckTests.cs`, added after the above):
+the `IFailpoints` seam (built in Phase 1, never previously called from anywhere) is now wired into the
+real `/v1/leases` handler at the 4 named points spec §8.3 lists (`coordinator.after-length-marker`,
+`coordinator.after-hwm-fsync`, `coordinator.before-commit`, `coordinator.after-commit-before-response`).
+Three tests (`Crash_after_hwm_fsync_before_commit_self_heals_on_restart`, `Crash_before_commit_...`,
+`Crash_after_commit_before_response_does_not_lose_the_lease_on_restart`) host the real coordinator app
+(`WebApplicationFactory<Program>`, not a reimplementation) against the real local dev Postgres, register a
+throwing `IFailpoints` at one named point, confirm the crash is observed, then build a **fresh** host
+(same HWM file, sink directory and database - a genuine restart) with `NoOpFailpoints` and confirm leasing
+self-heals to `ok` and a subsequent lease succeeds. **Not covered**: the `coordinator.after-length-marker`
+point has the hook wired but no dedicated test drives a length rollover to hit it; the test only proves
+observable recovery (leasing reaches `ok`, a lease succeeds), not the exact HWM/offset arithmetic at each
+crash point.
+
+**Still not built**: the other ~33 rows of spec's §8.2 table (WAL-archive-stopped/incomplete scenarios,
+the 1,000,000-unknown-codes memory test, guest-quota-30-parallel-requests race, and the rest); the
+container-level chaos suite (`scripts/chaos.sh`, real kill/reboot/restore on the real clock, spec §8.2's
+"suite (b)"); the in-process shared-`FakeTimeProvider` harness driving both the API and the coordinator
+together (spec §8.3's "suite (a)" as a dedicated mechanism - individual tests in this project use their
+own ad hoc fake clocks per file, not one shared harness); and the global invariant checks spec lists after
+"every scenario" (zero `code_integrity_failures_total`, no code appears twice in the whole acknowledged
+log, etc. - these would need the load generator and checker spec describes, neither built).
 
 ## Deferred entirely (not started this phase)
 

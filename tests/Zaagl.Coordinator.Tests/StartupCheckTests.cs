@@ -1,7 +1,13 @@
+using System.Net.Http.Json;
+using System.Text.Json;
+using Microsoft.AspNetCore.Hosting;
+using Microsoft.AspNetCore.Mvc.Testing;
+using Microsoft.Extensions.DependencyInjection;
 using Npgsql;
 using Zaagl.Coordinator;
 using Zaagl.SharedKernel.Coordination;
 using Zaagl.SharedKernel.ShortCodes;
+using Zaagl.SharedKernel.Testing;
 
 namespace Zaagl.Coordinator.Tests;
 
@@ -162,5 +168,92 @@ public sealed class StartupCheckTests : IDisposable
         cmd.Parameters.AddWithValue((short)length);
         cmd.Parameters.AddWithValue(offset);
         await cmd.ExecuteNonQueryAsync();
+    }
+
+    // ---- Failpoint tests (spec §8.3): host the real coordinator app (via WebApplicationFactory against
+    // Program's own minimal-API lease handler, not a reimplementation), crash it exactly at a named point,
+    // then start a fresh host against the same HWM file/sink/database to prove the restart self-heals.
+
+    private sealed class ThrowAtFailpoint(string targetName) : IFailpoints
+    {
+        public bool Hit { get; private set; }
+        public Task HitAsync(string name, CancellationToken ct = default)
+        {
+            if (name != targetName) return Task.CompletedTask;
+            Hit = true;
+            throw new InvalidOperationException($"Simulated crash at failpoint '{name}'.");
+        }
+    }
+
+    private WebApplicationFactory<Program> MakeFactory(string hwmPath, string sinkDir, IFailpoints failpoints) =>
+        new WebApplicationFactory<Program>().WithWebHostBuilder(builder =>
+        {
+            builder.UseEnvironment("Testing"); // required for a non-no-op IFailpoints (spec MUST-NOT #33)
+            builder.UseSetting("ConnectionStrings:Postgres", "Host=localhost;Port=5433;Database=zaagl;Username=zaagl;Password=zaagl_dev");
+            builder.UseSetting("Coordinator:StateFilePath", hwmPath);
+            builder.UseSetting("Allocator:Sink:LocalFileSystem:Directory", sinkDir);
+            builder.ConfigureServices(services => services.AddSingleton(failpoints));
+        });
+
+    private static async Task<JsonElement> ReadJsonAsync(HttpResponseMessage response) =>
+        (await response.Content.ReadFromJsonAsync<JsonElement>())!;
+
+    [Fact]
+    public async Task Crash_after_hwm_fsync_before_commit_self_heals_on_restart()
+    {
+        await CrashAndRecoverAsync("coordinator.after-hwm-fsync");
+    }
+
+    [Fact]
+    public async Task Crash_before_commit_self_heals_on_restart()
+    {
+        await CrashAndRecoverAsync("coordinator.before-commit");
+    }
+
+    [Fact]
+    public async Task Crash_after_commit_before_response_does_not_lose_the_lease_on_restart()
+    {
+        await CrashAndRecoverAsync("coordinator.after-commit-before-response");
+    }
+
+    /// <summary>
+    /// Proves R1/R8 at one exact named point: crash there, restart against the same HWM file, sink and
+    /// database, and confirm leasing recovers to "ok" (the startup check's row-3 self-heal, already proven
+    /// in isolation by Row3_database_behind_hwm_catches_up_and_stays_ok above) and a subsequent lease
+    /// succeeds cleanly - no stuck "blocked" state, no exception on the next attempt.
+    /// </summary>
+    private async Task CrashAndRecoverAsync(string failpointName)
+    {
+        var fingerprint = "test-fingerprint";
+        var hwmPath = Path.Combine(_tempDir, $"{failpointName.Replace('.', '-')}-hwm.json");
+        var sinkDir = Path.Combine(_tempDir, $"{failpointName.Replace('.', '-')}-sink");
+        var throwing = new ThrowAtFailpoint(failpointName);
+
+        await using (var factory1 = MakeFactory(hwmPath, sinkDir, throwing))
+        {
+            var client = factory1.CreateClient();
+            var initResponse = await client.PostAsJsonAsync("/v1/admin/init", new { Operator = "test", KeyFingerprint = fingerprint });
+            Assert.True(initResponse.IsSuccessStatusCode, await initResponse.Content.ReadAsStringAsync());
+
+            // TestServer rethrows an unhandled request-pipeline exception to the caller rather than
+            // turning it into a 500 (there's no UseExceptionHandler in this coordinator) - the thrown
+            // exception itself IS the "failed request" here, same as a real crashed process never
+            // responding.
+            await Assert.ThrowsAnyAsync<Exception>(() => client.PostAsJsonAsync("/v1/leases",
+                new { RequestId = Guid.NewGuid(), NodeId = "n1", PoolId = "default", KeyFingerprint = fingerprint }));
+            Assert.True(throwing.Hit);
+        }
+
+        // "Restart": a fresh host (fresh StartupCheck.EvaluateAsync run, per Program.cs's own startup
+        // line), same HWM file/sink/database, no-op failpoints from here on.
+        await using var factory2 = MakeFactory(hwmPath, sinkDir, new NoOpFailpoints());
+        var client2 = factory2.CreateClient();
+
+        var status = await ReadJsonAsync(await client2.GetAsync("/v1/status"));
+        Assert.Equal("ok", status.GetProperty("leasing").GetString());
+
+        var secondLease = await client2.PostAsJsonAsync("/v1/leases",
+            new { RequestId = Guid.NewGuid(), NodeId = "n1", PoolId = "default", KeyFingerprint = fingerprint });
+        Assert.True(secondLease.IsSuccessStatusCode, await secondLease.Content.ReadAsStringAsync());
     }
 }

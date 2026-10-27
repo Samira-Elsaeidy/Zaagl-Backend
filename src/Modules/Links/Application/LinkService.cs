@@ -146,6 +146,13 @@ public sealed class LinkService(
                 }
             }
 
+            // Spec §11 rule 37: checked inside this transaction, not in Phase B.
+            if (await blocklist.IsBlockedAsync(n.TargetHost, n.Destination, ct))
+            {
+                await tx.RollbackAsync(ct);
+                return Error.Validation("destination-blocked: this destination is not allowed.");
+            }
+
             if (customSlug is not null)
             {
                 // Spec §7.11: no new alias can be claimed while a freeze is active.
@@ -326,6 +333,13 @@ public sealed class LinkService(
                 return Error.TooManyRequests($"quota: the guest link limit for this network ({exceeded}) has been reached.");
             }
 
+            // Spec §11 rule 37: checked inside this transaction, not in Phase B.
+            if (await blocklist.IsBlockedAsync(n.TargetHost, n.Destination, ct))
+            {
+                await tx.RollbackAsync(ct);
+                return Error.Validation("destination-blocked: this destination is not allowed.");
+            }
+
             if (idempotencyKey is not null)
             {
                 var claimed = await TryClaimIdempotencyKeyAsync(scope, idempotencyKey, requestHash!, ct);
@@ -477,13 +491,25 @@ public sealed class LinkService(
         var limits = await plans.GetLimitsAsync(userId, ct);
         var prepared = await PrepareAsync(userId, input with { CustomSlug = null }, limits, isCreate: false, ct);
         if (prepared.Error is not null) return prepared.Error;
+        var n = prepared.Value!;
+
+        await using var tx = await db.Database.BeginTransactionAsync(ct);
+        await db.Database.ExecuteSqlRawAsync("SET LOCAL lock_timeout = '3s'", ct);
+
+        // Spec §11 rule 28/37: checked inside the transaction that edits the link.
+        if (await blocklist.IsBlockedAsync(n.TargetHost, n.Destination, ct))
+        {
+            await tx.RollbackAsync(ct);
+            return Error.Validation("destination-blocked: this destination is not allowed.");
+        }
 
         if (input.Rules is not null) db.Destinations.RemoveRange(link.Rules);
-        ApplyInput(link, input, prepared.Value!);
-        link.SafetyCheckedAt = prepared.Value!.SafetyChecked ? time.GetUtcNow().UtcDateTime : null;
+        ApplyInput(link, input, n);
+        link.SafetyCheckedAt = n.SafetyChecked ? time.GetUtcNow().UtcDateTime : null;
         RecomputePurgeAfter(link);
         link.UpdatedAt = time.GetUtcNow().UtcDateTime;
         await db.SaveChangesAsync(ct);
+        await tx.CommitAsync(ct);
 
         await cache.RemoveAsync(LinkCache.Key(link.SlugKey), ct);
         await invalidator.NotifyChangedAsync([link.SlugKey], ct);
@@ -850,9 +876,8 @@ public sealed class LinkService(
                 return Error.Validation("Folder not found.");
         }
 
-        if (await blocklist.IsBlockedAsync(n.TargetHost, n.Destination, ct))
-            return Error.Validation("destination-blocked: this destination is not allowed.");
-
+        // Spec §11 rule 37: destination/alias blocks are checked inside the transaction that creates,
+        // edits or reinstates the link, not here in Phase B - see each caller's transaction body.
         var urls = n.Rules.Select(r => r.Url).Append(n.Destination).Distinct();
         var allChecked = true;
         foreach (var url in urls)
