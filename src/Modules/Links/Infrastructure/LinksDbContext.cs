@@ -16,6 +16,9 @@ public sealed class LinksDbContext(DbContextOptions<LinksDbContext> options) : D
     public DbSet<BlockedDestination> BlockedDestinations => Set<BlockedDestination>();
     public DbSet<BlockedAlias> BlockedAliases => Set<BlockedAlias>();
     public DbSet<AbuseEvidence> AbuseEvidence => Set<AbuseEvidence>();
+    public DbSet<AbuseReport> AbuseReports => Set<AbuseReport>();
+    public DbSet<AliasDenylistEntry> AliasDenylist => Set<AliasDenylistEntry>();
+    public DbSet<AliasFreeze> AliasFreezes => Set<AliasFreeze>();
 
     protected override void OnModelCreating(ModelBuilder b)
     {
@@ -128,6 +131,41 @@ public sealed class LinksDbContext(DbContextOptions<LinksDbContext> options) : D
             e.Property(x => x.Reason).HasMaxLength(500);
             e.HasIndex(x => x.LinkId);
             e.HasIndex(x => x.KeepUntil);
+        });
+
+        b.Entity<AbuseReport>(e =>
+        {
+            e.ToTable("abuse_reports");
+            e.HasKey(x => x.Id);
+            e.Property(x => x.Id).ValueGeneratedNever();
+            e.Property(x => x.Code).HasMaxLength(64);
+            e.Property(x => x.Url).HasMaxLength(2048);
+            e.Property(x => x.Category).HasMaxLength(50).IsRequired();
+            e.Property(x => x.Details).HasMaxLength(2000);
+            e.Property(x => x.ReporterEmail).HasMaxLength(255);
+            e.Property(x => x.Status).HasMaxLength(20).IsRequired();
+            e.Property(x => x.Resolution).HasMaxLength(2000);
+            e.HasIndex(x => x.Status);
+        });
+
+        b.Entity<AliasDenylistEntry>(e =>
+        {
+            e.ToTable("alias_denylist");
+            e.HasKey(x => x.Id);
+            e.Property(x => x.Id).ValueGeneratedNever();
+            e.Property(x => x.Pattern).HasMaxLength(64).IsRequired();
+            e.Property(x => x.Kind).HasMaxLength(10).IsRequired();
+            e.HasIndex(x => new { x.Kind, x.Pattern }).IsUnique();
+        });
+
+        b.Entity<AliasFreeze>(e =>
+        {
+            e.ToTable("alias_freezes");
+            e.HasKey(x => x.Id);
+            e.Property(x => x.Id).ValueGeneratedNever();
+            e.Property(x => x.Source).HasMaxLength(50).IsRequired();
+            e.Property(x => x.Reason).HasMaxLength(500);
+            e.HasIndex(x => new { x.StartsAt, x.Until });
         });
     }
 }

@@ -20,6 +20,24 @@ public interface IDestinationBlocklist
     Task<bool> IsBlockedAsync(string targetHost, string normalizedUrl, CancellationToken ct);
 }
 
+/// <summary>Spec §4.5 rule 5: an admin-managed denylist layered on top of SlugRules' static reserved
+/// words - patterns added after the fact (e.g. a brand name someone keeps squatting).</summary>
+public interface IAliasDenylist
+{
+    Task<bool> IsDeniedAsync(string slugKey, CancellationToken ct);
+}
+
+public sealed class AliasDenylist(LinksDbContext db) : IAliasDenylist
+{
+    public async Task<bool> IsDeniedAsync(string slugKey, CancellationToken ct)
+    {
+        var entries = await db.AliasDenylist.AsNoTracking().ToListAsync(ct);
+        return entries.Any(e => e.Kind == "prefix"
+            ? slugKey.StartsWith(e.Pattern, StringComparison.OrdinalIgnoreCase)
+            : string.Equals(slugKey, e.Pattern, StringComparison.OrdinalIgnoreCase));
+    }
+}
+
 public sealed class DestinationBlocklist(LinksDbContext db, IOptions<SafetyOptions> safety) : IDestinationBlocklist
 {
     public async Task<bool> IsBlockedAsync(string targetHost, string normalizedUrl, CancellationToken ct)
@@ -41,6 +59,24 @@ public sealed class DestinationBlocklist(LinksDbContext db, IOptions<SafetyOptio
             if (match) return true;
         }
         return false;
+    }
+}
+
+/// <summary>Spec §7.11: while an alias freeze is active, no new alias can be claimed by anyone (generated
+/// links, renewals, deletes and redirects are unaffected). Cached 60s per the spec's own text.</summary>
+public sealed class AliasFreezeChecker(LinksDbContext db, HybridCache cache, TimeProvider time)
+{
+    public async Task<AliasFreeze?> GetActiveFreezeAsync(CancellationToken ct)
+    {
+        var now = time.GetUtcNow().UtcDateTime;
+        return await cache.GetOrCreateAsync(
+            "alias-freeze:active",
+            async innerCt => await db.AliasFreezes.AsNoTracking()
+                .Where(f => f.EndedAt == null && f.StartsAt <= now && now < f.Until)
+                .OrderByDescending(f => f.Until)
+                .FirstOrDefaultAsync(innerCt),
+            new HybridCacheEntryOptions { Expiration = TimeSpan.FromSeconds(60) },
+            cancellationToken: ct);
     }
 }
 
@@ -161,6 +197,51 @@ public sealed class SafetyRecheckJob(IServiceScopeFactory scopes, TimeProvider c
                 logger.LogWarning("Disabled link {LinkId} after an unsafe re-check verdict ({Threat})", link.Id, result.Threat);
             }
         }
+    }
+}
+
+/// <summary>Spec §7.15: <c>POST /api/reports</c> (public, CAPTCHA-gated) plus the admin list/resolve side.</summary>
+public sealed class ReportService(LinksDbContext db, TimeProvider time)
+{
+    public async Task<AbuseReport> CreateAsync(string? code, string? url, string category, string? details, string? reporterEmail, CancellationToken ct)
+    {
+        var report = new AbuseReport
+        {
+            Code = code,
+            Url = url,
+            Category = category,
+            Details = details,
+            ReporterEmail = reporterEmail,
+            CreatedAt = time.GetUtcNow().UtcDateTime,
+        };
+        db.AbuseReports.Add(report);
+        await db.SaveChangesAsync(ct);
+        return report;
+    }
+
+    public async Task<(IReadOnlyList<AbuseReport> Items, int Total)> ListAsync(string? status, int page, int pageSize, CancellationToken ct)
+    {
+        page = Math.Max(1, page);
+        pageSize = Math.Clamp(pageSize, 1, 100);
+        var q = db.AbuseReports.AsNoTracking().AsQueryable();
+        if (!string.IsNullOrWhiteSpace(status)) q = q.Where(r => r.Status == status);
+
+        var total = await q.CountAsync(ct);
+        var items = await q.OrderByDescending(r => r.CreatedAt)
+            .Skip((page - 1) * pageSize).Take(pageSize).ToListAsync(ct);
+        return (items, total);
+    }
+
+    public async Task<bool> ResolveAsync(Guid id, string status, string? resolution, CancellationToken ct)
+    {
+        var report = await db.AbuseReports.FirstOrDefaultAsync(r => r.Id == id, ct);
+        if (report is null) return false;
+
+        report.Status = status;
+        report.Resolution = resolution;
+        report.ResolvedAt = time.GetUtcNow().UtcDateTime;
+        await db.SaveChangesAsync(ct);
+        return true;
     }
 }
 

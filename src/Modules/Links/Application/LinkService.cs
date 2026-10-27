@@ -38,6 +38,8 @@ public sealed class LinkService(
     CreationGate creationGate,
     IUrlReputationChecker reputation,
     IDestinationBlocklist blocklist,
+    IAliasDenylist aliasDenylist,
+    AliasFreezeChecker aliasFreeze,
     HybridCache cache,
     ILinkCacheInvalidator invalidator,
     IValidator<LinkInput> validator,
@@ -146,6 +148,13 @@ public sealed class LinkService(
 
             if (customSlug is not null)
             {
+                // Spec §7.11: no new alias can be claimed while a freeze is active.
+                if (await aliasFreeze.GetActiveFreezeAsync(ct) is { } freeze)
+                {
+                    await tx.RollbackAsync(ct);
+                    return Error.Conflict($"alias-frozen: new aliases are frozen until {freeze.Until:O}.");
+                }
+
                 // Serialise concurrent creators of the same alias (spec §7.2 step 10.2): without this,
                 // two requests for the same brand-new alias could both pass the "does it exist" check.
                 await db.Database.ExecuteSqlInterpolatedAsync(
@@ -160,6 +169,11 @@ public sealed class LinkService(
                 {
                     await tx.RollbackAsync(ct);
                     return Error.Conflict("alias-unavailable: this slug was taken down and is not available.");
+                }
+                if (await aliasDenylist.IsDeniedAsync(key, ct))
+                {
+                    await tx.RollbackAsync(ct);
+                    return Error.Validation("This slug is not allowed.");
                 }
 
                 var existingRow = await db.Links.Include(l => l.Policy)
@@ -326,6 +340,12 @@ public sealed class LinkService(
 
             if (customSlug is not null)
             {
+                if (await aliasFreeze.GetActiveFreezeAsync(ct) is { } freeze)
+                {
+                    await tx.RollbackAsync(ct);
+                    return Error.Conflict($"alias-frozen: new aliases are frozen until {freeze.Until:O}.");
+                }
+
                 await db.Database.ExecuteSqlInterpolatedAsync(
                     $"SELECT pg_advisory_xact_lock(hashtextextended('zaagl.alias:' || {customSlug}, 0))", ct);
 
@@ -334,6 +354,11 @@ public sealed class LinkService(
                 {
                     await tx.RollbackAsync(ct);
                     return Error.Conflict("alias-unavailable: this slug was taken down and is not available.");
+                }
+                if (await aliasDenylist.IsDeniedAsync(key, ct))
+                {
+                    await tx.RollbackAsync(ct);
+                    return Error.Validation("This slug is not allowed.");
                 }
 
                 var existingRow = await db.Links.Include(l => l.Policy)
@@ -646,6 +671,156 @@ public sealed class LinkService(
 
         var state = LinkStateCalculator.Compute(row.PurgeAfter, row.DeletedAt, row.DisabledAt, row.Expires, now);
         return state == LinkState.Purgeable ? new(true, null) : new(false, "This slug is already taken.");
+    }
+
+    // ---- Admin (spec §7.9) -------------------------------------------------
+
+    public async Task<Link?> AdminFindBySlugAsync(string slug, CancellationToken ct)
+    {
+        var key = SlugRules.Key(slug);
+        return await db.Links.Include(l => l.Policy).FirstOrDefaultAsync(l => l.SlugKey == key, ct);
+    }
+
+    public AdminLinkDto ToAdminDto(Link l)
+    {
+        var now = time.GetUtcNow().UtcDateTime;
+        var state = LinkStateCalculator.Compute(l.PurgeAfter, l.DeletedAt, l.DisabledAt, l.Policy?.ExpiresAt, now);
+        return new(
+            l.Id, l.Slug, l.DestinationUrl, l.TargetHost, l.OwnerId,
+            l.GuestCreatorKey is null ? null : Convert.ToHexString(l.GuestCreatorKey),
+            l.IsCustom, state.ToString().ToLowerInvariant(), l.DisabledKind, l.DisabledReason, l.DisabledAt,
+            l.DeletedAt, l.PurgeAfter, l.SafetyCheckedAt, l.CreatedAt);
+    }
+
+    /// <summary>Spec §7.9: <c>POST /api/admin/links/{code}/enable</c>. Refuses an abuse/safety takedown
+    /// (use reinstate instead) and a deleted link (`409`).</summary>
+    public async Task<Result<AdminLinkDto>> AdminEnableLinkAsync(string slug, CancellationToken ct)
+    {
+        var link = await AdminFindBySlugAsync(slug, ct);
+        if (link is null) return Error.NotFound("Link not found.");
+        if (link.DeletedAt is not null) return Error.Conflict("This link has been deleted.");
+        if (link.DisabledKind is DisabledKinds.Abuse or DisabledKinds.Safety) return Error.Conflict("takedown-active: use reinstate instead.");
+        if (link.DisabledAt is null) return Error.Conflict("This link is not disabled.");
+
+        link.DisabledAt = null;
+        link.DisabledKind = null;
+        link.DisabledReason = null;
+        await db.SaveChangesAsync(ct);
+        await cache.RemoveAsync(LinkCache.Key(link.SlugKey), ct);
+        await invalidator.NotifyChangedAsync([link.SlugKey], ct);
+        return Result<AdminLinkDto>.Ok(ToAdminDto(link));
+    }
+
+    /// <summary>Spec §7.15: reverses a wrong takedown. Re-checks the blocklist/reputation and the alias
+    /// lock before committing, same as a normal creation would.</summary>
+    public async Task<Result<AdminLinkDto>> ReinstateAsync(string slug, string reason, CancellationToken ct)
+    {
+        var link = await AdminFindBySlugAsync(slug, ct);
+        if (link is null) return Error.NotFound("Link not found.");
+        if (link.DisabledKind is not (DisabledKinds.Abuse or DisabledKinds.Safety))
+            return Error.Conflict("This link was not taken down.");
+
+        var result = await reputation.CheckAsync(link.DestinationUrl, ct);
+        if (!result.IsSafe)
+            return Error.Validation($"destination-unsafe: still flagged as unsafe ({FriendlyThreat(result.Threat)}).");
+        if (await blocklist.IsBlockedAsync(link.TargetHost, link.DestinationUrl, ct))
+            return Error.Validation("destination-blocked: this destination is still blocked.");
+
+        await using var tx = await db.Database.BeginTransactionAsync(ct);
+        if (link.IsCustom)
+            await db.Database.ExecuteSqlInterpolatedAsync(
+                $"SELECT pg_advisory_xact_lock(hashtextextended('zaagl.alias:' || {link.Slug}, 0))", ct);
+
+        link.DisabledAt = null;
+        link.DisabledKind = null;
+        link.DisabledReason = null;
+        if (link.IsCustom)
+            await db.BlockedAliases.Where(a => a.SlugKey == link.SlugKey).ExecuteDeleteAsync(ct);
+        await db.SaveChangesAsync(ct);
+        await tx.CommitAsync(ct);
+
+        await cache.RemoveAsync(LinkCache.Key(link.SlugKey), ct);
+        await invalidator.NotifyChangedAsync([link.SlugKey], ct);
+        return Result<AdminLinkDto>.Ok(ToAdminDto(link));
+    }
+
+    /// <summary>Spec §7.4: the Links-side half of admin user disable/enable (`disableLinks`/`restoreLinks`).
+    /// Only touches links not already individually disabled for a different reason, and never an
+    /// abuse/safety takedown - those stay disabled regardless of the owner's own state.</summary>
+    public async Task<int> AdminSetOwnerLinksDisabledAsync(Guid ownerId, bool disabled, CancellationToken ct)
+    {
+        var now = time.GetUtcNow().UtcDateTime;
+        var affectedKeys = await db.Links
+            .Where(l => l.OwnerId == ownerId && l.DeletedAt == null
+                && (l.DisabledKind == null || l.DisabledKind == DisabledKinds.UserDisabled))
+            .Select(l => l.SlugKey).ToListAsync(ct);
+
+        int rows;
+        if (disabled)
+        {
+            rows = await db.Links
+                .Where(l => l.OwnerId == ownerId && l.DeletedAt == null
+                    && (l.DisabledKind == null || l.DisabledKind == DisabledKinds.UserDisabled))
+                .ExecuteUpdateAsync(s => s
+                    .SetProperty(l => l.DisabledAt, now)
+                    .SetProperty(l => l.DisabledKind, DisabledKinds.UserDisabled), ct);
+        }
+        else
+        {
+            rows = await db.Links
+                .Where(l => l.OwnerId == ownerId && l.DeletedAt == null && l.DisabledKind == DisabledKinds.UserDisabled)
+                .ExecuteUpdateAsync(s => s
+                    .SetProperty(l => l.DisabledAt, (DateTime?)null)
+                    .SetProperty(l => l.DisabledKind, (string?)null), ct);
+        }
+
+        if (affectedKeys.Count > 0)
+        {
+            foreach (var key in affectedKeys) await cache.RemoveAsync(LinkCache.Key(key), ct);
+            await invalidator.NotifyChangedAsync(affectedKeys, ct);
+        }
+        return rows;
+    }
+
+    /// <summary>Spec §7.15 bulk takedowns. At least one filter is required by the caller; this method
+    /// trusts the caller already validated that. <paramref name="dryRun"/> only counts matches.</summary>
+    public async Task<int> AdminBulkTakedownAsync(
+        string? targetHost, byte[]? guestCreatorKey, Guid? ownerId, DateTime? createdFrom, DateTime? createdTo,
+        string reason, bool blockDestination, bool dryRun, TakedownService takedowns, CancellationToken ct)
+    {
+        var q = db.Links.Where(l => l.DeletedAt == null && l.DisabledKind == null);
+        if (targetHost is not null) q = q.Where(l => l.TargetHost == targetHost || l.TargetHost.EndsWith("." + targetHost));
+        if (guestCreatorKey is not null) q = q.Where(l => l.GuestCreatorKey == guestCreatorKey);
+        if (ownerId is not null) q = q.Where(l => l.OwnerId == ownerId);
+        if (createdFrom is not null) q = q.Where(l => l.CreatedAt >= createdFrom);
+        if (createdTo is not null) q = q.Where(l => l.CreatedAt <= createdTo);
+
+        var ids = await q.Select(l => l.Id).ToListAsync(ct);
+        if (dryRun) return ids.Count;
+
+        // Spec §7.0: chunks of at most 1,000 in id order.
+        foreach (var chunk in ids.OrderBy(id => id).Chunk(1000))
+        {
+            var links = await db.Links.Where(l => chunk.Contains(l.Id)).ToListAsync(ct);
+            foreach (var link in links)
+                await takedowns.TakeDownAsync(link, DisabledKinds.Abuse, reason, ct);
+        }
+
+        if (blockDestination && targetHost is not null && !await db.BlockedDestinations.AnyAsync(
+                b => b.Kind == BlockedDestinationKinds.HostSuffix && b.Pattern == targetHost, ct))
+        {
+            await db.Database.ExecuteSqlInterpolatedAsync(
+                $"SELECT pg_advisory_xact_lock(hashtextextended('zaagl.blocklist', 0))", ct);
+            db.BlockedDestinations.Add(new BlockedDestination
+            {
+                Kind = BlockedDestinationKinds.HostSuffix,
+                Pattern = targetHost,
+                Reason = reason,
+            });
+            await db.SaveChangesAsync(ct);
+        }
+
+        return ids.Count;
     }
 
     // ---- Internals --------------------------------------------------------

@@ -106,7 +106,10 @@ public static class LinksModule
         services.AddHostedService<PurgeJob>();
         services.AddHostedService<GuestQuotaCleanupJob>();
         services.AddScoped<IDestinationBlocklist, DestinationBlocklist>();
+        services.AddScoped<IAliasDenylist, AliasDenylist>();
+        services.AddScoped<AliasFreezeChecker>();
         services.AddScoped<TakedownService>();
+        services.AddScoped<ReportService>();
         services.AddHostedService<SafetyRecheckJob>();
 
         var captchaEnabled = configuration.GetValue("Captcha:Enabled", true);

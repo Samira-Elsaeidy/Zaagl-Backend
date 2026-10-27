@@ -156,6 +156,52 @@ public sealed class AbuseEvidence
     public DateTime KeepUntil { get; set; }
 }
 
+public static class ReportStatuses
+{
+    public const string Open = "open";
+    public const string Actioned = "actioned";
+    public const string Dismissed = "dismissed";
+}
+
+/// <summary>Spec §7.15: `POST /api/reports`, public, CAPTCHA-gated. Resolved by an admin.</summary>
+public sealed class AbuseReport
+{
+    public Guid Id { get; set; } = Guid.CreateVersion7();
+    public string? Code { get; set; }
+    public string? Url { get; set; }
+    public string Category { get; set; } = "";
+    public string? Details { get; set; }
+    public string? ReporterEmail { get; set; }
+    public string Status { get; set; } = ReportStatuses.Open;
+    public string? Resolution { get; set; }
+    public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
+    public DateTime? ResolvedAt { get; set; }
+}
+
+/// <summary>Spec §4.5 rule 5: an admin-managed denylist on top of the static reserved-word list in
+/// SlugRules - patterns an operator adds after the fact (e.g. a brand name someone keeps squatting).</summary>
+public sealed class AliasDenylistEntry
+{
+    public Guid Id { get; set; } = Guid.CreateVersion7();
+    public string Pattern { get; set; } = "";
+    /// <summary>"exact" or "prefix".</summary>
+    public string Kind { get; set; } = "exact";
+    public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
+}
+
+/// <summary>Spec §7.11: while active, no new alias can be claimed by anyone. This build has only the
+/// operator-declared source (manual `declare-restore`); the automatic coordinator-driven sync job
+/// (restore_detected_at -> freeze) is not built yet - see docs/TRACEABILITY.md.</summary>
+public sealed class AliasFreeze
+{
+    public Guid Id { get; set; } = Guid.CreateVersion7();
+    public DateTime StartsAt { get; set; }
+    public DateTime Until { get; set; }
+    public string Source { get; set; } = "operator";
+    public string? Reason { get; set; }
+    public DateTime? EndedAt { get; set; }
+}
+
 public sealed class Folder
 {
     public Guid Id { get; set; } = Guid.CreateVersion7();

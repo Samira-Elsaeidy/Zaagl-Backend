@@ -81,6 +81,38 @@ public sealed record FolderDto(Guid Id, string Name, int LinkCount);
 
 public sealed record SlugAvailabilityDto(bool Available, string? Reason);
 
+/// <summary>Spec §7.9: the admin link view - adds everything an owner's view intentionally hides.</summary>
+public sealed record AdminLinkDto(
+    Guid Id, string Slug, string DestinationUrl, string TargetHost, Guid? OwnerId, string? GuestCreatorKeyHex,
+    bool IsCustom, string State, string? DisabledKind, string? DisabledReason, DateTime? DisabledAt,
+    DateTime? DeletedAt, DateTime? PurgeAfter, DateTime? SafetyCheckedAt, DateTime CreatedAt);
+
+// ---- Admin (spec §7.9, §7.15) ---------------------------------------------
+
+public sealed record DisableLinkRequest(string Reason, string Kind);
+public sealed record ReinstateRequest(string Reason);
+
+public sealed record TakedownFilter(string? TargetHost, string? GuestCreatorKey, Guid? OwnerId, DateTime? CreatedFrom, DateTime? CreatedTo);
+public sealed record TakedownRequest(TakedownFilter Filter, string Reason, bool BlockDestination, bool DryRun);
+public sealed record TakedownResultDto(int LinksAffected);
+
+public sealed record CreateReportRequest(string? Code, string? Url, string Category, string? Details, string? ReporterEmail);
+public sealed record ReportDto(Guid Id, string? Code, string? Url, string Category, string? Details, string? ReporterEmail, string Status, string? Resolution, DateTime CreatedAt, DateTime? ResolvedAt);
+public sealed record ResolveReportRequest(string Status, string? Resolution);
+
+public sealed record BlockedDestinationDto(Guid Id, string Kind, string Pattern, string Reason, DateTime CreatedAt);
+public sealed record CreateBlockedDestinationRequest(string Kind, string Pattern, string Reason);
+
+public sealed record BlockedAliasDto(string SlugKey, string Reason, DateTime CreatedAt);
+public sealed record CreateBlockedAliasRequest(string Code, string Reason);
+
+public sealed record AliasDenylistDto(Guid Id, string Pattern, string Kind, DateTime CreatedAt);
+public sealed record CreateAliasDenylistRequest(string Pattern, string Kind);
+
+public sealed record AliasFreezeDto(Guid Id, DateTime StartsAt, DateTime Until, string Source, string? Reason, DateTime? EndedAt);
+public sealed record DeclareRestoreRequest(string Reason);
+public sealed record EndFreezeRequest(string Reason);
+
 public sealed record BulkRowResult(int Row, bool Ok, string? Slug, string? Error);
 
 public sealed record BulkResult(int Total, int Created, int Failed, IReadOnlyList<BulkRowResult> Rows);

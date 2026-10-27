@@ -413,6 +413,61 @@ public sealed class IdentityService(
         await db.ApiKeys.Where(k => k.Id == keyId && k.UserId == userId && k.RevokedAt == null)
             .ExecuteUpdateAsync(s => s.SetProperty(k => k.RevokedAt, DateTime.UtcNow), ct) > 0;
 
+    // ---- Admin (spec §7.9's /api/admin/users*) ------------------------------
+
+    public async Task<PagedResult<AdminUserDto>> AdminListUsersAsync(string? email, int page, int pageSize, CancellationToken ct)
+    {
+        page = Math.Max(1, page);
+        pageSize = Math.Clamp(pageSize, 1, 100);
+
+        var q = db.Users.AsNoTracking().AsQueryable();
+        if (!string.IsNullOrWhiteSpace(email))
+            q = q.Where(u => EF.Functions.ILike(u.Email, $"%{email.Trim()}%"));
+
+        var total = await q.CountAsync(ct);
+        var items = await q.OrderByDescending(u => u.CreatedAt).ThenBy(u => u.Id)
+            .Skip((page - 1) * pageSize).Take(pageSize)
+            .Select(u => new AdminUserDto(u.Id, u.Email, u.EmailConfirmed, u.Role, u.CreatedAt, u.DisabledAt, u.DisabledWithLinks))
+            .ToListAsync(ct);
+        return new(items, total, page, pageSize);
+    }
+
+    /// <summary>Links-side disabling (if <paramref name="disableLinks"/>) is the caller's responsibility -
+    /// this only touches Identity's own data, per this solution's module boundary.</summary>
+    public async Task<Result<bool>> AdminDisableUserAsync(Guid adminId, Guid userId, string reason, bool disableLinks, CancellationToken ct)
+    {
+        if (adminId == userId) return Error.Conflict("You cannot disable your own account.");
+
+        var user = await db.Users.FirstOrDefaultAsync(u => u.Id == userId, ct);
+        if (user is null) return Error.NotFound("User not found.");
+        if (user.DisabledAt is not null) return Error.Conflict("This user is already disabled.");
+
+        user.DisabledAt = DateTime.UtcNow;
+        user.DisabledReason = Truncate(reason, 500);
+        user.DisabledWithLinks = disableLinks;
+        await RevokeAllRefreshTokensAsync(userId, ct);
+        await db.ApiKeys.Where(k => k.UserId == userId && k.RevokedAt == null)
+            .ExecuteUpdateAsync(s => s.SetProperty(k => k.RevokedAt, DateTime.UtcNow), ct);
+        await db.SaveChangesAsync(ct);
+        return Result<bool>.Ok(true);
+    }
+
+    /// <summary>Returns whether the user's links should be restored (<paramref name="restoreLinks"/> if
+    /// given, else whatever the matching disable used) so the caller can act on Links.</summary>
+    public async Task<Result<bool>> AdminEnableUserAsync(Guid userId, bool? restoreLinks, CancellationToken ct)
+    {
+        var user = await db.Users.FirstOrDefaultAsync(u => u.Id == userId, ct);
+        if (user is null) return Error.NotFound("User not found.");
+        if (user.DisabledAt is null) return Error.Conflict("This user is not disabled.");
+
+        var shouldRestoreLinks = restoreLinks ?? user.DisabledWithLinks;
+        user.DisabledAt = null;
+        user.DisabledReason = null;
+        user.DisabledWithLinks = false;
+        await db.SaveChangesAsync(ct);
+        return Result<bool>.Ok(shouldRestoreLinks);
+    }
+
     /// <summary>Returns the owning user id and the key's scopes for a raw API key, or null when invalid or revoked.</summary>
     public async Task<AuthenticatedPrincipal?> ValidateApiKeyAsync(string rawKey, CancellationToken ct)
     {

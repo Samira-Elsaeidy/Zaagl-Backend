@@ -46,3 +46,16 @@ public sealed record CreatedApiKeyDto(ApiKeyDto Key, string Secret);
 /// <summary>What an authenticated caller actually has: a user id, the scopes it's allowed to use (full
 /// set for a JWT session, the key's own subset for an API key), and whether it needs TOTP still.</summary>
 public sealed record AuthenticatedPrincipal(Guid UserId, string[] Scopes);
+
+// ---- Admin (spec §7.9's /api/admin/users*) --------------------------------
+
+public sealed record AdminUserDto(
+    Guid UserId, string Email, bool EmailConfirmed, string? Role, DateTime CreatedAt,
+    DateTime? DisabledAt, bool DisabledWithLinks);
+
+public sealed record DisableUserRequest(string Reason, bool DisableLinks);
+public sealed record EnableUserRequest(bool? RestoreLinks);
+
+/// <summary>Deliberately duplicated rather than referencing Links.Contracts' identical shape - keeps
+/// Identity's module boundary clean (no dependency on Links just for a generic paging envelope).</summary>
+public sealed record PagedResult<T>(IReadOnlyList<T> Items, int Total, int Page, int PageSize);

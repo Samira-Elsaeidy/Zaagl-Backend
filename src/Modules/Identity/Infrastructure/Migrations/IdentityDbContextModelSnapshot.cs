@@ -267,6 +267,10 @@ namespace Zaagl.Modules.Identity.Infrastructure.Migrations
                         .HasColumnType("character varying(500)")
                         .HasColumnName("disabled_reason");
 
+                    b.Property<bool>("DisabledWithLinks")
+                        .HasColumnType("boolean")
+                        .HasColumnName("disabled_with_links");
+
                     b.Property<string>("DisplayName")
                         .IsRequired()
                         .HasMaxLength(200)

@@ -79,6 +79,66 @@ namespace Zaagl.Modules.Links.Infrastructure.Migrations
                     b.ToTable("abuse_evidence", "links");
                 });
 
+            modelBuilder.Entity("Zaagl.Modules.Links.Domain.AbuseReport", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<string>("Category")
+                        .IsRequired()
+                        .HasMaxLength(50)
+                        .HasColumnType("character varying(50)")
+                        .HasColumnName("category");
+
+                    b.Property<string>("Code")
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)")
+                        .HasColumnName("code");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at");
+
+                    b.Property<string>("Details")
+                        .HasMaxLength(2000)
+                        .HasColumnType("character varying(2000)")
+                        .HasColumnName("details");
+
+                    b.Property<string>("ReporterEmail")
+                        .HasMaxLength(255)
+                        .HasColumnType("character varying(255)")
+                        .HasColumnName("reporter_email");
+
+                    b.Property<string>("Resolution")
+                        .HasMaxLength(2000)
+                        .HasColumnType("character varying(2000)")
+                        .HasColumnName("resolution");
+
+                    b.Property<DateTime?>("ResolvedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("resolved_at");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("character varying(20)")
+                        .HasColumnName("status");
+
+                    b.Property<string>("Url")
+                        .HasMaxLength(2048)
+                        .HasColumnType("character varying(2048)")
+                        .HasColumnName("url");
+
+                    b.HasKey("Id")
+                        .HasName("pk_abuse_reports");
+
+                    b.HasIndex("Status")
+                        .HasDatabaseName("ix_abuse_reports_status");
+
+                    b.ToTable("abuse_reports", "links");
+                });
+
             modelBuilder.Entity("Zaagl.Modules.Links.Domain.AccessPolicy", b =>
                 {
                     b.Property<Guid>("LinkId")
@@ -111,6 +171,76 @@ namespace Zaagl.Modules.Links.Infrastructure.Migrations
                         .HasName("pk_access_policies");
 
                     b.ToTable("access_policies", "links");
+                });
+
+            modelBuilder.Entity("Zaagl.Modules.Links.Domain.AliasDenylistEntry", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at");
+
+                    b.Property<string>("Kind")
+                        .IsRequired()
+                        .HasMaxLength(10)
+                        .HasColumnType("character varying(10)")
+                        .HasColumnName("kind");
+
+                    b.Property<string>("Pattern")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)")
+                        .HasColumnName("pattern");
+
+                    b.HasKey("Id")
+                        .HasName("pk_alias_denylist");
+
+                    b.HasIndex("Kind", "Pattern")
+                        .IsUnique()
+                        .HasDatabaseName("ix_alias_denylist_kind_pattern");
+
+                    b.ToTable("alias_denylist", "links");
+                });
+
+            modelBuilder.Entity("Zaagl.Modules.Links.Domain.AliasFreeze", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<DateTime?>("EndedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("ended_at");
+
+                    b.Property<string>("Reason")
+                        .HasMaxLength(500)
+                        .HasColumnType("character varying(500)")
+                        .HasColumnName("reason");
+
+                    b.Property<string>("Source")
+                        .IsRequired()
+                        .HasMaxLength(50)
+                        .HasColumnType("character varying(50)")
+                        .HasColumnName("source");
+
+                    b.Property<DateTime>("StartsAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("starts_at");
+
+                    b.Property<DateTime>("Until")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("until");
+
+                    b.HasKey("Id")
+                        .HasName("pk_alias_freezes");
+
+                    b.HasIndex("StartsAt", "Until")
+                        .HasDatabaseName("ix_alias_freezes_starts_at_until");
+
+                    b.ToTable("alias_freezes", "links");
                 });
 
             modelBuilder.Entity("Zaagl.Modules.Links.Domain.BlockedAlias", b =>

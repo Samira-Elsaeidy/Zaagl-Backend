@@ -25,6 +25,10 @@ public sealed class User
 
     public DateTime? DisabledAt { get; set; }
     public string? DisabledReason { get; set; }
+
+    /// <summary>Spec §7.4: whether an admin disable also disabled all of this user's links. Read back on
+    /// enable (`restoreLinks?`) to tell "bring the links back" apart from "leave them disabled".</summary>
+    public bool DisabledWithLinks { get; set; }
 }
 
 public sealed class ExternalLogin
