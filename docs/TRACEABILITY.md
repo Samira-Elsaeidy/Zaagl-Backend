@@ -118,10 +118,33 @@ no assertion) is deferred - not built in this phase.
 | `GET /api/me/export?format=json\|csv`: profile, every link, daily stats, archived links+stats, streamed | `AccountDeletionTests.Export_returns_the_profile_and_live_links` | Covered for JSON profile+links. **`format=csv` is not implemented at all** (ignored; always returns JSON) - no ZIP-of-CSVs. Daily stats are not included in the export payload (only archived-link rows, not their per-day click series). Capped at 50,000 links / 10,000 archived links rather than a true unbounded server-side cursor (`ILinkExportSource`'s doc comment) |
 | `1 per hour` rate limit on export | Reuses the `"auth"` rate-limit policy (20/min per IP), not a literal 1/hour rule | **Not spec-exact** - a documented simplification, not a missing feature |
 
+## Chaos and scenario tests (spec §8.2) - a small, honestly-scoped subset
+
+`ChaosScenarioTests` covers 4 of the spec's ~40 scenario rows - the highest-value combinations not already
+exercised by a more targeted test elsewhere:
+
+| Scenario (spec's row) | Test |
+|---|---|
+| Renewal and purge race: exactly one wins, no false-success | `A_purgeable_link_is_classified_purgeable_the_exact_state_RenewAsync_rejects_before_any_write` (proven by construction - the state check happens before any write - not by a true concurrent-timing race) |
+| Admin disables a user with links, then re-enables with restore | `Admin_disable_with_links_then_enable_with_restore_only_brings_back_user_disabled_links` |
+| Ordinary admin enable of a safety/abuse-disabled link → `409`; reinstate works | `Ordinary_enable_is_refused_for_a_takedown_but_reinstate_clears_it` |
+| Unconfirmed account cannot sign in | `Unconfirmed_account_cannot_sign_in_even_with_the_correct_password` |
+
+**Not built**: the other ~36 rows of spec's §8.2 table (coordinator failpoint-at-every-step tests, HWM
+crash-recovery simulation, WAL-archive-stopped/incomplete scenarios, the 1,000,000-unknown-codes memory
+test, guest-quota-30-parallel-requests race, and the rest); the container-level chaos suite
+(`scripts/chaos.sh`, real kill/reboot/restore on the real clock, spec §8.2's "suite (b)"); the in-process
+shared-`FakeTimeProvider` harness driving both the API and the coordinator together (spec §8.3's "suite
+(a)" as a dedicated mechanism - individual tests in this project use their own ad hoc fake clocks per
+file, not one shared harness); the failpoints themselves (`IFailpoints`' no-op/production seam exists from
+Phase 1, but no test registers a non-no-op implementation); and the global invariant checks spec lists
+after "every scenario" (zero `code_integrity_failures_total`, no code appears twice in the whole
+acknowledged log, etc. - these would need the load generator and checker spec describes, neither built).
+
 ## Deferred entirely (not started this phase)
 
 Every MUST NOT and guarantee tied to: the automatic coordinator-driven alias-restore-freeze sync job
 (§7.11 - the manual/operator path is built, see above), the allocator sink as a real S3-compatible bucket
-(§6.4), chaos/failpoint test suites (§8.2, §8.3), NetArchTest architecture rules, Stryker mutation testing,
-and `tools/traceability-check` itself. None of these have rows here because fabricating "covered" rows for
-unbuilt work is explicitly against this document's purpose.
+(§6.4), NetArchTest architecture rules, Stryker mutation testing, and `tools/traceability-check` itself.
+None of these have rows here because fabricating "covered" rows for unbuilt work is explicitly against
+this document's purpose.
