@@ -125,6 +125,29 @@ public static class DigestStages
     public const string Purge = "purge";
 }
 
+/// <summary>Spec §7.14: the Links-side half of account deletion, called from Identity (which already
+/// references this module, same direction as ILinkDigestSource) so Identity never has to touch another
+/// module's schema directly.</summary>
+public interface IAccountDataEraser
+{
+    /// <summary>Steps 1-2: soft-deletes every non-deleted link in chunks of 1,000 (id order), shortening
+    /// expiry/purge so an alias is held only for the normal quarantine, then erases archive/stats data for
+    /// all of this owner's links (live and already-purged). Returns the slug keys touched, for cache
+    /// invalidation by the caller.</summary>
+    Task<IReadOnlyList<string>> EraseOwnerLinksAsync(Guid ownerId, CancellationToken ct);
+
+    /// <summary>Step 3: deletes idempotency rows of scope <c>u:&lt;userId&gt;</c>.</summary>
+    Task DeleteIdempotencyKeysAsync(Guid userId, CancellationToken ct);
+}
+
+/// <summary>Spec §7.14 export: every link's code, target, dates, state and click count.</summary>
+public sealed record LinkExportRow(string Code, string TargetUrl, DateTime CreatedAt, DateTime? ExpiresAt, string State, long ClickCount);
+
+public interface ILinkExportSource
+{
+    Task<IReadOnlyList<LinkExportRow>> ListAsync(Guid ownerId, CancellationToken ct);
+}
+
 public interface ILinkDigestSource
 {
     Task<IReadOnlyList<DigestCandidate>> GetCandidatesAsync(string stage, DateTime now, CancellationToken ct);

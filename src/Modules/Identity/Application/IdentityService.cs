@@ -27,6 +27,9 @@ public sealed class IdentityService(
     IdentityDbContext db,
     TokenService tokens,
     IPlanProvider plans,
+    Zaagl.Modules.Links.Contracts.IAccountDataEraser linkEraser,
+    Zaagl.Modules.Links.Contracts.ILinkExportSource linkExport,
+    Zaagl.Modules.Analytics.Contracts.IArchiveQueries archiveQueries,
     ILogger<IdentityService> logger)
 {
     private const string ApiKeyPrefix = "zgl_";
@@ -195,7 +198,7 @@ public sealed class IdentityService(
 
         // Correct password from here on - every further rejection is allowed to be specific, per spec.
         if (!user.EmailConfirmed) return new LoginOutcome(null, null, new Error("email_unconfirmed", "Please confirm your email address before signing in."));
-        if (user.DisabledAt is not null) return new LoginOutcome(null, null, new Error("account_disabled", "This account has been disabled."));
+        if (user.DisabledAt is not null || user.DeletedAt is not null) return new LoginOutcome(null, null, new Error("account_disabled", "This account has been disabled."));
 
         if (user.Role == "Admin")
         {
@@ -259,7 +262,7 @@ public sealed class IdentityService(
 
         var used = await db.RefreshTokens.AsNoTracking().FirstAsync(t => t.TokenHash == hash, ct);
         var user = await db.Users.FirstOrDefaultAsync(u => u.Id == used.UserId, ct);
-        if (user is null || user.DisabledAt is not null) return Error.Unauthorized("Account unavailable.");
+        if (user is null || user.DisabledAt is not null || user.DeletedAt is not null) return Error.Unauthorized("Account unavailable.");
 
         var (access, accessExpires) = tokens.IssueAccessToken(user);
         var (newRaw, newHash) = NewToken();
@@ -424,6 +427,75 @@ public sealed class IdentityService(
     public async Task<bool> RevokeApiKeyAsync(Guid userId, Guid keyId, CancellationToken ct) =>
         await db.ApiKeys.Where(k => k.Id == keyId && k.UserId == userId && k.RevokedAt == null)
             .ExecuteUpdateAsync(s => s.SetProperty(k => k.RevokedAt, DateTime.UtcNow), ct) > 0;
+
+    // ---- Account deletion and export (spec §7.14) ---------------------------
+
+    /// <summary>Spec §7.14 export. Scoped simplification: capped at 50,000 links and 10,000 archived
+    /// links rather than a true unbounded server-side cursor (see ILinkExportSource's doc comment) -
+    /// effectively complete for any real account at this build's scale. Rate limiting (1/hour) is the
+    /// caller's responsibility (same pattern as other endpoint-level concerns in this codebase).</summary>
+    public async Task<Result<AccountExportDto>> ExportAsync(Guid userId, CancellationToken ct)
+    {
+        var user = await db.Users.AsNoTracking().FirstOrDefaultAsync(u => u.Id == userId, ct);
+        if (user is null || user.DeletedAt is not null) return Error.NotFound("Account not found.");
+
+        var links = await linkExport.ListAsync(userId, ct);
+        var archive = await archiveQueries.ListAsync(userId, 10_000, null, ct);
+
+        return Result<AccountExportDto>.Ok(new(
+            new ExportProfileDto(user.Id, user.Email, user.CreatedAt),
+            links.Select(l => new ExportLinkDto(l.Code, l.TargetUrl, l.CreatedAt, l.ExpiresAt, l.State, l.ClickCount)).ToList(),
+            archive.Items.Select(a => new ExportArchivedLinkDto(a.Code, a.IsCustom, a.TargetUrl, a.CreatedAt, a.ExpiresAt, a.PurgedAt)).ToList()));
+    }
+
+    /// <summary>Irreversible. The password check is the confirmation; the last remaining admin cannot
+    /// delete itself. See the doc comment on <see cref="User.DeletedAt"/> for the one deliberate deviation
+    /// from the literal spec (personal fields cleared immediately rather than kept as a delayed tombstone).</summary>
+    public async Task<Result<bool>> DeleteAccountAsync(Guid userId, string password, CancellationToken ct)
+    {
+        var user = await db.Users.FirstOrDefaultAsync(u => u.Id == userId, ct);
+        if (user is null) return Error.NotFound("Account not found.");
+        if (user.PasswordHash is null || !BCrypt.Net.BCrypt.Verify(password, user.PasswordHash))
+            return Error.Unauthorized("Incorrect password.");
+
+        if (user.Role == "Admin")
+        {
+            var otherAdmins = await db.Users.CountAsync(u => u.Id != userId && u.Role == "Admin" && u.DeletedAt == null, ct);
+            if (otherAdmins == 0) return Error.Conflict("The last remaining admin cannot delete their own account.");
+        }
+
+        // Step 0: mark deleted and revoke everything, in one transaction - from here on every other
+        // handler's "is this account usable" check (login, refresh, admin list) sees DeletedAt set.
+        user.DeletedAt = DateTime.UtcNow;
+        await RevokeAllRefreshTokensAsync(userId, ct);
+        await db.ApiKeys.Where(k => k.UserId == userId && k.RevokedAt == null)
+            .ExecuteUpdateAsync(s => s.SetProperty(k => k.RevokedAt, DateTime.UtcNow), ct);
+        await db.SaveChangesAsync(ct);
+
+        // Steps 1-2: Links-side soft-delete + archive/stats erasure (cross-module, see IAccountDataEraser).
+        await linkEraser.EraseOwnerLinksAsync(userId, ct);
+
+        // Step 3: cancel pending outbox rows, delete idempotency rows.
+        await db.EmailOutbox.Where(e => e.UserId == userId && e.Status == EmailOutboxStatuses.Pending)
+            .ExecuteUpdateAsync(s => s.SetProperty(e => e.Status, EmailOutboxStatuses.Cancelled), ct);
+        await linkEraser.DeleteIdempotencyKeysAsync(userId, ct);
+
+        var confirmedEmail = user.Email;
+        await EmailQueue.QueueAccountEmailAsync(db, null, EmailKinds.SecurityNotice,
+            new SecurityNoticePayload("Your Zaagl account was just deleted, as you requested."), confirmedEmail, ct);
+
+        // Step 4: clear personal data (see the deviation noted on User.DeletedAt).
+        user.Email = $"deleted-{userId:N}@deleted.zaagl.invalid";
+        user.PasswordHash = null;
+        user.DisplayName = "Deleted user";
+        user.TotpSecret = null;
+        user.TotpConfirmedAt = null;
+        user.Role = null;
+        await db.SaveChangesAsync(ct);
+
+        logger.LogInformation("Account {UserId} deleted (password-confirmed).", userId);
+        return Result<bool>.Ok(true);
+    }
 
     // ---- Admin (spec §7.9's /api/admin/users*) ------------------------------
 

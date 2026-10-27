@@ -127,4 +127,10 @@ public interface IArchiveWriter
 
     /// <summary>Free-plan (or deleted-account) purge: the link's daily stats are deleted, never archived.</summary>
     Task DeleteDailyStatsAsync(Guid linkId, CancellationToken cancellationToken);
+
+    /// <summary>Spec §7.14 account deletion step 2: delete every archive row owned by this user (archive
+    /// rows already carry OwnerId) and the daily stats of their still-live links (<paramref name="liveLinkIds"/>,
+    /// supplied by the Links-side caller since Analytics has no cross-schema view of ownership) -
+    /// regardless of plan tier.</summary>
+    Task DeleteAllForOwnerAsync(Guid ownerId, IReadOnlyList<Guid> liveLinkIds, CancellationToken cancellationToken);
 }

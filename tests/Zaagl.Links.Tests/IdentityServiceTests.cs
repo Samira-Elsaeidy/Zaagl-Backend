@@ -27,7 +27,7 @@ public sealed class IdentityServiceTests : IDisposable
 
         var jwt = Options.Create(new JwtOptions { Key = "test-signing-key-at-least-32-characters-long!!" });
         var tokens = new TokenService(jwt);
-        _identity = new IdentityService(_db, tokens, new AlwaysFreePlanProvider(), NullLogger<IdentityService>.Instance);
+        _identity = new IdentityService(_db, tokens, new AlwaysFreePlanProvider(), new NoOpAccountDataEraser(), new NoOpLinkExportSource(), new NoOpArchiveQueries(), NullLogger<IdentityService>.Instance);
     }
 
     public void Dispose() => _db.Dispose();
@@ -172,7 +172,7 @@ public sealed class IdentityServiceTests : IDisposable
         IdentityModule.Configure(builder, ConnectionString);
         var db = new IdentityDbContext(builder.Options);
         var jwt = Options.Create(new JwtOptions { Key = "test-signing-key-at-least-32-characters-long!!" });
-        return new IdentityService(db, new TokenService(jwt), new AlwaysFreePlanProvider(), NullLogger<IdentityService>.Instance);
+        return new IdentityService(db, new TokenService(jwt), new AlwaysFreePlanProvider(), new NoOpAccountDataEraser(), new NoOpLinkExportSource(), new NoOpArchiveQueries(), NullLogger<IdentityService>.Instance);
     }
 
     private static string Hash(string value) =>
@@ -304,5 +304,29 @@ public sealed class IdentityServiceTests : IDisposable
     private sealed class AlwaysFreePlanProvider : IPlanProvider
     {
         public Task<PlanLimits> GetLimitsAsync(Guid userId, CancellationToken ct) => Task.FromResult(PlanLimits.For(PlanTier.Free));
+    }
+
+    // No-op fakes: these tests exercise Identity-only behavior (registration, login, refresh, TOTP) and
+    // never touch account deletion/export, so the cross-module contracts those features need never run.
+    private sealed class NoOpAccountDataEraser : Zaagl.Modules.Links.Contracts.IAccountDataEraser
+    {
+        public Task<IReadOnlyList<string>> EraseOwnerLinksAsync(Guid ownerId, CancellationToken ct) => Task.FromResult<IReadOnlyList<string>>([]);
+        public Task DeleteIdempotencyKeysAsync(Guid userId, CancellationToken ct) => Task.CompletedTask;
+    }
+
+    private sealed class NoOpLinkExportSource : Zaagl.Modules.Links.Contracts.ILinkExportSource
+    {
+        public Task<IReadOnlyList<Zaagl.Modules.Links.Contracts.LinkExportRow>> ListAsync(Guid ownerId, CancellationToken ct) =>
+            Task.FromResult<IReadOnlyList<Zaagl.Modules.Links.Contracts.LinkExportRow>>([]);
+    }
+
+    private sealed class NoOpArchiveQueries : Zaagl.Modules.Analytics.Contracts.IArchiveQueries
+    {
+        public Task<Zaagl.Modules.Analytics.Contracts.PagedArchive> ListAsync(Guid ownerId, int limit, string? cursor, CancellationToken ct) =>
+            Task.FromResult(new Zaagl.Modules.Analytics.Contracts.PagedArchive([], null));
+        public Task<Zaagl.Modules.Analytics.Contracts.ArchivedLink?> FindAsync(Guid ownerId, Guid linkId, CancellationToken ct) =>
+            Task.FromResult<Zaagl.Modules.Analytics.Contracts.ArchivedLink?>(null);
+        public Task<Zaagl.Modules.Analytics.Contracts.ArchivedLinkStats> GetStatsAsync(Guid linkId, CancellationToken ct) =>
+            Task.FromResult(new Zaagl.Modules.Analytics.Contracts.ArchivedLinkStats([]));
     }
 }

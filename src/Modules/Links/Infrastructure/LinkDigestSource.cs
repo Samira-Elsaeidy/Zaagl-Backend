@@ -3,6 +3,33 @@ using Zaagl.Modules.Links.Contracts;
 
 namespace Zaagl.Modules.Links.Infrastructure;
 
+/// <summary>Spec §7.14 export. Capped at 50,000 rows rather than a true unbounded server-side cursor -
+/// effectively complete for any real account, documented scoped simplification (docs/TRACEABILITY.md).</summary>
+public sealed class LinkExportSource(LinksDbContext db) : ILinkExportSource
+{
+    private const int Cap = 50_000;
+
+    public async Task<IReadOnlyList<LinkExportRow>> ListAsync(Guid ownerId, CancellationToken ct)
+    {
+        var now = DateTime.UtcNow;
+        var rows = await db.Links.AsNoTracking().Where(l => l.OwnerId == ownerId)
+            .OrderBy(l => l.CreatedAt)
+            .Take(Cap)
+            .Select(l => new
+            {
+                l.Slug, l.DestinationUrl, l.CreatedAt, l.ClickCount,
+                ExpiresAt = l.Policy != null ? l.Policy.ExpiresAt : null,
+                l.PurgeAfter, l.DeletedAt, l.DisabledAt,
+            })
+            .ToListAsync(ct);
+
+        return rows.Select(r => new LinkExportRow(
+            r.Slug, r.DestinationUrl, r.CreatedAt, r.ExpiresAt,
+            LinkStateCalculator.Compute(r.PurgeAfter, r.DeletedAt, r.DisabledAt, r.ExpiresAt, now).ToString().ToLowerInvariant(),
+            r.ClickCount)).ToList();
+    }
+}
+
 /// <summary>
 /// Spec §7.10's three qualification rules, literally:
 /// - expiring: active, expires_at-7d &lt;= now &lt; expires_at, created more than 7 days before expiry

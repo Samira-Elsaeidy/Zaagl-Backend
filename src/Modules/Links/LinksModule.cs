@@ -111,6 +111,8 @@ public static class LinksModule
         services.AddScoped<TakedownService>();
         services.AddScoped<ReportService>();
         services.AddScoped<ILinkDigestSource, LinkDigestSource>();
+        services.AddScoped<IAccountDataEraser, AccountDataEraser>();
+        services.AddScoped<ILinkExportSource, LinkExportSource>();
         services.AddHostedService<SafetyRecheckJob>();
 
         var captchaEnabled = configuration.GetValue("Captcha:Enabled", true);

@@ -195,6 +195,16 @@ public static class IdentityEndpoints
             })
             .WithTags("Webhooks")
             .AllowAnonymous();
+
+        // ---- Account deletion and export (spec §7.14), JWT only -----------------------------------
+        var me = app.MapGroup("/api/me").WithTags("Account").RequireAuthorization("Interactive");
+
+        me.MapDelete("", async (DeleteAccountRequest request, ClaimsPrincipal user, IdentityService identity, CancellationToken ct) =>
+            ApiResults.From(await identity.DeleteAccountAsync(user.GetUserId(), request.Password, ct), _ => Results.NoContent()));
+
+        me.MapGet("/export", async (ClaimsPrincipal user, IdentityService identity, CancellationToken ct) =>
+            ApiResults.From(await identity.ExportAsync(user.GetUserId(), ct)))
+            .RequireRateLimiting("auth"); // spec: 1/hour - reuses the existing per-IP/per-account limiter shape
     }
 
     /// <summary>Spec §7.4: a minimal page that reads the token out of the URL fragment (never sent to

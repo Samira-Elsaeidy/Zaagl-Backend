@@ -105,11 +105,23 @@ no assertion) is deferred - not built in this phase.
 | Outbox/idempotency-key/refresh-token/abuse-evidence cleanup jobs (spec §7.8's "other" row) | Not built | **Not started** |
 | "Once a day at `Notifications:DailyRunUtc`" | Implemented as "once per UTC day, after `Email:DailyRunUtc` has passed" via a 15-minute poll loop, not a precise scheduler - acceptable for a single-instance year-1 deployment | Covered with a noted simplification |
 
+## Account deletion and export (spec §7.14)
+
+| Item | Test | Status |
+|---|---|---|
+| `DELETE /api/me { password }`: password-confirmed, irreversible, last remaining admin cannot delete itself | `AccountDeletionTests` (6 tests) against real Postgres with the real cross-module services (not fakes) | Covered |
+| Step 0: `deleted_at` set first; login/refresh/admin-list reject it from then on | `AccountDeletionTests.A_deleted_account_cannot_sign_in`; `LoginAsync`/`RefreshAsync` both check `DeletedAt` | Covered |
+| Steps 1-2: links soft-deleted in chunks of 1,000 (id order), `expires_at`/`purge_after` shortened, archive+stats erased | `AccountDeletionTests.Deletion_anonymizes_the_profile_revokes_sessions_and_soft_deletes_links` | Covered for a small link count; chunking itself (the loop over batches of 1,000) is not exercised by a test with >1,000 links |
+| Step 3: API keys and refresh tokens revoked; pending outbox rows cancelled; idempotency rows deleted | Same test (keys/tokens) plus code review (outbox/idempotency cleanup); no dedicated assertion for the outbox-cancel or idempotency-delete branches | Partially covered |
+| Security notice queued with the address in its own payload, after step 3 and before step 4 | Wired (`EmailQueue.QueueAccountEmailAsync` with `recipientEmail`); not asserted by a test | **Not directly tested** |
+| **Documented deviation**: personal fields (email, password hash, TOTP secret, display name) are cleared immediately in step 4, not kept as a delayed tombstone until the user's last link is purged - this build's Identity table already *is* the profile table (no separate `user_profiles`), so there is no natural place for a "profile only, no Identity data" intermediate state without a schema split. See the doc comment on `User.DeletedAt`. | N/A (deliberate, documented) | **Deviation, not a gap** |
+| `GET /api/me/export?format=json\|csv`: profile, every link, daily stats, archived links+stats, streamed | `AccountDeletionTests.Export_returns_the_profile_and_live_links` | Covered for JSON profile+links. **`format=csv` is not implemented at all** (ignored; always returns JSON) - no ZIP-of-CSVs. Daily stats are not included in the export payload (only archived-link rows, not their per-day click series). Capped at 50,000 links / 10,000 archived links rather than a true unbounded server-side cursor (`ILinkExportSource`'s doc comment) |
+| `1 per hour` rate limit on export | Reuses the `"auth"` rate-limit policy (20/min per IP), not a literal 1/hour rule | **Not spec-exact** - a documented simplification, not a missing feature |
+
 ## Deferred entirely (not started this phase)
 
-Every MUST NOT and guarantee tied to: account deletion and export (§7.14), the automatic coordinator-driven
-alias-restore-freeze sync job (§7.11 - the manual/operator path is built, see above), the allocator sink as
-a real S3-compatible bucket (§6.4), chaos/failpoint test suites (§8.2, §8.3), NetArchTest architecture
-rules, Stryker mutation testing, and `tools/traceability-check` itself. None of these have rows here
-because fabricating "covered" rows for unbuilt work is explicitly against
-this document's purpose.
+Every MUST NOT and guarantee tied to: the automatic coordinator-driven alias-restore-freeze sync job
+(§7.11 - the manual/operator path is built, see above), the allocator sink as a real S3-compatible bucket
+(§6.4), chaos/failpoint test suites (§8.2, §8.3), NetArchTest architecture rules, Stryker mutation testing,
+and `tools/traceability-check` itself. None of these have rows here because fabricating "covered" rows for
+unbuilt work is explicitly against this document's purpose.

@@ -29,6 +29,17 @@ public sealed class User
     /// <summary>Spec §7.4: whether an admin disable also disabled all of this user's links. Read back on
     /// enable (`restoreLinks?`) to tell "bring the links back" apart from "leave them disabled".</summary>
     public bool DisabledWithLinks { get; set; }
+
+    /// <summary>
+    /// Spec §7.14: set in step 0, before anything else - from here on, creation, renewal, PATCH and
+    /// authentication all reject a profile with this set. Scoped simplification vs. the literal spec:
+    /// personal fields (email, password hash, TOTP secret, display name) are cleared immediately rather
+    /// than kept as an untouched tombstone until the user's last link is purged, then removed - this
+    /// build's Identity row already *is* the profile row (no separate user_profiles table), so there is
+    /// no natural place to keep a "profile, no Identity data" tombstone without a schema split. Documented
+    /// in docs/TRACEABILITY.md.
+    /// </summary>
+    public DateTime? DeletedAt { get; set; }
 }
 
 public sealed class ExternalLogin

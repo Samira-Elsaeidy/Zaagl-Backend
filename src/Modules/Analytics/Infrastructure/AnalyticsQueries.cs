@@ -189,6 +189,16 @@ public sealed class ArchiveWriter(AnalyticsDbContext db) : IArchiveWriter
 
     public async Task DeleteDailyStatsAsync(Guid linkId, CancellationToken ct) =>
         await db.LinkDailyStats.Where(d => d.LinkId == linkId).ExecuteDeleteAsync(ct);
+
+    public async Task DeleteAllForOwnerAsync(Guid ownerId, IReadOnlyList<Guid> liveLinkIds, CancellationToken ct)
+    {
+        var archivedLinkIds = await db.LinkArchive.Where(a => a.OwnerId == ownerId).Select(a => a.LinkId).ToListAsync(ct);
+        await db.LinkArchive.Where(a => a.OwnerId == ownerId).ExecuteDeleteAsync(ct);
+
+        var allLinkIds = archivedLinkIds.Concat(liveLinkIds).Distinct().ToList();
+        if (allLinkIds.Count > 0)
+            await db.LinkDailyStats.Where(d => allLinkIds.Contains(d.LinkId)).ExecuteDeleteAsync(ct);
+    }
 }
 
 /// <summary>Spec §7.9 archive endpoints, backed by <c>analytics.link_archive</c> (populated by the purge
