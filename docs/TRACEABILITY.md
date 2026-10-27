@@ -65,11 +65,28 @@ no assertion) is deferred - not built in this phase.
 | Global ceiling's "pause the heaviest partitions first" | `GuestRateLimiterTests.Global_ceiling_pauses_the_partition_with_the_most_creations_first` | Covered via a fair-share approximation (partition count vs. `GlobalPerHour / active partitions`), not the spec's unspecified exact algorithm |
 | An admin can view and disable a guest link | Not built - no admin link endpoints exist yet in this build | **Not started** |
 
+## Abuse controls (spec §7.15) - mechanism only, no admin HTTP API yet
+
+| Item | Test | Status |
+|---|---|---|
+| Destination reputation check (Web Risk), cached 24h per URL, 400ms timeout, fail-open on timeout/error | Unchanged mechanism from Phase 0, now wrapped with budget+cache (`WebRiskChecker`); live-verified `ApiKey` empty -> skipped | Covered for the fail-open/skip paths; **no automated test calls the real Web Risk API** (needs a live key) |
+| Shared monthly lookup budget, one row per month, atomic reserve-before-lookup, exhausted -> fail-open | `WebRiskChecker.TryReserveBudgetAsync` (private; exercised indirectly) | **Not directly unit-tested** - would need a key-configured test double; tracked as a gap |
+| Destination blocklist: host, host-suffix, url-prefix; seeded `Safety:DenyRedirectorHosts` | `AbuseControlsTests` (4 tests) against real Postgres | Covered |
+| Checked in Phase B (create) | `LinkService.PrepareAsync` calls `IDestinationBlocklist` before the reputation lookup | Covered by construction; **not checked again in PATCH yet** (`UpdateAsync` calls the same `PrepareAsync`, so it IS re-checked on update too - confirmed by code path, not a dedicated test) |
+| Takedown routine: sets disabled fields (overwriting admin/user-disabled), blocks a custom alias, writes abuse evidence | `AbuseControlsTests.Takedown_*` (2 tests) | Covered |
+| Destination re-check job, every 6h, claims a batch under a short lock, looks up outside the transaction, disables on an unsafe verdict, resets `SafetyCheckedAt` to null on a fail-open lookup so it retries | `AbuseControlsTests.Recheck_*` (3 tests) | Covered |
+| CAPTCHA (Turnstile), required by default, 300s token freshness, action+hostname bound to real tokens (sandbox test secrets skip that binding, matching their canned response) | `CaptchaTests` (NoOp only); live verification against the real Cloudflare sandbox endpoint (missing token -> `captcha-required`; the documented always-pass test token -> guest link created) | Covered for guest creation only. **Not wired into** registration, resend-confirmation, forgot-password or reports - those endpoints don't exist yet (Identity module predates this phase) or are deferred below |
+| Reinstating a wrong takedown (`POST .../reinstate`), bulk takedowns by host/creator-key/owner, reports endpoint, admin disable/enable | **Not built.** No admin HTTP API exists at all yet (no `Admin` role check wired to any route) | **Not started** - `TakedownService`/`SafetyRecheckJob` are real and used internally, but every admin-facing route in spec §7.9's table (`/api/admin/*`, `/api/reports`) is still missing |
+| `app.blocked_aliases` entries are checked in alias creation so a blocked alias can never be reclaimed | `AbuseControlsTests.Blocked_alias_cannot_be_reclaimed_by_a_new_creation`; checked under the alias advisory lock in both `CreateAsync` and `CreateGuestAsync` | Covered for creation. **Not yet re-checked on renewal** (renewal never changes the slug, so this matters only if a future feature lets an owner move a link to a different alias - not built) |
+
 ## Deferred entirely (not started this phase)
 
-Every MUST NOT and guarantee tied to: quarantine/purge lifecycle beyond what §7.8's purge job already
-covers, accounts rework beyond the fingerprint check (§7.4), email (§7.10), alias restore freeze (§7.11),
-account deletion and export (§7.14), abuse controls (§7.15) including CAPTCHA, the allocator sink as a
-real S3-compatible bucket (§6.4), chaos/failpoint test suites (§8.2, §8.3), NetArchTest architecture
-rules, Stryker mutation testing, and `tools/traceability-check` itself. None of these have rows here
-because fabricating "covered" rows for unbuilt work is explicitly against this document's purpose.
+Every MUST NOT and guarantee tied to: the full admin HTTP API (users, admin link view/disable/enable/
+reinstate, reports, bulk takedowns, blocked-destinations/blocked-aliases/alias-denylist CRUD, alias-freeze
+endpoints, allocator view) and its `Admin` role + TOTP + `Admin:AllowedNetworks` gating end-to-end,
+quarantine/purge lifecycle beyond what §7.8's purge job already covers, accounts rework beyond the
+fingerprint check (§7.4), email (§7.10), alias restore freeze (§7.11), account deletion and export
+(§7.14), the allocator sink as a real S3-compatible bucket (§6.4), chaos/failpoint test suites (§8.2,
+§8.3), NetArchTest architecture rules, Stryker mutation testing, and `tools/traceability-check` itself.
+None of these have rows here because fabricating "covered" rows for unbuilt work is explicitly against
+this document's purpose.
