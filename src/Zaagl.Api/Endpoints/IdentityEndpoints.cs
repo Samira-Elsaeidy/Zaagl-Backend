@@ -1,5 +1,6 @@
 using System.Security.Claims;
 using Microsoft.AspNetCore.Authentication;
+using Microsoft.AspNetCore.Mvc;
 using Zaagl.Api.Infrastructure;
 using Zaagl.Modules.Identity.Application;
 using Zaagl.Modules.Identity.Contracts;
@@ -199,7 +200,7 @@ public static class IdentityEndpoints
         // ---- Account deletion and export (spec §7.14), JWT only -----------------------------------
         var me = app.MapGroup("/api/me").WithTags("Account").RequireAuthorization("Interactive");
 
-        me.MapDelete("", async (DeleteAccountRequest request, ClaimsPrincipal user, IdentityService identity, CancellationToken ct) =>
+        me.MapDelete("", async ([FromBody] DeleteAccountRequest request, ClaimsPrincipal user, IdentityService identity, CancellationToken ct) =>
             ApiResults.From(await identity.DeleteAccountAsync(user.GetUserId(), request.Password, ct), _ => Results.NoContent()));
 
         me.MapGet("/export", async (ClaimsPrincipal user, IdentityService identity, CancellationToken ct) =>

@@ -24,8 +24,8 @@ public static class AdministrationEndpoints
         var admin = app.MapGroup("/api/admin").WithTags("Admin").RequireAuthorization("Admin");
 
         // ---- Users -----------------------------------------------------------------------------
-        admin.MapGet("/users", async (string? email, int page, int pageSize, IdentityService identity, CancellationToken ct) =>
-            Results.Ok(await identity.AdminListUsersAsync(email, page == 0 ? 1 : page, pageSize == 0 ? 50 : pageSize, ct)));
+        admin.MapGet("/users", async (string? email, IdentityService identity, CancellationToken ct, int page = 1, int pageSize = 50) =>
+            Results.Ok(await identity.AdminListUsersAsync(email, page, pageSize, ct)));
 
         admin.MapPost("/users/{id:guid}/disable", async (Guid id, DisableUserRequest request, System.Security.Claims.ClaimsPrincipal caller,
                 IdentityService identity, LinkService links, CancellationToken ct) =>
@@ -78,10 +78,10 @@ public static class AdministrationEndpoints
             });
 
         // ---- Reports (admin side; public creation is mapped separately below) -------------------
-        admin.MapGet("/reports", async (string? status, int page, int pageSize, ReportService reports, CancellationToken ct) =>
+        admin.MapGet("/reports", async (string? status, ReportService reports, CancellationToken ct, int page = 1, int pageSize = 50) =>
             {
-                var (items, total) = await reports.ListAsync(status, page == 0 ? 1 : page, pageSize == 0 ? 50 : pageSize, ct);
-                return Results.Ok(new Zaagl.Modules.Links.Contracts.PagedResult<ReportDto>(items.Select(ToDto).ToList(), total, page == 0 ? 1 : page, pageSize == 0 ? 50 : pageSize));
+                var (items, total) = await reports.ListAsync(status, page, pageSize, ct);
+                return Results.Ok(new Zaagl.Modules.Links.Contracts.PagedResult<ReportDto>(items.Select(ToDto).ToList(), total, page, pageSize));
             });
 
         admin.MapPost("/reports/{id:guid}/resolve", async (Guid id, ResolveReportRequest request, ReportService reports, CancellationToken ct) =>
