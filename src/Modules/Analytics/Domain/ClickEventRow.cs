@@ -18,4 +18,11 @@ public sealed class ClickEventRow
     public string? Browser { get; set; }
     public string DeviceType { get; set; } = "desktop";
     public bool IsBot { get; set; }
+
+    // UTM tags of the destination the visitor was sent to (see UtmTags). Null when it had none.
+    public string? UtmSource { get; set; }
+    public string? UtmMedium { get; set; }
+    public string? UtmCampaign { get; set; }
+    public string? UtmTerm { get; set; }
+    public string? UtmContent { get; set; }
 }

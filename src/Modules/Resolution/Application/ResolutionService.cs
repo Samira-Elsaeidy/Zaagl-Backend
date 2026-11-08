@@ -103,11 +103,13 @@ public sealed partial class ResolutionService(
 
         var location = Locate(request);
         var destination = RoutingEvaluator.Choose(link, client.Platform, location.Country);
-        Record(link, client, request, now, location);
+        Record(link, client, request, now, location, UtmTags.FromUrl(destination));
         return new(ResolveKind.Redirect, destination);
     }
 
-    private void Record(LinkSnapshot link, ClientProfile client, VisitorRequest request, DateTimeOffset now, GeoLocation? known = null)
+    private void Record(
+        LinkSnapshot link, ClientProfile client, VisitorRequest request, DateTimeOffset now,
+        GeoLocation? known = null, UtmTags? utm = null)
     {
         // Spec §7.12: a guest link gets only its aggregate counter, never a raw click_events row or
         // daily stats - the owned-link analytics pipeline below is for account-owned links only.
@@ -129,7 +131,8 @@ public sealed partial class ResolutionService(
             client.Os,
             client.Browser,
             client.DeviceType,
-            client.IsBot));
+            client.IsBot,
+            utm));
     }
 
     private GeoLocation Locate(VisitorRequest request)

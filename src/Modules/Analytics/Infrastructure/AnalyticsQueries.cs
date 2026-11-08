@@ -1,4 +1,8 @@
+using System.Data.Common;
+using System.Text;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Storage;
+using Npgsql;
 using Zaagl.Modules.Analytics.Contracts;
 using Zaagl.Modules.Analytics.Domain;
 
@@ -8,10 +12,15 @@ using Zaagl.Modules.Analytics.Domain;
 
 namespace Zaagl.Modules.Analytics.Infrastructure;
 
-public sealed class AnalyticsQueries(AnalyticsDbContext db) : IAnalyticsQueries
+public sealed class AnalyticsQueries(AnalyticsDbContext db, TimeProvider time) : IAnalyticsQueries
 {
     private const int MaxCustomSpanDays = 366;
     private const int TopN = 10;
+    private const int TopCombinations = 20;
+    private const int MaxEventPage = 100;
+
+    // Whitelisted UTM columns; the only strings ever spliced into the UTM queries' SQL text.
+    private static readonly string[] UtmColumns = ["utm_source", "utm_medium", "utm_campaign", "utm_term", "utm_content"];
 
     public sealed class TotalsRow
     {
@@ -72,7 +81,7 @@ public sealed class AnalyticsQueries(AnalyticsDbContext db) : IAnalyticsQueries
         int? retentionDays,
         CancellationToken ct)
     {
-        var (from, to, limited) = ResolveWindow(range, customFrom, customTo, retentionDays, DateTime.UtcNow);
+        var (from, to, limited) = ResolveWindow(range, customFrom, customTo, retentionDays, time.GetUtcNow().UtcDateTime);
         var unit = GranularityFor(to - from);
 
         // Same DbContext, so the queries run one after another. Bots are excluded everywhere.
@@ -117,6 +126,139 @@ public sealed class AnalyticsQueries(AnalyticsDbContext db) : IAnalyticsQueries
             GROUP BY 1 ORDER BY 2 DESC, 1 LIMIT {{TopN}}
             """, id, from, to, fallback).ToListAsync(ct);
         return rows.Select(r => new BreakdownItem(r.Name, r.Clicks)).ToList();
+    }
+
+    public async Task<PagedClickEvents> GetEventsAsync(Guid linkId, ClickEventQuery query, CancellationToken ct)
+    {
+        var (from, to, limited) = ResolveWindow(
+            query.Range, query.CustomFrom, query.CustomTo, query.RetentionDays, time.GetUtcNow().UtcDateTime);
+        var take = Math.Clamp(query.Limit, 1, MaxEventPage);
+        var order = query.OldestFirst ? "ASC" : "DESC";
+
+        var sql = new StringBuilder("""
+            SELECT id, occurred_at, referrer_host, country, city, os, browser, device_type,
+                   utm_source, utm_medium, utm_campaign, utm_term, utm_content
+            FROM analytics.click_events
+            WHERE link_id = @link AND occurred_at >= @from AND occurred_at < @to AND NOT is_bot
+            """);
+        var args = new List<NpgsqlParameter>
+        {
+            new("link", linkId), new("from", from), new("to", to), new("take", take + 1),
+        };
+
+        if (!string.IsNullOrWhiteSpace(query.Country))
+        {
+            sql.Append(" AND country = @country");
+            args.Add(new("country", query.Country.Trim().ToUpperInvariant()));
+        }
+        if (!string.IsNullOrWhiteSpace(query.Device))
+        {
+            sql.Append(" AND lower(device_type) = lower(@device)");
+            args.Add(new("device", query.Device.Trim()));
+        }
+        if (!string.IsNullOrWhiteSpace(query.Browser))
+        {
+            sql.Append(" AND lower(browser) = lower(@browser)");
+            args.Add(new("browser", query.Browser.Trim()));
+        }
+        if (!string.IsNullOrWhiteSpace(query.Referrer))
+        {
+            if (query.Referrer.Trim().Equals("direct", StringComparison.OrdinalIgnoreCase))
+                sql.Append(" AND COALESCE(referrer_host, '') = ''");
+            else
+            {
+                sql.Append(" AND referrer_host = lower(@referrer)");
+                args.Add(new("referrer", query.Referrer.Trim()));
+            }
+        }
+        if (query.Cursor is not null)
+        {
+            if (!ClickEventCursor.TryDecode(query.Cursor, out var afterAt, out var afterId))
+                throw new ArgumentException("Invalid cursor.", nameof(query));
+            // Row comparison keeps the keyset stable when several clicks share a timestamp.
+            sql.Append(query.OldestFirst
+                ? " AND (occurred_at, id) > (@c_at, @c_id)"
+                : " AND (occurred_at, id) < (@c_at, @c_id)");
+            args.Add(new("c_at", afterAt));
+            args.Add(new("c_id", afterId));
+        }
+        sql.Append($" ORDER BY occurred_at {order}, id {order} LIMIT @take");
+
+        var rows = await ReadAsync(sql.ToString(), args, r => new ClickEventItem(
+            r.GetGuid(0),
+            DateTime.SpecifyKind(r.GetDateTime(1), DateTimeKind.Utc),
+            NullableString(r, 2), NullableString(r, 3), NullableString(r, 4), NullableString(r, 5), NullableString(r, 6),
+            r.GetString(7),
+            NullableString(r, 8), NullableString(r, 9), NullableString(r, 10), NullableString(r, 11), NullableString(r, 12)), ct);
+
+        string? next = null;
+        if (rows.Count > take)
+        {
+            rows.RemoveAt(rows.Count - 1);
+            next = ClickEventCursor.Encode(rows[^1].OccurredAt, rows[^1].Id);
+        }
+        return new PagedClickEvents(from, to, limited, rows, next);
+    }
+
+    public async Task<UtmReport> GetUtmReportAsync(
+        Guid linkId, AnalyticsRange range, DateTime? customFrom, DateTime? customTo, int? retentionDays, CancellationToken ct)
+    {
+        var (from, to, limited) = ResolveWindow(range, customFrom, customTo, retentionDays, time.GetUtcNow().UtcDateTime);
+        List<NpgsqlParameter> Args() => [new("link", linkId), new("from", from), new("to", to)];
+        const string Window = "link_id = @link AND occurred_at >= @from AND occurred_at < @to AND NOT is_bot";
+
+        // One row per click, so a click counts once in each breakdown and once in the totals.
+        var totals = (await ReadAsync($$"""
+            SELECT COUNT(*)::bigint,
+                   COUNT(*) FILTER (WHERE COALESCE(utm_source, utm_medium, utm_campaign, utm_term, utm_content) IS NOT NULL)::bigint
+            FROM analytics.click_events WHERE {{Window}}
+            """, Args(), r => (Total: r.GetInt64(0), Tagged: r.GetInt64(1)), ct)).Single();
+
+        var breakdowns = new List<IReadOnlyList<BreakdownItem>>();
+        foreach (var column in UtmColumns)
+        {
+            breakdowns.Add(await ReadAsync($$"""
+                SELECT {{column}}, COUNT(*)::bigint
+                FROM analytics.click_events
+                WHERE {{Window}} AND {{column}} IS NOT NULL
+                GROUP BY 1 ORDER BY 2 DESC, 1 LIMIT {{TopN}}
+                """, Args(), r => new BreakdownItem(r.GetString(0), r.GetInt64(1)), ct));
+        }
+
+        var combinations = await ReadAsync($$"""
+            SELECT utm_source, utm_medium, utm_campaign, COUNT(*)::bigint
+            FROM analytics.click_events
+            WHERE {{Window}} AND COALESCE(utm_source, utm_medium, utm_campaign) IS NOT NULL
+            GROUP BY 1, 2, 3 ORDER BY 4 DESC, 1, 2, 3 LIMIT {{TopCombinations}}
+            """, Args(), r => new UtmCampaignRow(NullableString(r, 0), NullableString(r, 1), NullableString(r, 2), r.GetInt64(3)), ct);
+
+        return new UtmReport(from, to, limited, totals.Total, totals.Tagged,
+            breakdowns[0], breakdowns[1], breakdowns[2], breakdowns[3], breakdowns[4], combinations);
+    }
+
+    private static string? NullableString(DbDataReader r, int ordinal) => r.IsDBNull(ordinal) ? null : r.GetString(ordinal);
+
+    /// <summary>Runs a read-only command on this context's connection (raw Npgsql, not Database.SqlQuery - spec §2).</summary>
+    private async Task<List<T>> ReadAsync<T>(
+        string sql, IEnumerable<NpgsqlParameter> parameters, Func<DbDataReader, T> map, CancellationToken ct)
+    {
+        await db.Database.OpenConnectionAsync(ct);
+        try
+        {
+            await using var command = db.Database.GetDbConnection().CreateCommand();
+            command.CommandText = sql;
+            foreach (var p in parameters) command.Parameters.Add(p);
+            if (db.Database.CurrentTransaction is { } tx) command.Transaction = tx.GetDbTransaction();
+
+            var results = new List<T>();
+            await using var reader = await command.ExecuteReaderAsync(ct);
+            while (await reader.ReadAsync(ct)) results.Add(map(reader));
+            return results;
+        }
+        finally
+        {
+            await db.Database.CloseConnectionAsync();
+        }
     }
 
     public static (DateTime From, DateTime To, bool LimitedByPlan) ResolveWindow(

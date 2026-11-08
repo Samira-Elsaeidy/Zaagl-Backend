@@ -1,5 +1,6 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Design;
+using Zaagl.Modules.Analytics.Contracts;
 using Zaagl.Modules.Analytics.Domain;
 
 namespace Zaagl.Modules.Analytics.Infrastructure;
@@ -31,6 +32,11 @@ public sealed class AnalyticsDbContext(DbContextOptions<AnalyticsDbContext> opti
             e.Property(x => x.Os).HasMaxLength(100);
             e.Property(x => x.Browser).HasMaxLength(100);
             e.Property(x => x.DeviceType).HasMaxLength(20).IsRequired();
+            e.Property(x => x.UtmSource).HasMaxLength(UtmTags.MaxLength);
+            e.Property(x => x.UtmMedium).HasMaxLength(UtmTags.MaxLength);
+            e.Property(x => x.UtmCampaign).HasMaxLength(UtmTags.MaxLength);
+            e.Property(x => x.UtmTerm).HasMaxLength(UtmTags.MaxLength);
+            e.Property(x => x.UtmContent).HasMaxLength(UtmTags.MaxLength);
             e.HasIndex(x => new { x.LinkId, x.OccurredAt });
             e.HasIndex(x => new { x.OwnerId, x.OccurredAt });
         });

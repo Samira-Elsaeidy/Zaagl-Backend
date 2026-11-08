@@ -1,6 +1,7 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using Zaagl.Modules.Analytics.Contracts;
 using Zaagl.Modules.Analytics.Infrastructure;
 using Zaagl.SharedKernel;
@@ -21,6 +22,7 @@ public static class AnalyticsModule
             ?? throw new InvalidOperationException("ConnectionStrings:Postgres is not configured.");
 
         services.AddDbContext<AnalyticsDbContext>(o => Configure(o, connection));
+        services.TryAddSingleton(TimeProvider.System);
         services.AddSingleton<ClickChannel>();
         services.AddSingleton<RawEventBudget>();
         services.AddSingleton<IClickRecorder, ClickRecorder>();

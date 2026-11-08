@@ -1,6 +1,45 @@
+using System.Globalization;
+using System.Text;
+
 namespace Zaagl.Modules.Analytics.Contracts;
 
+/// <summary>Opaque keyset cursor for the click event list: the last row's timestamp ticks and id.</summary>
+public static class ClickEventCursor
+{
+    public static string Encode(DateTime occurredAt, Guid id) =>
+        Convert.ToBase64String(Encoding.ASCII.GetBytes(
+                string.Create(CultureInfo.InvariantCulture, $"{occurredAt.Ticks}:{id:N}")))
+            .TrimEnd('=').Replace('+', '-').Replace('/', '_');
+
+    public static bool IsValid(string cursor) => TryDecode(cursor, out _, out _);
+
+    public static bool TryDecode(string cursor, out DateTime occurredAt, out Guid id)
+    {
+        occurredAt = default;
+        id = default;
+        if (cursor.Length is 0 or > 200) return false;
+        try
+        {
+            var b64 = cursor.Replace('-', '+').Replace('_', '/');
+            b64 = b64.PadRight(b64.Length + (4 - b64.Length % 4) % 4, '=');
+            var parts = Encoding.ASCII.GetString(Convert.FromBase64String(b64)).Split(':');
+            if (parts.Length != 2
+                || !long.TryParse(parts[0], NumberStyles.None, CultureInfo.InvariantCulture, out var ticks)
+                || ticks < DateTime.MinValue.Ticks || ticks > DateTime.MaxValue.Ticks
+                || !Guid.TryParseExact(parts[1], "N", out id))
+                return false;
+            occurredAt = new DateTime(ticks, DateTimeKind.Utc);
+            return true;
+        }
+        catch (FormatException)
+        {
+            return false;
+        }
+    }
+}
+
 /// <summary>One redirect. Bot and crawler hits are recorded too, flagged, and excluded from human counts.</summary>
+/// <param name="Utm">UTM tags of the destination this visitor was actually sent to (null when it has none).</param>
 public sealed record ClickEvent(
     Guid LinkId,
     Guid OwnerId,
@@ -12,7 +51,58 @@ public sealed record ClickEvent(
     string? Os,
     string? Browser,
     string DeviceType,
-    bool IsBot);
+    bool IsBot,
+    UtmTags? Utm = null);
+
+/// <summary>
+/// The five standard UTM parameters of a destination URL. The UTM builder writes them into the link's
+/// destination (or a routing variant's), and the redirect does not forward the short link's own query
+/// string, so the destination the visitor was sent to is the one place they can come from. Recorded per
+/// click, so A/B and routing variants with different tags are attributed correctly and nothing is counted twice.
+/// </summary>
+public sealed record UtmTags(string? Source, string? Medium, string? Campaign, string? Term, string? Content)
+{
+    public const int MaxLength = 200;
+
+    /// <summary>Tags from a destination URL, or null when it carries none of the five parameters.</summary>
+    public static UtmTags? FromUrl(string? url)
+    {
+        if (string.IsNullOrEmpty(url) || !Uri.TryCreate(url, UriKind.Absolute, out var uri) || uri.Query.Length < 2)
+            return null;
+
+        string? source = null, medium = null, campaign = null, term = null, content = null;
+        foreach (var pair in uri.Query[1..].Split('&', StringSplitOptions.RemoveEmptyEntries))
+        {
+            var eq = pair.IndexOf('=');
+            if (eq <= 0) continue;
+            var key = Uri.UnescapeDataString(pair[..eq].Replace('+', ' ')).ToLowerInvariant();
+            var value = Clean(pair[(eq + 1)..]);
+            if (value is null) continue;
+            switch (key)
+            {
+                // First occurrence wins, matching how analytics tools read a repeated parameter.
+                case "utm_source": source ??= value; break;
+                case "utm_medium": medium ??= value; break;
+                case "utm_campaign": campaign ??= value; break;
+                case "utm_term": term ??= value; break;
+                case "utm_content": content ??= value; break;
+            }
+        }
+
+        return source is null && medium is null && campaign is null && term is null && content is null
+            ? null
+            : new UtmTags(source, medium, campaign, term, content);
+    }
+
+    private static string? Clean(string raw)
+    {
+        string value;
+        try { value = Uri.UnescapeDataString(raw.Replace('+', ' ')).Trim(); }
+        catch (UriFormatException) { return null; }
+        if (value.Length == 0) return null;
+        return value.Length > MaxLength ? value[..MaxLength] : value;
+    }
+}
 
 public interface IClickRecorder
 {
@@ -89,7 +179,75 @@ public interface IAnalyticsQueries
     Task<IReadOnlyDictionary<Guid, long>> GetClickTotalsAsync(
         IReadOnlyCollection<Guid> linkIds,
         CancellationToken cancellationToken);
+
+    /// <summary>Individual human clicks of one link, newest first by default, keyset-paginated.</summary>
+    Task<PagedClickEvents> GetEventsAsync(Guid linkId, ClickEventQuery query, CancellationToken cancellationToken);
+
+    /// <summary>Human clicks of one link grouped by each UTM parameter, over the same window rules as the overview.</summary>
+    Task<UtmReport> GetUtmReportAsync(
+        Guid linkId,
+        AnalyticsRange range,
+        DateTime? customFrom,
+        DateTime? customTo,
+        int? retentionDays,
+        CancellationToken cancellationToken);
 }
+
+/// <summary>Filters for the click event list. Null filters are not applied.</summary>
+/// <param name="Referrer">A referrer host, or <c>direct</c> for clicks with no referrer.</param>
+/// <param name="Cursor">Opaque value from the previous page's <c>NextCursor</c>.</param>
+public sealed record ClickEventQuery(
+    AnalyticsRange Range,
+    DateTime? CustomFrom,
+    DateTime? CustomTo,
+    int? RetentionDays,
+    string? Country,
+    string? Device,
+    string? Browser,
+    string? Referrer,
+    bool OldestFirst,
+    int Limit,
+    string? Cursor);
+
+/// <summary>One click as shown in the event list. Holds no IP address and no visitor identifier.</summary>
+public sealed record ClickEventItem(
+    Guid Id,
+    DateTime OccurredAt,
+    string? ReferrerHost,
+    string? Country,
+    string? City,
+    string? Os,
+    string? Browser,
+    string DeviceType,
+    string? UtmSource,
+    string? UtmMedium,
+    string? UtmCampaign,
+    string? UtmTerm,
+    string? UtmContent);
+
+public sealed record PagedClickEvents(
+    DateTime From,
+    DateTime To,
+    bool RangeLimitedByPlan,
+    IReadOnlyList<ClickEventItem> Items,
+    string? NextCursor);
+
+/// <summary>One source / medium / campaign combination and its clicks.</summary>
+public sealed record UtmCampaignRow(string? Source, string? Medium, string? Campaign, long Clicks);
+
+/// <param name="TaggedClicks">Clicks whose destination carried at least one UTM parameter.</param>
+public sealed record UtmReport(
+    DateTime From,
+    DateTime To,
+    bool RangeLimitedByPlan,
+    long TotalClicks,
+    long TaggedClicks,
+    IReadOnlyList<BreakdownItem> Sources,
+    IReadOnlyList<BreakdownItem> Mediums,
+    IReadOnlyList<BreakdownItem> Campaigns,
+    IReadOnlyList<BreakdownItem> Terms,
+    IReadOnlyList<BreakdownItem> Contents,
+    IReadOnlyList<UtmCampaignRow> Combinations);
 
 /// <summary>A purged link kept for a premium owner's history (spec §4.4 <c>link_archive</c>, §7.9 archive endpoints).</summary>
 public sealed record ArchivedLink(

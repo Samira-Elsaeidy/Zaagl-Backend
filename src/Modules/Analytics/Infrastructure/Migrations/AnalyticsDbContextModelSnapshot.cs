@@ -94,6 +94,31 @@ namespace Zaagl.Modules.Analytics.Infrastructure.Migrations
                         .HasColumnType("character varying(255)")
                         .HasColumnName("referrer_host");
 
+                    b.Property<string>("UtmCampaign")
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)")
+                        .HasColumnName("utm_campaign");
+
+                    b.Property<string>("UtmContent")
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)")
+                        .HasColumnName("utm_content");
+
+                    b.Property<string>("UtmMedium")
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)")
+                        .HasColumnName("utm_medium");
+
+                    b.Property<string>("UtmSource")
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)")
+                        .HasColumnName("utm_source");
+
+                    b.Property<string>("UtmTerm")
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)")
+                        .HasColumnName("utm_term");
+
                     b.Property<string>("VisitorHash")
                         .IsRequired()
                         .HasMaxLength(64)

@@ -27,6 +27,53 @@ public static class AnalyticsEndpoints
             })
             .WithTags("Analytics").RequireAuthorization();
 
+        // Individual human clicks ("View events"). Same range rules and plan retention as the overview.
+        // Never returns an IP address or the visitor hash.
+        app.MapGet("/api/links/{id:guid}/analytics/events", async (
+                Guid id, string? range, DateTime? from, DateTime? to,
+                string? country, string? device, string? browser, string? referrer,
+                string? order, int? limit, string? cursor,
+                ClaimsPrincipal user, ILinkDirectory links, IPlanProvider plans, IAnalyticsQueries analytics, CancellationToken ct) =>
+            {
+                var userId = user.GetUserId();
+                if (await links.FindOwnedAsync(userId, id, ct) is null) return ApiResults.NotFound("Link not found.");
+                if (!TryParseRange(range, out var parsed))
+                    return ApiResults.Problem(Error.Validation("range must be one of: live, 24h, 7d, 30d, custom."));
+                if (order is not (null or "" or "newest" or "oldest"))
+                    return ApiResults.Problem(Error.Validation("order must be newest or oldest."));
+                if (limit is < 1 or > 100)
+                    return ApiResults.Problem(Error.Validation("limit must be between 1 and 100."));
+                if (country is { Length: > 0 } && (country.Length != 2 || !country.All(char.IsAsciiLetter)))
+                    return ApiResults.Problem(Error.Validation("country must be a two-letter country code."));
+                if (new[] { device, browser, referrer }.Any(v => v is { Length: > 255 }))
+                    return ApiResults.Problem(Error.Validation("Filter values must be at most 255 characters."));
+                if (cursor is not null && !ClickEventCursor.IsValid(cursor))
+                    return ApiResults.Problem(Error.Validation("cursor is not valid. Start again from the first page."));
+
+                var limits = await plans.GetLimitsAsync(userId, ct);
+                var page = await analytics.GetEventsAsync(id, new ClickEventQuery(
+                    parsed, from, to, limits.AnalyticsRetentionDays,
+                    country, device, browser, referrer,
+                    OldestFirst: order == "oldest", Limit: limit ?? 50, Cursor: cursor), ct);
+                return Results.Ok(page);
+            })
+            .WithTags("Analytics").RequireAuthorization();
+
+        // Clicks grouped by UTM source, medium, campaign, term and content of the destination the visitor was sent to.
+        app.MapGet("/api/links/{id:guid}/analytics/utm", async (
+                Guid id, string? range, DateTime? from, DateTime? to,
+                ClaimsPrincipal user, ILinkDirectory links, IPlanProvider plans, IAnalyticsQueries analytics, CancellationToken ct) =>
+            {
+                var userId = user.GetUserId();
+                if (await links.FindOwnedAsync(userId, id, ct) is null) return ApiResults.NotFound("Link not found.");
+                if (!TryParseRange(range, out var parsed))
+                    return ApiResults.Problem(Error.Validation("range must be one of: live, 24h, 7d, 30d, custom."));
+
+                var limits = await plans.GetLimitsAsync(userId, ct);
+                return Results.Ok(await analytics.GetUtmReportAsync(id, parsed, from, to, limits.AnalyticsRetentionDays, ct));
+            })
+            .WithTags("Analytics").RequireAuthorization();
+
         // Same overview summed over everything the user owns (dashboard cards and the Analytics page).
         app.MapGet("/api/analytics/overview", async (
                 string? range, DateTime? from, DateTime? to,

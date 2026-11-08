@@ -176,6 +176,11 @@ public sealed class ClickWriterService(
                         Browser = c.Browser,
                         DeviceType = c.DeviceType,
                         IsBot = false,
+                        UtmSource = c.Utm?.Source,
+                        UtmMedium = c.Utm?.Medium,
+                        UtmCampaign = c.Utm?.Campaign,
+                        UtmTerm = c.Utm?.Term,
+                        UtmContent = c.Utm?.Content,
                     })
                     .ToList();
                 if (rawRows.Count > 0)
