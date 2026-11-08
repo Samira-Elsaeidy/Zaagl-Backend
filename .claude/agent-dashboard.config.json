@@ -1,0 +1,30 @@
+{
+  "lang": "en",
+  "sprites": {
+    "zaagl-architect": "hat",
+    "zaagl-frontend": "leaf",
+    "zaagl-backend": "antenna",
+    "zaagl-devops": "visor",
+    "zaagl-desktop-cli": "plain",
+    "zaagl-qa": "hat"
+  },
+  "labels": {
+    "zaagl-architect": { "en": "Principal Architect", "ar": "كبير المعماريين" },
+    "zaagl-frontend": { "en": "Senior Frontend Engineer", "ar": "مهندس واجهات أول" },
+    "zaagl-backend": { "en": "Senior Backend Engineer", "ar": "مهندس خلفية أول" },
+    "zaagl-devops": { "en": "Senior DevOps / SRE", "ar": "مهندس عمليات أول" },
+    "zaagl-desktop-cli": { "en": "Desktop & CLI Engineer", "ar": "مهندس سطح المكتب وسطر الأوامر" },
+    "zaagl-qa": { "en": "QA & Security (independent)", "ar": "الجودة والأمان (مستقل)" },
+    "general-purpose": { "en": "General agent", "ar": "وكيل عام" },
+    "Explore": { "en": "Explorer", "ar": "مستكشف" },
+    "Plan": { "en": "Planner", "ar": "مخطِّط" }
+  },
+  "colors": {
+    "zaagl-architect": "#a56eff",
+    "zaagl-frontend": "#08bdba",
+    "zaagl-backend": "#4589ff",
+    "zaagl-devops": "#ff832b",
+    "zaagl-desktop-cli": "#f1c21b",
+    "zaagl-qa": "#fa4d56"
+  }
+}
