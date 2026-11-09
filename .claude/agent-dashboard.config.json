@@ -1,23 +1,55 @@
 {
   "lang": "en",
   "sprites": {
-    "zaagl-architect": "hat",
-    "zaagl-frontend": "leaf",
-    "zaagl-backend": "antenna",
-    "zaagl-devops": "visor",
-    "zaagl-desktop-cli": "plain",
-    "zaagl-qa": "hat"
+    "zaagl-head": "head",
+    "zaagl-architect": "architect",
+    "zaagl-frontend": "frontend",
+    "zaagl-backend": "backend",
+    "zaagl-devops": "devops",
+    "zaagl-desktop-cli": "cli",
+    "zaagl-qa": "qa"
   },
   "labels": {
-    "zaagl-architect": { "en": "Principal Architect", "ar": "كبير المعماريين" },
-    "zaagl-frontend": { "en": "Senior Frontend Engineer", "ar": "مهندس واجهات أول" },
-    "zaagl-backend": { "en": "Senior Backend Engineer", "ar": "مهندس خلفية أول" },
-    "zaagl-devops": { "en": "Senior DevOps / SRE", "ar": "مهندس عمليات أول" },
-    "zaagl-desktop-cli": { "en": "Desktop & CLI Engineer", "ar": "مهندس سطح المكتب وسطر الأوامر" },
-    "zaagl-qa": { "en": "QA & Security (independent)", "ar": "الجودة والأمان (مستقل)" },
-    "general-purpose": { "en": "General agent", "ar": "وكيل عام" },
-    "Explore": { "en": "Explorer", "ar": "مستكشف" },
-    "Plan": { "en": "Planner", "ar": "مخطِّط" }
+    "zaagl-architect": {
+      "en": "Principal Architect",
+      "ar": "كبير المعماريين"
+    },
+    "zaagl-frontend": {
+      "en": "Senior Frontend Engineer",
+      "ar": "مهندس واجهات أول"
+    },
+    "zaagl-backend": {
+      "en": "Senior Backend Engineer",
+      "ar": "مهندس خلفية أول"
+    },
+    "zaagl-devops": {
+      "en": "Senior DevOps / SRE",
+      "ar": "مهندس عمليات أول"
+    },
+    "zaagl-desktop-cli": {
+      "en": "Desktop & CLI Engineer",
+      "ar": "مهندس سطح المكتب وسطر الأوامر"
+    },
+    "zaagl-qa": {
+      "en": "QA & Security (independent)",
+      "ar": "الجودة والأمان (مستقل)"
+    },
+    "general-purpose": {
+      "en": "General agent",
+      "ar": "وكيل عام"
+    },
+    "Explore": {
+      "en": "Explorer",
+      "ar": "مستكشف"
+    },
+    "Plan": {
+      "en": "Planner",
+      "ar": "مخطِّط"
+    },
+    "zaagl-head": {
+      "en": "Head of Engineering (manages the team)",
+      "ar": "رئيس الهندسة (يدير الفريق)"
+    }
   },
   "colors": {
     "zaagl-architect": "#a56eff",
@@ -25,6 +57,7 @@
     "zaagl-backend": "#4589ff",
     "zaagl-devops": "#ff832b",
     "zaagl-desktop-cli": "#f1c21b",
-    "zaagl-qa": "#fa4d56"
+    "zaagl-qa": "#fa4d56",
+    "zaagl-head": "#fbbf24"
   }
 }

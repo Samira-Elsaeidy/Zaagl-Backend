@@ -6,10 +6,22 @@ public enum AccessOutcome
 {
     Allowed,
     Locked,
+    /// <summary>Spec §4.3 "quarantined" (past expires_at). 410, or 302 to the owner's fallback URL (PD-42).</summary>
     Expired,
     /// <summary>Spec §4.3 state "purgeable": a caller must treat this exactly like the link never
     /// existed (404), distinct from Expired's 410-with-a-fallback-page behaviour.</summary>
     Purgeable,
+    /// <summary>Spec §4.3 "deleted": 410 page, never the fallback URL (PD-42).</summary>
+    Deleted,
+    /// <summary>Spec §4.3 "disabled" (user-disabled, admin, abuse, safety): 410 page, never the fallback URL (PD-42).</summary>
+    Disabled,
+}
+
+public static class AccessOutcomes
+{
+    /// <summary>True for every outcome in which the link no longer redirects to its destination.</summary>
+    public static bool IsGone(this AccessOutcome outcome) =>
+        outcome is AccessOutcome.Expired or AccessOutcome.Purgeable or AccessOutcome.Deleted or AccessOutcome.Disabled;
 }
 
 /// <summary>
@@ -23,18 +35,18 @@ public sealed class AccessGate
         var nowUtc = now.UtcDateTime;
         var state = LinkStateCalculator.Compute(link, nowUtc);
 
-        // Purgeable/Deleted/Disabled/Quarantined all mean "this link no longer redirects" - the spec's
-        // state table (§4.3) maps the first three to 410 and purgeable to 404; this app's existing
-        // ResolveKind.Expired already renders a "no longer available" page with an optional fallback URL,
-        // so Deleted/Disabled/Quarantined all map onto it (deliberate simplification: distinct HTTP
-        // semantics for each are a later phase once there's a reason for a visitor to tell them apart).
-        // IsActive remains a legacy synonym for "disabled by the owner" (SetFlagsAsync keeps it and
-        // DisabledKind.UserDisabled in sync), so this check no longer needs to look at it separately.
-        if (state == LinkState.Purgeable) return AccessOutcome.Purgeable;
-        // IsActive=false without DisabledAt set is a defensive fallback (e.g. a row touched by older code
-        // or a direct edit that didn't go through SetFlagsAsync) - still treated as disabled.
-        if (state is LinkState.Deleted or LinkState.Disabled or LinkState.Quarantined || !link.IsActive)
-            return AccessOutcome.Expired;
+        // Spec §4.3 / §7.3 (PD-39): purgeable → 404; deleted, disabled and quarantined → 410, each with its own
+        // page. Only quarantined (expired) may use the owner's fallback URL (PD-42).
+        switch (state)
+        {
+            case LinkState.Purgeable: return AccessOutcome.Purgeable;
+            case LinkState.Deleted: return AccessOutcome.Deleted;
+            case LinkState.Disabled: return AccessOutcome.Disabled;
+        }
+        // IsActive=false without DisabledAt set is a defensive fallback (a row touched by older code or a
+        // direct edit that didn't go through SetFlagsAsync): still disabled, and it wins over expiry.
+        if (!link.IsActive) return AccessOutcome.Disabled;
+        if (state == LinkState.Quarantined) return AccessOutcome.Expired;
         return link.HasPassword ? AccessOutcome.Locked : AccessOutcome.Allowed;
     }
 

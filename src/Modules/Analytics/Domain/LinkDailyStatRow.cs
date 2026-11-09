@@ -16,7 +16,10 @@ public sealed class LinkArchiveRow
     public Guid OwnerId { get; set; }
     public string Code { get; set; } = "";
     public bool IsCustom { get; set; }
-    public string TargetUrl { get; set; } = "";
+    /// <summary>Null for a content link (C1, ARC-002 §6 row 13).</summary>
+    public string? TargetUrl { get; set; } = "";
+    /// <summary>Mirrors Links.Contracts.LinkTargetKind (0 = URL, 1 snippet, 2 file, 3 media).</summary>
+    public short TargetKind { get; set; }
     public DateTime CreatedAt { get; set; }
     public DateTime ExpiresAt { get; set; }
     public DateTime PurgedAt { get; set; }

@@ -26,7 +26,7 @@ namespace Zaagl.Modules.Identity.Application;
 public sealed class IdentityService(
     IdentityDbContext db,
     TokenService tokens,
-    IPlanProvider plans,
+    IContentPlanProvider plans,
     Zaagl.Modules.Links.Contracts.IAccountDataEraser linkEraser,
     Zaagl.Modules.Links.Contracts.ILinkExportSource linkExport,
     Zaagl.Modules.Analytics.Contracts.IArchiveQueries archiveQueries,
@@ -36,7 +36,14 @@ public sealed class IdentityService(
     private const int MaxApiKeysPerUser = 20;
     private static readonly TimeSpan ConfirmTokenLifetime = TimeSpan.FromDays(3);
     private static readonly TimeSpan ResetTokenLifetime = TimeSpan.FromHours(1);
-    private static readonly string[] AllowedScopes = ["links:read", "links:write", "stats:read"];
+    /// <summary>Scopes a key may be created with (BE-001). The Phase 1 content scopes are accepted now and
+    /// enforced by the API's scope policies once their endpoints ship.</summary>
+    public static readonly IReadOnlyList<string> AllowedScopes =
+        ["links:read", "links:write", "stats:read", "snippets:write", "files:write", "resources:read"];
+
+    /// <summary>A key created without an explicit scope list gets the Phase 0 set only; content scopes must be
+    /// requested explicitly, so existing clients never gain new powers silently.</summary>
+    public static readonly IReadOnlyList<string> DefaultScopes = ["links:read", "links:write", "stats:read"];
 
     // ---- Registration (spec §7.4: always the same response shape) --------
 
@@ -353,11 +360,51 @@ public sealed class IdentityService(
     public async Task<Result<AuthResponse>> ExternalLoginAsync(
         string provider, string providerUserId, string? email, string? name, CancellationToken ct)
     {
+        var user = await ResolveExternalUserAsync(provider, providerUserId, email, name, ct);
+        return user.IsSuccess ? Result<AuthResponse>.Ok(await IssueSessionAsync(user.Value!, ct)) : user.Error!;
+    }
+
+    /// <summary>PD-41 social sign-in, step 1 (the provider callback): finds or creates the user for a provider
+    /// identity and returns its id, without issuing tokens. The caller hands the browser a one-time code;
+    /// <see cref="IssueExternalSessionAsync"/> turns that code's user into a token pair.</summary>
+    public async Task<Result<Guid>> ExternalSignInUserAsync(
+        string provider, string providerUserId, string? email, string? name, CancellationToken ct)
+    {
+        var user = await ResolveExternalUserAsync(provider, providerUserId, email, name, ct);
+        if (!user.IsSuccess) return user.Error!;
+        if (CheckExternalSessionAllowed(user.Value!) is { } refused) return refused;
+        return user.Value!.Id;
+    }
+
+    /// <summary>PD-41 social sign-in, step 2 (POST /api/auth/external/exchange): the token pair for the user a
+    /// consumed one-time code was bound to. The account is re-checked, as it may have changed in between.</summary>
+    public async Task<Result<AuthResponse>> IssueExternalSessionAsync(Guid userId, CancellationToken ct)
+    {
+        var user = await db.Users.FirstOrDefaultAsync(u => u.Id == userId, ct);
+        if (user is null) return Error.Unauthorized("This sign-in code is invalid or has expired.");
+        if (CheckExternalSessionAllowed(user) is { } refused) return refused;
+        return await IssueSessionAsync(user, ct);
+    }
+
+    /// <summary>Social sign-in issues a full session, so it must not bypass what password sign-in enforces:
+    /// disabled or deleted accounts are refused, and an Admin (spec §7.4: TOTP required) must use password + TOTP.</summary>
+    private static Error? CheckExternalSessionAllowed(User user)
+    {
+        if (user.DisabledAt is not null || user.DeletedAt is not null)
+            return new Error("account_disabled", "This account has been disabled.");
+        if (user.Role == "Admin")
+            return Error.Forbidden("Administrator accounts must sign in with a password and an authenticator code.");
+        return null;
+    }
+
+    private async Task<Result<User>> ResolveExternalUserAsync(
+        string provider, string providerUserId, string? email, string? name, CancellationToken ct)
+    {
         provider = provider.ToLowerInvariant();
         var existing = await db.ExternalLogins
             .FirstOrDefaultAsync(l => l.Provider == provider && l.ProviderUserId == providerUserId, ct);
         if (existing is not null)
-            return Result<AuthResponse>.Ok(await IssueSessionAsync(await db.Users.FirstAsync(u => u.Id == existing.UserId, ct), ct));
+            return await db.Users.FirstAsync(u => u.Id == existing.UserId, ct);
 
         var normalized = NormalizeEmail(email);
         if (normalized is null) return Error.Validation("The provider did not return a usable email address.");
@@ -377,7 +424,7 @@ public sealed class IdentityService(
         }
         db.ExternalLogins.Add(new ExternalLogin { UserId = user.Id, Provider = provider, ProviderUserId = providerUserId });
         await db.SaveChangesAsync(ct);
-        return Result<AuthResponse>.Ok(await IssueSessionAsync(user, ct));
+        return user;
     }
 
     public async Task<IReadOnlyList<ApiKeyDto>> ListApiKeysAsync(Guid userId, CancellationToken ct) =>
@@ -386,18 +433,17 @@ public sealed class IdentityService(
             .Select(k => new ApiKeyDto(k.Id, k.Name, k.Prefix, k.Scopes, k.CreatedAt, k.LastUsedAt))
             .ToListAsync(ct);
 
-    /// <summary>Spec §7.4: API keys are premium-only. This app's plan model is Free/Starter (Billing), not
-    /// the spec's Free/Premium - Starter is the paid tier and is treated as the spec's "premium" for this
-    /// gate, same mapping used for custom slugs/password/click-limit elsewhere in this codebase.</summary>
+    /// <summary>Spec §7.4: API keys are premium-only (PD-07: paid plans). BE-003: decided by the plan's
+    /// <c>ApiKeys</c> capability (ARC-005), never by comparing tiers.</summary>
     public async Task<Result<CreatedApiKeyDto>> CreateApiKeyAsync(Guid userId, string? name, string[]? requestedScopes, CancellationToken ct)
     {
-        var limits = await plans.GetLimitsAsync(userId, ct);
-        if (limits.Tier != PlanTier.Starter) return Error.PlanRequired("API keys need the Starter plan.");
+        var plan = await plans.GetForUserAsync(userId, ct);
+        if (!plan.Capabilities.ApiKeys) return Error.PlanRequired("API keys need the Starter plan.");
 
         if (await db.ApiKeys.CountAsync(k => k.UserId == userId && k.RevokedAt == null, ct) >= MaxApiKeysPerUser)
             return Error.Conflict($"You can have at most {MaxApiKeysPerUser} active API keys.");
 
-        var scopes = (requestedScopes is { Length: > 0 } ? requestedScopes : AllowedScopes)
+        var scopes = (requestedScopes is { Length: > 0 } ? requestedScopes : DefaultScopes)
             .Where(s => AllowedScopes.Contains(s)).Distinct().ToArray();
         if (scopes.Length == 0) return Error.Validation("At least one valid scope is required.");
 
@@ -424,6 +470,26 @@ public sealed class IdentityService(
         await db.SaveChangesAsync(ct);
     }
 
+    /// <summary>Spec §7.4 / §8.2, PD-58: when the user's plan has no ApiKeys capability every key of the user is
+    /// revoked at once and a security notice is queued; an upgrade does not restore them. Called by Billing after
+    /// its webhook commit (IPlanChangeListener), and again on its retries. Idempotent: already-revoked keys are
+    /// untouched and no notice is sent when nothing was revoked.</summary>
+    public async Task RevokeApiKeysForPlanChangeAsync(Guid userId, CancellationToken ct)
+    {
+        var now = TimeProvider.System.GetUtcNow().UtcDateTime; // this service has no injected clock yet
+        var revoked = await db.ApiKeys.Where(k => k.UserId == userId && k.RevokedAt == null)
+            .ExecuteUpdateAsync(s => s.SetProperty(k => k.RevokedAt, now), ct);
+        if (revoked == 0) return;
+
+        var email = await db.Users.AsNoTracking().Where(u => u.Id == userId && u.DeletedAt == null)
+            .Select(u => u.Email).FirstOrDefaultAsync(ct);
+        if (email is not null)
+            await EmailQueue.QueueAccountEmailAsync(db, userId, EmailKinds.SecurityNotice,
+                new SecurityNoticePayload("Your plan no longer includes API keys, so your API keys were revoked. Create new keys after upgrading again."),
+                email, ct);
+        logger.LogInformation("Revoked {Count} API keys of user {UserId} after a plan change.", revoked, userId);
+    }
+
     public async Task<bool> RevokeApiKeyAsync(Guid userId, Guid keyId, CancellationToken ct) =>
         await db.ApiKeys.Where(k => k.Id == keyId && k.UserId == userId && k.RevokedAt == null)
             .ExecuteUpdateAsync(s => s.SetProperty(k => k.RevokedAt, DateTime.UtcNow), ct) > 0;
@@ -444,8 +510,9 @@ public sealed class IdentityService(
 
         return Result<AccountExportDto>.Ok(new(
             new ExportProfileDto(user.Id, user.Email, user.CreatedAt),
-            links.Select(l => new ExportLinkDto(l.Code, l.TargetUrl, l.CreatedAt, l.ExpiresAt, l.State, l.ClickCount)).ToList(),
-            archive.Items.Select(a => new ExportArchivedLinkDto(a.Code, a.IsCustom, a.TargetUrl, a.CreatedAt, a.ExpiresAt, a.PurgedAt)).ToList()));
+            links.Select(l => new ExportLinkDto(l.Code, l.TargetUrl, l.CreatedAt, l.ExpiresAt, l.State, l.ClickCount, l.Kind)).ToList(),
+            archive.Items.Select(a => new ExportArchivedLinkDto(a.Code, a.IsCustom, a.TargetUrl, a.CreatedAt, a.ExpiresAt, a.PurgedAt,
+                Zaagl.Modules.Links.Contracts.LinkExportKinds.For((Zaagl.Modules.Links.Contracts.LinkTargetKind)a.TargetKind))).ToList()));
     }
 
     /// <summary>Irreversible. The password check is the confirmation; the last remaining admin cannot
@@ -559,6 +626,11 @@ public sealed class IdentityService(
         var hash = Hash(rawKey);
         var key = await db.ApiKeys.FirstOrDefaultAsync(k => k.KeyHash == hash && k.RevokedAt == null, ct);
         if (key is null) return null;
+
+        // Spec §7.4 / ARC-005 §4 / PD-36: a key whose owner's plan no longer has the ApiKeys capability fails
+        // (401, never guest). Backstop for the revocation done on downgrade (OnPlanChangedAsync); the plan read is
+        // cached at most 60 s (ContentPlanProvider).
+        if (!(await plans.GetForUserAsync(key.UserId, ct)).Capabilities.ApiKeys) return null;
 
         if (key.LastUsedAt is null || key.LastUsedAt < DateTime.UtcNow.AddMinutes(-5))
             await db.ApiKeys.Where(k => k.Id == key.Id)

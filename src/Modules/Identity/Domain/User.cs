@@ -98,6 +98,26 @@ public sealed class RefreshToken
     public DateTime? RevokedAt { get; set; }
 }
 
+/// <summary>PD-41: a short-lived (60 s), single-use, random secret bound to one user, stored only as its
+/// SHA-256 hash. Purposes: <see cref="OneTimeCodePurpose"/>.</summary>
+public sealed class OneTimeCode
+{
+    public string CodeHash { get; set; } = "";
+    public string Purpose { get; set; } = "";
+    public Guid UserId { get; set; }
+    public DateTime CreatedAt { get; set; }
+    public DateTime ExpiresAt { get; set; }
+}
+
+public static class OneTimeCodePurpose
+{
+    /// <summary>Social sign-in: exchanged once for a token pair by POST /api/auth/external/exchange.</summary>
+    public const string ExternalLogin = "external-login";
+
+    /// <summary>Live statistics: opens one SignalR connection to /hubs/analytics.</summary>
+    public const string HubTicket = "hub-ticket";
+}
+
 /// <summary>Spec §7.4 login protection: a failed password is recorded per (account, IP partition) so a
 /// pair can be locked for 15 minutes after 5 failures, and per-account across all partitions so a
 /// progressive delay (not a hard lockout) applies regardless of where the attempts came from.</summary>

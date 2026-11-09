@@ -11,8 +11,8 @@
 
 These are the lead architect's overrides. Where they differ from the draft text below, they win.
 
-- **User-content domain (PD-03):** must be bought and named; OPS-010 cannot finish without it.
-- **Upload host (PD-12):** open. The draft's `dl.<ucd>` tus proposal competes with the architect's chunked `api.zaa.gl` proposal.
+- **User-content host (PD-03, PD-38, approved):** a `zaa.gl` subdomain, `usercontent.zaa.gl`, proxied by Cloudflare. No domain purchase. The Cloudflare terms question is deferred to before launch (PD-52).
+- **Upload host (PD-12, approved):** tus uploads on `api.zaa.gl` through Cloudflare in chunks of 90 MB or less. The draft's `dl.<ucd>` proposal below is superseded (see §3, updated 2026-11-09).
 - **Valkey and PostgreSQL version (PD-26):** open.
 - **Environment:** Docker cannot run on the development machine (firmware virtualisation is off). Container-based tasks are verified in CI or on a staging host and are never claimed as verified locally.
 - The draft's open questions are mapped in DECISIONS.md (devops Q1–Q14).
@@ -111,40 +111,73 @@ Conclusion: Free/Starter fit comfortably on 2 TB; **Pro dominates and does not f
 
 ---
 
-## 3. Reverse proxy (Nginx, container `proxy`, the only service publishing 80/443)
+## 3. Reverse proxy (Nginx, container `proxy`, the only service publishing 443)
 
-### 3.1 Hosts (spec §1.2 + TS §09). `<ucd>` = the separate registrable user-content domain to buy (Q2)
-| Host | CF mode | Upstream | Serves | Body limit |
+> **Updated 2026-11-09 to the approved layout** (PD-03, PD-12, PD-38, PD-46; Head review stage1-round3-devops note 3).
+> The earlier draft's separate user-content domain (`cdn.<ucd>` proxied + `dl.<ucd>` DNS-only, tus with 50 MB chunks
+> on `dl.<ucd>`) is **superseded**. DNS records, Cloudflare settings, WAF and rate-limit rules live in
+> [design/ops-001-hosts-and-dns.md](design/ops-001-hosts-and-dns.md); the `usercontent.zaa.gl` Nginx server block,
+> ticket format and headers live in [design/ARC-008-usercontent-delivery.md](design/ARC-008-usercontent-delivery.md).
+> This section only summarises them; where they differ, those two documents win.
+
+### 3.1 Hosts (spec §1.2, PD-03, PD-38). Every host is proxied by Cloudflare; no DNS-only record points at the VPS
+| Host | CF mode | Upstream | Serves | Body limit (Nginx) |
 |---|---|---|---|---|
-| `zaa.gl` | Proxied | `api` (Hosts:Short) | `GET/HEAD /{code}`, code 404/410 pages, security.txt; **never cookies**; snippet/file codes redirect to their viewer | 1 KB (no bodies) |
-| `www.zaa.gl` | Proxied | `web` | marketing | 1 MB |
-| `app.zaa.gl` | Proxied | `web` (BFF → api internally with `X-Forwarded-Host: api.zaa.gl`) | app, viewers (`/p /f /i`), `__Host-` cookies | 2 MB |
-| `api.zaa.gl` | Proxied | `api` (Hosts:Api) | `/api/v1/*` incl. snippet create (JSON ≤ 1–2 MB), upload-session create, SignalR `/hubs` (websocket upgrade); `/health/*` **denied** at the edge | 2 MB |
-| `cdn.<ucd>` | Proxied | nginx internal (X-Accel) | thumbnails/previews/small inline images for viewers, cacheable with signed short-lived URLs | none (GET only) |
-| `dl.<ucd>` | **DNS-only**, own IP if possible | `api` (tus + authorize) + nginx internal | tus uploads for **all** binary files (Starter 100 MB already exceeds CF's 100 MB), original downloads, video streaming | see 3.2 |
-| `staging.*` | Proxied + access gate | staging stack | spec §1.2, `X-Robots-Tag: noindex` | – |
+| `zaa.gl` | Proxied | `api` (Hosts:Short) | `GET/HEAD /{code}`, 404/410 pages, security.txt; **never cookies** | 1 KB (no bodies; WAF C4 allows GET/HEAD only) |
+| `app.zaa.gl` | Proxied | `web` (BFF → api on the internal address `ZAAGL_INTERNAL_API_URL`, not through Cloudflare) | app, viewers (`/p /f /i`), `/activate`, host-only `__Host-` cookies | 2 MB |
+| `api.zaa.gl` | Proxied | `api` (Hosts:Api) | `/api/*`, tus uploads (`/api/uploads`, PD-12), `/account/*`, SignalR `/hubs` (websocket); sign-in handshake cookies only (PD-46, host-only, ≤ 10 min); `/health/*` blocked at the edge (WAF C1) | `/api/uploads*`: 90,000,000 bytes; elsewhere 2 MB |
+| `usercontent.zaa.gl` | Proxied (PD-38; terms risk B1 / PD-52 deferred) | `api` authorises, Nginx serves bytes via X-Accel-Redirect | user bytes by single-use ticket (`/d/<ticket>`): downloads, inline images/video/PDF previews; **never cookies** | 1 KB; methods GET, HEAD, OPTIONS only (CORS preflight, §3.3) |
+| `www.zaa.gl` | Proxied | none (Cloudflare redirect rule) | 301 to `https://app.zaa.gl/` **PROPOSED (U-11)** | – |
+| `*.staging.zaa.gl` hosts | Proxied + WAF IP gate (C2) + basic auth | staging VPS | spec §1.2 names; two-level names need ACM or a rename (U-10 / ops-001 B2) | as production |
 
-No session cookies ever on `<ucd>`; auth there is a short-lived, scoped bearer/grant token minted by `api.zaa.gl` (CORS on `dl.<ucd>` allows only `https://app.zaa.gl` and the desktop app's origin). The desktop app and CLI upload straight to `dl.<ucd>`.
+No session cookie is ever sent to `usercontent.zaa.gl`: no cookie anywhere is set with `Domain=.zaa.gl`, and the
+Cloudflare features that set cookies are off (ops-001 §4; a cookie probe runs every 15 min). The desktop app and CLI
+upload to `api.zaa.gl` like the browser. PostgreSQL, the coordinator, the worker, ClamAV and `/health/*` have no DNS
+name and no published port.
 
-### 3.2 Upload path (tus, up to 5 GB)
-- Client chunk size 50 MB (Uppy `chunkSize`, desktop/CLI the same) → `location /tus/ { client_max_body_size 64m; proxy_request_buffering off; proxy_buffering off; proxy_http_version 1.1; client_body_timeout 120s; proxy_send_timeout 300s; proxy_read_timeout 300s; }`. Buffering off avoids Nginx spooling 5 GB into its own temp dir on the OS disk.
-- Kestrel: tusdotnet endpoint raises `IHttpMaxRequestBodySizeFeature` to 64 MB only on that route; keep default `MinRequestBodyDataRate`.
-- `limit_req zone=tus_create 10r/m burst=10` on `POST /tus/`, `limit_conn perip 8` on `dl.<ucd>`, `client_header_timeout 15s`, `keepalive_timeout 30s`, `reset_timedout_connection on`.
+### 3.2 Upload path (tus on `api.zaa.gl`, up to 5 GB, PD-12)
+- Client chunk size **≤ 90,000,000 bytes** (Uppy `chunkSize`, desktop/CLI the same), under Cloudflare Free's 100 MB
+  request limit [KNOWN]. `location /api/uploads { client_max_body_size 90000000; proxy_request_buffering off;
+  proxy_buffering off; proxy_http_version 1.1; client_body_timeout 120s; proxy_send_timeout 300s; proxy_read_timeout 300s; }`.
+  Buffering off avoids Nginx spooling chunks into its own temp dir on the OS disk.
+- Kestrel raises `IHttpMaxRequestBodySizeFeature` to 90,000,000 only on the tus route; default `MinRequestBodyDataRate`.
+- Cloudflare waits 100 s for origin response headers [KNOWN]: a 90 MB `PATCH` at 10 Mbit/s takes about 72 s [EST], so
+  slow clients are close to a `524`. **[VERIFY] on staging**; if it fails, lower the client chunk size, not the limit.
+- `limit_req zone=upload_create 10r/m burst=10` on `POST /api/uploads`, `limit_conn perip 8` on the upload location,
+  `client_header_timeout 15s`, `keepalive_timeout 30s`, `reset_timedout_connection on`.
 - api restarts do not lose uploads (tus resumes from `Upload-Offset`): useful for deploys.
+- All upload traffic now passes through Cloudflare (the old draft's reason for a DNS-only host). Bandwidth through the
+  CDN is part of the B1 / PD-52 terms question, not a size problem.
 
-### 3.3 Download path (X-Accel-Redirect)
-- `GET https://dl.<ucd>/d/{grant}` → proxied to api, which authorizes (password gate, expiry, click/burn rules, scan state) and answers with `X-Accel-Redirect: /_obj/aa/bb/<id>`, `Content-Type` (from DB allow-list, never sniffed), `Content-Disposition`, optional `X-Accel-Limit-Rate` (per-tier throttling) and `X-Accel-Buffering: no`.
-- `location /_obj/ { internal; alias /srv/zaagl/storage/objects/; sendfile on; aio threads; max_ranges 4; add_header …; }` and `/_xfer/`, `/_thumb/`, `/_prev/` likewise; Range/`If-Range` handled natively by Nginx (resumable downloads, video seek).
-- Burn-after-download with Range + X-Accel needs a defined semantic: proposal = the API marks the item *consumed* when it issues the first full grant; the grant stays valid N minutes (default 60 [EST]) for ranges/resumes from the same client; the worker deletes after the grant window. Nginx JSON access log records `$request_completion`/`$body_bytes_sent` for audit. Decision with backend (Q4).
-- Grants must not be logged in clear: put them in the path and use a `map` to redact in `log_format`.
+### 3.3 Download path (`usercontent.zaa.gl`, X-Accel-Redirect, ARC-008)
+- `GET https://usercontent.zaa.gl/d/<ticket>` → Nginx proxies to api, which checks the ticket (MAC, expiry, single use,
+  burn/expiry/takedown/scan state) and answers with `X-Accel-Redirect` to an `internal` location
+  (`alias /srv/zaagl/storage/objects/` and the derived areas), `Content-Type` from the DB allow-list (never sniffed),
+  `Content-Disposition`, `X-Accel-Buffering: no`. Range/`If-Range` are handled natively by Nginx.
+- **Per-response cap `Content:MaxResponseBytes`** (PD-38, proposed 90,000,000): an object above the cap is served only
+  as `206` parts below the cap; a request without an acceptable Range gets `416 range-required` (ARC-008 §5). Every
+  request and response on every host therefore stays under Cloudflare's per-request limit.
+- **CORS preflight:** `OPTIONS /d/<ticket>` is answered by Nginx itself with `204`, `Access-Control-Allow-Origin:
+  https://app.zaa.gl`, `Allow-Methods: GET, HEAD`, `Allow-Headers: Range`, `Max-Age: 600`; it never reaches the API
+  (ARC-008 §9). It is needed by the viewers' cross-origin `fetch` with `Range` (react-pdf, chunked saves). WAF rule
+  C3 allows `GET`, `HEAD`, `OPTIONS` on this host (ops-001 §5).
+- Cloudflare caches nothing on this host (ops-001 §3: Cache Rule 1 bypass, origin `Cache-Control: private, no-store`).
+- Burn-after-download semantics with Range parts: ARC-008 §6 (claim on the first counted `GET`, grace window for parts).
+- Tickets are never logged in clear: `map` redaction in `log_format` (ARC-008 §10, OPS-022).
 
-### 3.4 TLS, origin protection, headers
-- Proxied hosts: Cloudflare **Full (strict)** with Cloudflare Origin CA certs, **Authenticated Origin Pulls** (mTLS, available on Free), `set_real_ip_from <CF ranges>; real_ip_header CF-Connecting-IP;` **only** in proxied server blocks (CF ranges refreshed by a timer). `dl.<ucd>`: Let's Encrypt via DNS-01 (Cloudflare API token, DNS edit on that zone only), `$remote_addr` is the client.
-- Preferably a second public IPv4 for `dl.<ucd>`; nftables allows 443 on the primary IP only from Cloudflare ranges, 443 on the transfer IP from anywhere, SSH from an admin allow-list. Same-subnet IP still weakens origin hiding (TS §19): accepted, documented.
-- All: HSTS (preload only after verifying every subdomain), `X-Content-Type-Options: nosniff`, `Referrer-Policy: strict-origin-when-cross-origin` (app) / `no-referrer` (`<ucd>`), `server_tokens off`.
-- `<ucd>` responses: `Content-Security-Policy: default-src 'none'; img-src 'self'; media-src 'self'; style-src 'unsafe-inline'; sandbox`, `X-Robots-Tag: noindex, nofollow`, `Cross-Origin-Resource-Policy: cross-origin` (so app.zaa.gl can embed), `Content-Disposition: attachment` for anything outside the inline allow-list (png, jpeg, gif, webp, avif, mp4, webm, pdf only for the react-pdf fetch). SVG and HTML: attachment only, or rasterised preview. Raw snippet text served as `text/plain; charset=utf-8`.
-- `app.zaa.gl` CSP adds `img-src/media-src https://cdn.<ucd> https://dl.<ucd>` and `connect-src https://dl.<ucd>` (frontend agent owns the header).
-- Rate limits at the edge (complementing app limits): `api.zaa.gl` 20 r/s per IP burst 40; `zaa.gl` redirects 50 r/s per IP; `dl.<ucd>` per-IP connection cap and `limit_rate_after 1g` for Free [EST]; `/health/*` 404 externally.
+### 3.4 TLS, origin protection, headers (detail in ops-001 §2 and §5)
+- Cloudflare **Full (strict)**, Cloudflare **Origin CA** certificate for `zaa.gl, *.zaa.gl` (key as a Docker secret in
+  `proxy`), **Authenticated Origin Pulls** (`ssl_verify_client on`), Min TLS 1.2, 0-RTT off.
+- nftables: 443 accepted **only from Cloudflare ranges** (refreshed by a timer); 80 closed; SSH only from the admin
+  allow-list. With no DNS-only host left, no second public IPv4 is needed (it returns only if PD-52 picks option (b)).
+- `set_real_ip_from <CF ranges>; real_ip_header CF-Connecting-IP;` in every server block; default server returns `444`.
+- All hosts: HSTS (`includeSubDomains` only after every host passes; preload off), `X-Content-Type-Options: nosniff`,
+  `server_tokens off`. `usercontent.zaa.gl`: the ARC-008 §10 header set (sandbox CSP, `X-Robots-Tag: noindex`,
+  `Cross-Origin-Resource-Policy: cross-origin`, `Referrer-Policy: no-referrer`, attachment outside the inline allow-list,
+  `Cache-Control: private, no-store`).
+- `app.zaa.gl` CSP adds `img-src/media-src/connect-src https://usercontent.zaa.gl` (frontend owns the header).
+- Edge limits: one Cloudflare rate-limit rule R1 on `/api/auth/*` (50 per 10 s per IP [EST]); Nginx `limit_req` on
+  `api.zaa.gl` 20 r/s per IP burst 40 and on `zaa.gl` 50 r/s per IP [EST]; the application limiters stay the real controls.
 
 ---
 

@@ -61,7 +61,11 @@ public sealed class LinkResolver(LinksDbContext db, RedirectsDataSource redirect
 
         Guid id;
         Guid? ownerId;
-        string slug, destinationUrl;
+        string slug;
+        string? destinationUrl;
+        LinkTargetKind targetKind;
+        Guid? resourceId;
+        byte[]? linkKeyHash;
         bool isActive, publicStats;
         string? passwordHash, fallbackUrl, ogTitle, ogDescription, ogImageUrl, disabledKind;
         DateTime? expiresAt, purgeAfter, deletedAt, disabledAt;
@@ -73,7 +77,8 @@ public sealed class LinkResolver(LinksDbContext db, RedirectsDataSource redirect
                 SELECT l.id, l.owner_id, l.slug, l.destination_url, l.is_active, l.public_stats,
                        l.og_title, l.og_description, l.og_image_url,
                        l.purge_after, l.deleted_at, l.disabled_at, l.disabled_kind,
-                       p.password_hash, p.expires_at, p.max_clicks, p.fallback_url
+                       p.password_hash, p.expires_at, p.max_clicks, p.fallback_url,
+                       l.target_kind, l.resource_id, p.link_key_hash
                 FROM links.links l
                 LEFT JOIN links.access_policies p ON p.link_id = l.id
                 WHERE l.slug_key = $1
@@ -85,7 +90,7 @@ public sealed class LinkResolver(LinksDbContext db, RedirectsDataSource redirect
             id = reader.GetGuid(0);
             ownerId = reader.IsDBNull(1) ? null : reader.GetGuid(1);
             slug = reader.GetString(2);
-            destinationUrl = reader.GetString(3);
+            destinationUrl = reader.IsDBNull(3) ? null : reader.GetString(3); // null for content kinds (C1)
             isActive = reader.GetBoolean(4);
             publicStats = reader.GetBoolean(5);
             ogTitle = reader.IsDBNull(6) ? null : reader.GetString(6);
@@ -99,6 +104,9 @@ public sealed class LinkResolver(LinksDbContext db, RedirectsDataSource redirect
             expiresAt = reader.IsDBNull(14) ? null : reader.GetDateTime(14);
             maxClicks = reader.IsDBNull(15) ? null : reader.GetInt32(15);
             fallbackUrl = reader.IsDBNull(16) ? null : reader.GetString(16);
+            targetKind = (LinkTargetKind)reader.GetInt16(17);
+            resourceId = reader.IsDBNull(18) ? null : reader.GetGuid(18);
+            linkKeyHash = reader.IsDBNull(19) ? null : reader.GetFieldValue<byte[]>(19);
         }
 
         var rules = new List<RuleDto>();
@@ -121,6 +129,7 @@ public sealed class LinkResolver(LinksDbContext db, RedirectsDataSource redirect
 
         return new LinkSnapshot(
             id, ownerId, slug, destinationUrl, isActive, passwordHash, expiresAt, maxClicks, fallbackUrl,
-            ogTitle, ogDescription, ogImageUrl, publicStats, rules, purgeAfter, deletedAt, disabledAt, disabledKind);
+            ogTitle, ogDescription, ogImageUrl, publicStats, rules, purgeAfter, deletedAt, disabledAt, disabledKind,
+            targetKind, resourceId, linkKeyHash);
     }
 }

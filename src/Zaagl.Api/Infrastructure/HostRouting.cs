@@ -1,3 +1,5 @@
+using Microsoft.Net.Http.Headers;
+
 namespace Zaagl.Api.Infrastructure;
 
 public sealed class HostRoutingOptions
@@ -9,7 +11,15 @@ public sealed class HostRoutingOptions
 
     /// <summary>Spec §1.2: the host that serves /api/*, /openapi/*, /account/* and nothing else.</summary>
     public string Api { get; set; } = "localhost";
+
+    /// <summary>BE-005 (PD-03, ARC-008 §1, §4.1): the user-content host (<c>usercontent.zaa.gl</c>). Nginx forwards
+    /// <c>/d/&lt;ticket&gt;</c> to the API's internal authorize hop <c>/internal/delivery/&lt;ticket&gt;</c> with this Host.
+    /// Empty = this process serves no user-content host (development). Delivery endpoints arrive with BE-017/018.</summary>
+    public string UserContent { get; set; } = "";
 }
+
+/// <summary>Which of the public hosts a request belongs to (decides the header policy).</summary>
+public enum HostRole { Api, Short, UserContent }
 
 /// <summary>
 /// Spec §1.2: the API process serves both Hosts:Short (redirects only) and Hosts:Api (everything else)
@@ -17,6 +27,10 @@ public sealed class HostRoutingOptions
 /// gets 421, not a silent fallthrough. /health/* is exempt (Docker/monitors call it by container name,
 /// never through a real hostname). In this dev environment both config values point at the same host, so
 /// existing behaviour is unaffected; the mechanism itself is real and independently tested.
+/// BE-005: the user-content host (Hosts:UserContent) only ever reaches /internal/delivery/*, and that path is
+/// reachable only through it; responses of the short and user-content hosts never carry Set-Cookie (spec §1.2,
+/// PD-03 mitigations), and user-content responses always carry the inert header set (ARC-008 §10, defence in depth
+/// behind Nginx).
 /// </summary>
 public sealed class HostRoutingMiddleware(RequestDelegate next, Microsoft.Extensions.Options.IOptions<HostRoutingOptions> options)
 {
@@ -28,14 +42,48 @@ public sealed class HostRoutingMiddleware(RequestDelegate next, Microsoft.Extens
             return;
         }
 
-        if (!HostRoutingDecision.IsAllowed(context.Request.Host.Host, context.Request.Path, options.Value))
+        var host = context.Request.Host.Host;
+        if (!HostRoutingDecision.IsAllowed(host, context.Request.Path, options.Value))
         {
             context.Response.StatusCode = 421; // Misdirected Request
             await context.Response.WriteAsync("Misdirected request: this path is not served on this host.");
             return;
         }
 
+        var role = HostRoutingDecision.RoleOf(host, context.Request.Path, options.Value);
+        if (role != HostRole.Api)
+        {
+            context.Response.OnStarting(() =>
+            {
+                HostHeaderPolicy.Apply(role, context.Response.Headers);
+                return Task.CompletedTask;
+            });
+        }
+
         await next(context);
+    }
+}
+
+/// <summary>BE-005 response header policy per host role (pure, unit-tested).</summary>
+public static class HostHeaderPolicy
+{
+    /// <summary>ARC-008 §10: identical to the Nginx <c>ucd-headers.conf</c> snippet.</summary>
+    public const string UserContentCsp = "sandbox; default-src 'none'; img-src 'self' data:; media-src 'self'; style-src 'unsafe-inline'";
+
+    public static void Apply(HostRole role, IHeaderDictionary headers)
+    {
+        if (role == HostRole.Api) return;
+
+        // zaa.gl and usercontent.zaa.gl never set a cookie (spec §1.2, §4.5 rule 6; PD-03).
+        headers.Remove(HeaderNames.SetCookie);
+
+        if (role != HostRole.UserContent) return;
+        headers[HeaderNames.XContentTypeOptions] = "nosniff";
+        headers[HeaderNames.ContentSecurityPolicy] = UserContentCsp;
+        headers[HeaderNames.CacheControl] = "private, no-store";
+        headers["Referrer-Policy"] = "no-referrer";
+        headers["Cross-Origin-Resource-Policy"] = "cross-origin";
+        headers["X-Robots-Tag"] = "noindex, nofollow";
     }
 }
 
@@ -47,10 +95,37 @@ public sealed class HostRoutingMiddleware(RequestDelegate next, Microsoft.Extens
 /// </summary>
 public static class HostRoutingDecision
 {
-    public static bool IsAllowed(string requestHost, PathString path, HostRoutingOptions options) =>
-        IsRedirectShapedPath(path)
+    /// <summary>The authorize hop's path prefix on the API (ARC-008 §4.1). Two segments, so it can never be a short
+    /// code (one segment); "/internal" alone stays a possible alias on the short host.</summary>
+    public const string DeliveryPrefix = "/internal/delivery";
+
+    public static bool IsAllowed(string requestHost, PathString path, HostRoutingOptions options)
+    {
+        if (IsUserContentHost(requestHost, options))
+            return path.StartsWithSegments(DeliveryPrefix, StringComparison.OrdinalIgnoreCase);
+        // The authorize hop is never served on the public API or short host (ARC-008 §4.1 defence in depth).
+        if (path.StartsWithSegments(DeliveryPrefix, StringComparison.OrdinalIgnoreCase))
+            return false;
+
+        return IsRedirectShapedPath(path)
             ? HostsMatch(requestHost, options.Short)
             : HostsMatch(requestHost, options.Api);
+    }
+
+    /// <summary>Header policy role of an allowed request. With Short and Api on the same host (development), a
+    /// redirect-shaped path is treated as the short host.</summary>
+    public static HostRole RoleOf(string requestHost, PathString path, HostRoutingOptions options) =>
+        IsUserContentHost(requestHost, options) ? HostRole.UserContent
+        : IsRedirectShapedPath(path) && HostsMatch(requestHost, options.Short) ? HostRole.Short
+        : HostRole.Api;
+
+    /// <summary>Only when configured and distinct from the API and short hosts (a misconfiguration that points it
+    /// at either must not take those hosts over).</summary>
+    public static bool IsUserContentHost(string requestHost, HostRoutingOptions options) =>
+        !string.IsNullOrWhiteSpace(options.UserContent)
+        && !HostsMatch(options.UserContent, options.Api)
+        && !HostsMatch(options.UserContent, options.Short)
+        && HostsMatch(requestHost, options.UserContent);
 
     /// <summary>Everything this app treats as "a redirect, not an API call": the catch-all /{slug} route
     /// and nothing under /api, /openapi, /account, /hubs, /scalar.</summary>

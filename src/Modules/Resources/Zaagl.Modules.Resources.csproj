@@ -2,6 +2,14 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\Zaagl.SharedKernel\Zaagl.SharedKernel.csproj" />
+    <!-- BE-006 (contracts.md rule 1): Resources -> Links.Contracts (C1/C10), Billing.Contracts (C5). Contracts only. -->
+    <ProjectReference Include="..\Links\Zaagl.Modules.Links.csproj" />
+    <ProjectReference Include="..\Billing\Zaagl.Modules.Billing.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="EFCore.NamingConventions" Version="10.0.1" />
+    <PackageReference Include="Npgsql.EntityFrameworkCore.PostgreSQL" Version="10.0.3" />
   </ItemGroup>
 
   <PropertyGroup>
@@ -9,5 +17,9 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
   </PropertyGroup>
+
+  <ItemGroup>
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+  </ItemGroup>
 
 </Project>

@@ -40,4 +40,17 @@ public static class IpPartition
         bytes.AsSpan(0, fullBytes).CopyTo(prefix);
         return $"v6/{bits}:" + new IPAddress(prefix);
     }
+
+    /// <summary>Spec §7.3: the IPv4 /24 used by the widest redirect-miss tier (the IPv4 counterpart of an
+    /// IPv6 /48). Null for IPv6 (use <see cref="WidePrefixKey"/>) and for a missing address.</summary>
+    public static string? V4Prefix24Key(IPAddress? address)
+    {
+        if (address is null) return null;
+        if (address.IsIPv4MappedToIPv6) address = address.MapToIPv4();
+        if (address.AddressFamily != AddressFamily.InterNetwork) return null;
+
+        var bytes = address.GetAddressBytes();
+        bytes[3] = 0;
+        return "v4/24:" + new IPAddress(bytes);
+    }
 }

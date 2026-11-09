@@ -25,7 +25,7 @@ public static class AnalyticsEndpoints
                 var overview = await analytics.GetOverviewAsync(id, parsed, from, to, limits.AnalyticsRetentionDays, ct);
                 return Results.Ok(overview);
             })
-            .WithTags("Analytics").RequireAuthorization();
+            .WithTags("Analytics").RequireAuthorization().RequireScope(ApiScopes.StatsRead);
 
         // Individual human clicks ("View events"). Same range rules and plan retention as the overview.
         // Never returns an IP address or the visitor hash.
@@ -57,7 +57,7 @@ public static class AnalyticsEndpoints
                     OldestFirst: order == "oldest", Limit: limit ?? 50, Cursor: cursor), ct);
                 return Results.Ok(page);
             })
-            .WithTags("Analytics").RequireAuthorization();
+            .WithTags("Analytics").RequireAuthorization().RequireScope(ApiScopes.StatsRead);
 
         // Clicks grouped by UTM source, medium, campaign, term and content of the destination the visitor was sent to.
         app.MapGet("/api/links/{id:guid}/analytics/utm", async (
@@ -72,7 +72,7 @@ public static class AnalyticsEndpoints
                 var limits = await plans.GetLimitsAsync(userId, ct);
                 return Results.Ok(await analytics.GetUtmReportAsync(id, parsed, from, to, limits.AnalyticsRetentionDays, ct));
             })
-            .WithTags("Analytics").RequireAuthorization();
+            .WithTags("Analytics").RequireAuthorization().RequireScope(ApiScopes.StatsRead);
 
         // Same overview summed over everything the user owns (dashboard cards and the Analytics page).
         app.MapGet("/api/analytics/overview", async (
@@ -86,7 +86,7 @@ public static class AnalyticsEndpoints
                 var limits = await plans.GetLimitsAsync(userId, ct);
                 return Results.Ok(await analytics.GetOwnerOverviewAsync(userId, parsed, from, to, limits.AnalyticsRetentionDays, ct));
             })
-            .WithTags("Analytics").RequireAuthorization();
+            .WithTags("Analytics").RequireAuthorization().RequireScope(ApiScopes.StatsRead);
 
         // Read-only stats page that a link owner can opt into per link (PublicStats). Never exposes the destination.
         app.MapGet("/api/public/stats/{slug}", async (
@@ -111,7 +111,7 @@ public static class AnalyticsEndpoints
                 var userId = user.GetUserId();
                 return Results.Ok(await archive.ListAsync(userId, limit ?? 50, cursor, ct));
             })
-            .WithTags("Analytics").RequireAuthorization();
+            .WithTags("Analytics").RequireAuthorization().RequireScope(ApiScopes.StatsRead);
 
         app.MapGet("/api/archive/{linkId:guid}/stats", async (
                 Guid linkId, ClaimsPrincipal user, IArchiveQueries archive, CancellationToken ct) =>
@@ -120,7 +120,7 @@ public static class AnalyticsEndpoints
                 if (await archive.FindAsync(userId, linkId, ct) is null) return ApiResults.NotFound("Archived link not found.");
                 return Results.Ok(await archive.GetStatsAsync(linkId, ct));
             })
-            .WithTags("Analytics").RequireAuthorization();
+            .WithTags("Analytics").RequireAuthorization().RequireScope(ApiScopes.StatsRead);
     }
 
     private static bool TryParseRange(string? value, out AnalyticsRange range)

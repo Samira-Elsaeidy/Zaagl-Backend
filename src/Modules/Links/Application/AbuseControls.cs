@@ -5,6 +5,7 @@ using Microsoft.Extensions.Caching.Hybrid;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using Zaagl.Modules.Links.Contracts;
 using Zaagl.Modules.Links.Domain;
@@ -90,7 +91,9 @@ public sealed class AbuseOptions
 /// Spec §7.15's takedown routine: used by the safety re-check job below (kind "safety") and, once an
 /// admin API exists, by admin disable/bulk-takedown (kind "abuse") - the mechanism is the same either way.
 /// </summary>
-public sealed class TakedownService(LinksDbContext db, ILinkCacheInvalidator invalidator, IOptions<AbuseOptions> options, TimeProvider time)
+public sealed class TakedownService(
+    LinksDbContext db, ILinkCacheInvalidator invalidator, IOptions<AbuseOptions> options, TimeProvider time,
+    HybridCache? cache = null, ILogger<TakedownService>? logger = null)
 {
     public async Task TakeDownAsync(Link link, string kind, string? reason, CancellationToken ct)
     {
@@ -112,14 +115,16 @@ public sealed class TakedownService(LinksDbContext db, ILinkCacheInvalidator inv
         {
             LinkId = link.Id,
             Slug = link.Slug,
-            TargetUrl = link.DestinationUrl,
+            TargetUrl = link.DestinationUrl, // null for a content link (ARC-002 §6 row 11)
+            ResourceId = link.ResourceId,
             DisabledKind = kind,
             Reason = reason,
             KeepUntil = now.AddDays(options.Value.EvidenceRetentionDays),
         });
 
         await db.SaveChangesAsync(ct);
-        await invalidator.NotifyChangedAsync([link.SlugKey], ct);
+        // Committed: a cache or NOTIFY failure must not undo the takedown's success (LinkCacheEviction).
+        await LinkCacheEviction.EvictAfterCommitAsync(cache, invalidator, [link.SlugKey], logger ?? (ILogger)NullLogger.Instance);
     }
 }
 
@@ -164,7 +169,7 @@ public sealed class SafetyRecheckJob(IServiceScopeFactory scopes, TimeProvider c
             ids = await db.Database.SqlQuery<Guid>(
                 $"""
                 SELECT id AS "Value" FROM links.links
-                WHERE deleted_at IS NULL AND disabled_at IS NULL
+                WHERE target_kind = 0 AND deleted_at IS NULL AND disabled_at IS NULL
                   AND (purge_after IS NULL OR purge_after > {now})
                   AND (safety_checked_at IS NULL OR safety_checked_at < {staleSince} OR created_at > {recentlyCreated})
                 ORDER BY safety_checked_at NULLS FIRST
@@ -182,7 +187,7 @@ public sealed class SafetyRecheckJob(IServiceScopeFactory scopes, TimeProvider c
         foreach (var id in ids)
         {
             var link = await db.Links.FirstOrDefaultAsync(l => l.Id == id, ct);
-            if (link is null) continue;
+            if (link?.DestinationUrl is null) continue; // URL links only (claim filters target_kind = 0, addendum §13.5)
 
             var result = await reputation.CheckAsync(link.DestinationUrl, ct);
             if (!result.Checked)

@@ -13,7 +13,7 @@ public static class BillingEndpoints
         var billing = app.MapGroup("/api/billing").WithTags("Billing");
 
         billing.MapGet("/me", async (ClaimsPrincipal user, BillingService service, CancellationToken ct) =>
-            Results.Ok(await service.GetStatusAsync(user.GetUserId(), ct))).RequireAuthorization();
+            Results.Ok(await service.GetStatusAsync(user.GetUserId(), ct))).RequireAuthorization("Interactive"); // JWT session only (spec §7.4)
 
         billing.MapPost("/checkout", async (
                 ClaimsPrincipal user, BillingService service, IdentityService identity, CancellationToken ct) =>

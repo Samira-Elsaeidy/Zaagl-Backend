@@ -98,6 +98,8 @@ public static class LinksModule
         services.AddHostedService<CreationGatePoller>();
         services.AddScoped<IValidator<LinkInput>, LinkInputValidator>();
         services.AddScoped<LinkService>();
+        // C1 (ARC-002 §5): content modules create links through ILinkIssuer, implemented by the Phase 0 engine.
+        services.AddScoped<ILinkIssuer>(sp => sp.GetRequiredService<LinkService>());
         services.AddScoped<FolderService>();
         services.AddScoped<BulkLinkImporter>();
         services.AddScoped<LinkResolver>();

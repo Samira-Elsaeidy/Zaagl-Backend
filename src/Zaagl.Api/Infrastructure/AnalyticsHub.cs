@@ -8,8 +8,9 @@ namespace Zaagl.Api.Infrastructure;
 /// <summary>
 /// Live dashboard feed. Every connection is added to its owner's group (account-wide analytics) and can subscribe
 /// to one of its own links. Each human click arrives as a "clicks" event carrying a list of clicks.
+/// An API key needs <c>stats:read</c> (BE-001); a session JWT always passes.
 /// </summary>
-[Authorize]
+[Authorize(Policy = "scope:" + ApiScopes.StatsRead)]
 public sealed class AnalyticsHub(ILinkDirectory links) : Hub
 {
     public static string LinkGroup(Guid linkId) => $"link:{linkId}";

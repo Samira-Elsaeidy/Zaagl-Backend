@@ -1,0 +1,336 @@
+# Backend CI (DEVOPS_PLAN.md §5, tasks OPS-004 and OPS-005).
+#
+# Job `build-test` (OPS-004): restore, build (the gate), vulnerable-package check (fails on High/Critical),
+# schema via the API's `migrate` mode, `dotnet test` against PostgreSQL 17, TRX results uploaded as an
+# artifact. `dotnet format --verify-no-changes` (plan §5 row 1) is deferred.
+# Job `migrations-check` (OPS-005): fails when any module DbContext has model changes without a migration,
+# then runs `migrate` twice against an empty database to prove it is idempotent.
+#
+# Constraints this file works around (see DEVOPS_PLAN.md §1.1):
+# - A18: the tests hard-code `Host=localhost;Port=5433;Database=zaagl;Username=zaagl;Password=zaagl_dev`,
+#   so the PostgreSQL service publishes 5433 on the runner with exactly that database, user and password.
+#   These are throwaway CI-only values, the same as the dev compose file; they are not secrets.
+# - A19: the banned-API analyzer (RS0030) reports warnings, not errors. The build step records the warning
+#   count in the job summary but does not fail on warnings (raising the severity is a separate task).
+# - Service containers start before checkout, so deploy/init-db/*.sql cannot be mounted into
+#   docker-entrypoint-initdb.d; it is applied with psql instead.
+# - PostgreSQL 17 here; the dev compose file uses postgres:18. Version choice is open (PD-26).
+
+name: backend-ci
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: backend-ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  DOTNET_NOLOGO: "true"
+  DOTNET_CLI_TELEMETRY_OPTOUT: "true"
+  DOTNET_SKIP_FIRST_TIME_EXPERIENCE: "true"
+  CONFIGURATION: Release
+  # Connection used by psql and by the API's migrate mode. Matches the tests' hard-coded string (A18).
+  PGHOST: localhost
+  PGPORT: "5433"
+  PGDATABASE: zaagl
+  PGUSER: zaagl
+  PGPASSWORD: zaagl_dev
+  # App configuration (ConnectionStrings__Postgres, ConnectionStrings__Valkey, Jwt__Key,
+  # ASPNETCORE_ENVIRONMENT) is NOT set here: it is set only on the migrate and test steps that need it, so
+  # it does not leak into every step of every job (stage-1 review, OPS-004 note 2).
+
+# Every `run:` step uses `bash --noprofile --norc -eo pipefail {0}`. Without an explicit shell GitHub uses
+# `bash -e {0}` (no pipefail), so `dotnet build ... | tee build.log` would take tee's exit status and a
+# compile error would leave the Build step green (stage-1 review, OPS-004 REWORK).
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  build-test:
+    name: Build and test
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_DB: zaagl
+          POSTGRES_USER: zaagl
+          POSTGRES_PASSWORD: zaagl_dev
+        ports:
+          - 5433:5432
+        options: >-
+          --health-cmd "pg_isready -U zaagl -d zaagl"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 20
+      # The API's HybridCache uses Valkey as L2; tests that build the host get a real one instead of
+      # waiting on connection timeouts.
+      valkey:
+        image: valkey/valkey:8
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "valkey-cli ping"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 20
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Set up .NET 10
+        uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Cache NuGet packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.nuget/packages
+          key: nuget-${{ runner.os }}-${{ hashFiles('**/*.csproj', 'Directory.Build.props', '.config/dotnet-tools.json') }}
+          restore-keys: nuget-${{ runner.os }}-
+
+      - name: Restore
+        run: dotnet restore Zaagl.sln
+
+      - name: Build
+        run: |
+          dotnet build Zaagl.sln --no-restore -c "$CONFIGURATION" 2>&1 | tee build.log
+          # pipefail (workflow `defaults`) makes the line above fail the step when dotnet build fails.
+          # Warnings are recorded, not enforced (A19). Count unique warning lines (MSBuild repeats them
+          # in its summary). grep exits 1 on zero matches, which pipefail would turn into a step failure,
+          # so each count tolerates that (`|| true`) and falls back to 0.
+          total=$( { grep -E ': warning [A-Z]+[0-9]+' build.log || true; } | sort -u | wc -l)
+          rs0030=$( { grep -E ': warning RS0030' build.log || true; } | sort -u | wc -l)
+          echo "Build warnings: $total total, $rs0030 RS0030 (banned API)"
+          {
+            echo "### Build warnings"
+            echo ""
+            echo "| Kind | Count |"
+            echo "|---|---|"
+            echo "| All warnings (unique) | $total |"
+            echo "| RS0030 banned API | $rs0030 |"
+            echo ""
+            echo "Warnings do not fail this build (DEVOPS_PLAN.md A19)."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Vulnerable packages (fail on High or Critical)
+        # `dotnet list package --vulnerable` exits 0 even when it finds vulnerabilities, so its exit code
+        # cannot be the gate. The JSON report (`--format json`, SDK 8+) is parsed with jq (preinstalled on
+        # ubuntu-24.04): every package object under projects[].frameworks[].{topLevelPackages,
+        # transitivePackages}[] that has a `vulnerabilities` array is listed with its severities. Low and
+        # Moderate findings are reported in the job summary only; any High or Critical finding fails.
+        run: |
+          dotnet list Zaagl.sln package --vulnerable --include-transitive --format json > vulnerable.json
+          findings=$(jq -r '
+            [ .projects[]? | .path as $p | .frameworks[]? | .framework as $fw
+              | ((.topLevelPackages // []) + (.transitivePackages // []))[]
+              | select(.vulnerabilities != null and (.vulnerabilities | length) > 0)
+              | .vulnerabilities[]? as $v
+              | "\($v.severity)\t\(.id) \(.resolvedVersion)\t\($fw)\t\($p)\t\($v.advisoryurl)" ]
+            | unique | .[]' vulnerable.json)
+          blocking=$(printf '%s\n' "$findings" | { grep -E '^(High|Critical)\b' || true; } | sed '/^$/d' | wc -l)
+          all=$(printf '%s\n' "$findings" | sed '/^$/d' | wc -l)
+          {
+            echo "### Vulnerable packages"
+            echo ""
+            echo "$all finding(s), $blocking High/Critical (blocking)."
+            if [ "$all" -gt 0 ]; then
+              echo ""
+              echo '```'
+              printf '%s\n' "$findings"
+              echo '```'
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+          printf '%s\n' "$findings"
+          if [ "$blocking" -gt 0 ]; then
+            echo "::error::$blocking High/Critical vulnerable package finding(s); see the job summary."
+            exit 1
+          fi
+
+      - name: Apply deploy/init-db SQL
+        run: |
+          for f in deploy/init-db/*.sql; do
+            echo "Applying $f"
+            psql -v ON_ERROR_STOP=1 -f "$f"
+          done
+
+      - name: Apply migrations (API migrate mode)
+        # Zaagl.Api migrate (src/Zaagl.Api/Program.cs) throws at startup when ConnectionStrings:Postgres or
+        # ConnectionStrings:Valkey is missing, or when the Jwt key is shorter than 32 characters. Migrate
+        # mode never connects to Valkey; the value only has to be present. CI-only dummy values, not secrets.
+        env:
+          ASPNETCORE_ENVIRONMENT: Development
+          ConnectionStrings__Postgres: Host=localhost;Port=5433;Database=zaagl;Username=zaagl;Password=zaagl_dev
+          ConnectionStrings__Valkey: localhost:6379,abortConnect=false
+          Jwt__Key: ci-only-signing-key-not-a-secret-0123456789abcdef
+        run: dotnet run --project src/Zaagl.Api/Zaagl.Api.csproj -c "$CONFIGURATION" --no-build --no-launch-profile -- migrate
+
+      - name: Test
+        # Same CI-only values as the migrate step; scoped to this step instead of the whole workflow.
+        env:
+          ASPNETCORE_ENVIRONMENT: Development
+          ConnectionStrings__Postgres: Host=localhost;Port=5433;Database=zaagl;Username=zaagl;Password=zaagl_dev
+          ConnectionStrings__Valkey: localhost:6379,abortConnect=false
+          Jwt__Key: ci-only-signing-key-not-a-secret-0123456789abcdef
+        run: >-
+          dotnet test Zaagl.sln
+          --no-build
+          -c "$CONFIGURATION"
+          --logger "trx;LogFilePrefix=results"
+          --logger "console;verbosity=normal"
+          --collect "XPlat Code Coverage"
+          --results-directory TestResults
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v5
+        with:
+          name: test-results
+          path: |
+            TestResults/**/*.trx
+            TestResults/**/coverage.cobertura.xml
+          if-no-files-found: warn
+          retention-days: 14
+
+  migrations-check:
+    name: Migrations check
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_DB: zaagl
+          POSTGRES_USER: zaagl
+          POSTGRES_PASSWORD: zaagl_dev
+        ports:
+          - 5433:5432
+        options: >-
+          --health-cmd "pg_isready -U zaagl -d zaagl"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 20
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Set up .NET 10
+        uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Cache NuGet packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.nuget/packages
+          key: nuget-${{ runner.os }}-${{ hashFiles('**/*.csproj', 'Directory.Build.props', '.config/dotnet-tools.json') }}
+          restore-keys: nuget-${{ runner.os }}-
+
+      - name: Restore tools (dotnet-ef from .config/dotnet-tools.json)
+        run: dotnet tool restore
+
+      - name: Restore and build
+        run: |
+          dotnet restore Zaagl.sln
+          dotnet build src/Zaagl.Api/Zaagl.Api.csproj --no-restore -c "$CONFIGURATION"
+
+      - name: Pending model changes (every module DbContext)
+        # Contexts are discovered from the source, so a new module DbContext is checked without editing
+        # this file. Each context is checked against the project that contains it; the startup project is
+        # Zaagl.Api (it references Microsoft.EntityFrameworkCore.Design). The design-time factories do not
+        # need a database.
+        run: |
+          found=0
+          failed=0
+          while IFS= read -r file; do
+            for ctx in $(grep -oE 'class [A-Za-z0-9_]+(\([^)]*\))?[[:space:]]*:[[:space:]]*DbContext\b' "$file" | sed -E 's/^class ([A-Za-z0-9_]+).*/\1/'); do
+              dir=$(dirname "$file"); proj=""
+              while [ "$dir" != "." ] && [ "$dir" != "/" ]; do
+                proj=$(find "$dir" -maxdepth 1 -name '*.csproj' | head -n1 || true)
+                [ -n "$proj" ] && break
+                dir=$(dirname "$dir")
+              done
+              if [ -z "$proj" ]; then
+                echo "::error file=$file::no .csproj found above $file"
+                exit 1
+              fi
+              found=$((found + 1))
+              echo "::group::$ctx ($proj)"
+              if ! dotnet tool run dotnet-ef migrations has-pending-model-changes \
+                  --project "$proj" \
+                  --startup-project src/Zaagl.Api/Zaagl.Api.csproj \
+                  --context "$ctx" \
+                  --configuration "$CONFIGURATION" \
+                  --no-build; then
+                echo "::error::$ctx has model changes without a migration. Run: dotnet ef migrations add <Name> --project $proj --startup-project src/Zaagl.Api --context $ctx"
+                failed=$((failed + 1))
+              fi
+              echo "::endgroup::"
+            done
+          done < <(grep -rlE --include='*.cs' 'class [A-Za-z0-9_]+(\([^)]*\))?[[:space:]]*:[[:space:]]*DbContext\b' src/Modules | grep -vE '/(bin|obj)/' | sort)
+          echo "Checked $found DbContext(s), $failed with pending model changes."
+          if [ "$found" -eq 0 ]; then
+            echo "::error::No DbContext found under src/Modules; the discovery pattern needs updating."
+            exit 1
+          fi
+          [ "$failed" -eq 0 ]
+
+      - name: Apply deploy/init-db SQL
+        run: |
+          for f in deploy/init-db/*.sql; do
+            echo "Applying $f"
+            psql -v ON_ERROR_STOP=1 -f "$f"
+          done
+
+      - name: Migrate (first run, empty database)
+        # CI-only dummy values; see the build-test job's migrate step for why each is required.
+        env:
+          ASPNETCORE_ENVIRONMENT: Development
+          ConnectionStrings__Postgres: Host=localhost;Port=5433;Database=zaagl;Username=zaagl;Password=zaagl_dev
+          ConnectionStrings__Valkey: localhost:6379,abortConnect=false
+          Jwt__Key: ci-only-signing-key-not-a-secret-0123456789abcdef
+        run: dotnet run --project src/Zaagl.Api/Zaagl.Api.csproj -c "$CONFIGURATION" --no-build --no-launch-profile -- migrate
+
+      - name: Record migration history after first run
+        id: first
+        run: |
+          # Every module keeps its history in <schema>.__ef_migrations (see each *Module.cs).
+          history=$(psql -tA -v ON_ERROR_STOP=1 -c "SELECT coalesce(string_agg(format('%s=%s', table_schema, (xpath('/row/c/text()', query_to_xml(format('select count(*) as c from %I.%I', table_schema, table_name), false, true, '')))[1]::text), ',' ORDER BY table_schema), '') FROM information_schema.tables WHERE table_name = '__ef_migrations';")
+          echo "History after first run: $history"
+          if [ -z "$history" ]; then
+            echo "::error::No __ef_migrations tables after the first migrate run."
+            exit 1
+          fi
+          echo "history=$history" >> "$GITHUB_OUTPUT"
+
+      - name: Migrate (second run, must be a no-op)
+        env:
+          ASPNETCORE_ENVIRONMENT: Development
+          ConnectionStrings__Postgres: Host=localhost;Port=5433;Database=zaagl;Username=zaagl;Password=zaagl_dev
+          ConnectionStrings__Valkey: localhost:6379,abortConnect=false
+          Jwt__Key: ci-only-signing-key-not-a-secret-0123456789abcdef
+        run: dotnet run --project src/Zaagl.Api/Zaagl.Api.csproj -c "$CONFIGURATION" --no-build --no-launch-profile -- migrate
+
+      - name: Compare migration history
+        env:
+          FIRST: ${{ steps.first.outputs.history }}
+        run: |
+          second=$(psql -tA -v ON_ERROR_STOP=1 -c "SELECT coalesce(string_agg(format('%s=%s', table_schema, (xpath('/row/c/text()', query_to_xml(format('select count(*) as c from %I.%I', table_schema, table_name), false, true, '')))[1]::text), ',' ORDER BY table_schema), '') FROM information_schema.tables WHERE table_name = '__ef_migrations';")
+          echo "First run:  $FIRST"
+          echo "Second run: $second"
+          if [ "$FIRST" != "$second" ]; then
+            echo "::error::The second migrate run changed the migration history; migrate is not idempotent."
+            exit 1
+          fi

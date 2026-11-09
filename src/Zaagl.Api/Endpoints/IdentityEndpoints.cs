@@ -4,6 +4,7 @@ using Microsoft.AspNetCore.Mvc;
 using Zaagl.Api.Infrastructure;
 using Zaagl.Modules.Identity.Application;
 using Zaagl.Modules.Identity.Contracts;
+using Zaagl.Modules.Identity.Domain;
 using Zaagl.SharedKernel.Net;
 
 namespace Zaagl.Api.Endpoints;
@@ -11,6 +12,13 @@ namespace Zaagl.Api.Endpoints;
 public static class IdentityEndpoints
 {
     public const string ExternalScheme = "External";
+
+    /// <summary>Problem code (401) for an unusable social sign-in code.</summary>
+    public const string InvalidCode = "invalid_code";
+
+    public sealed record ExternalExchangeRequest(string? Code);
+
+    public sealed record HubTicketResponse(string Ticket, DateTime ExpiresAt);
     private static readonly Dictionary<string, string> Providers = new(StringComparer.OrdinalIgnoreCase)
     {
         ["google"] = "Google",
@@ -95,26 +103,30 @@ public static class IdentityEndpoints
                 await identity.LogoutEverywhereAsync(user.GetUserId(), ct);
                 return Results.NoContent();
             })
-            .RequireAuthorization();
+            .RequireAuthorization("Interactive"); // spec §7.4: a JWT session only; an API key must not log its owner out
 
         // ---- Admin TOTP enrollment (spec §7.4) ---------------------------------------------------
         // "Interactive" (JWT bearer, authenticated) accepts both a normal session token and the
-        // short-lived enrol-only token - both are ordinary JWTs with a valid sub/sstamp, the enrol-only
-        // one just carries an extra claim IdentityService checks nowhere outside these two endpoints.
+        // short-lived enrol-only token here. Every other endpoint refuses the enrol-only token: JWT
+        // validation fails unless the endpoint carries AllowEnrolOnlyToken() (AZ-01, Program.cs).
         auth.MapPost("/totp/enroll", async (ClaimsPrincipal user, IdentityService identity, CancellationToken ct) =>
                 ApiResults.From(await identity.StartTotpEnrollmentAsync(user.GetUserId(), ct)))
-            .RequireAuthorization("Interactive");
+            .RequireAuthorization("Interactive")
+            .AllowEnrolOnlyToken();
 
         auth.MapPost("/totp/confirm", async (TotpConfirmRequest request, ClaimsPrincipal user, IdentityService identity, CancellationToken ct) =>
                 ApiResults.From(await identity.ConfirmTotpAsync(user.GetUserId(), request.Code, ct), _ => Results.NoContent()))
-            .RequireAuthorization("Interactive");
+            .RequireAuthorization("Interactive")
+            .AllowEnrolOnlyToken();
 
         auth.MapGet("/me", async (ClaimsPrincipal user, IdentityService identity, CancellationToken ct) =>
                 await identity.GetUserAsync(user.GetUserId(), ct) is { } me ? Results.Ok(me) : ApiResults.NotFound("User not found."))
-            .RequireAuthorization();
+            .RequireAuthorization("Interactive"); // spec §7.4: account data for a JWT session only
 
-        // Social sign-in: the SPA navigates to /api/auth/external/google, we challenge the provider,
-        // then land on the callback, issue our own tokens and hand them to the SPA in the URL fragment.
+        // Social sign-in (PD-41): the browser navigates to /api/auth/external/google, we challenge the provider,
+        // then land on the callback, which never puts a token in the URL. It stores a 60-second, single-use code
+        // (hashed) bound to the user and redirects to {Frontend}/auth/callback?code=<code>; the web app's server
+        // (BFF) exchanges it once through POST /api/auth/external/exchange. Failures: ?error=<code>.
         auth.MapGet("/external/{provider}", async (string provider, HttpContext http, IAuthenticationSchemeProvider schemes) =>
         {
             if (!Providers.TryGetValue(provider, out var scheme) || await schemes.GetSchemeAsync(scheme) is null)
@@ -128,10 +140,12 @@ public static class IdentityEndpoints
         }).RequireRateLimiting("auth");
 
         auth.MapGet("/external/callback", async (
-            string provider, HttpContext http, IdentityService identity, IConfiguration config, CancellationToken ct) =>
+            string provider, HttpContext http, IdentityService identity, OneTimeCodeService codes, IConfiguration config, CancellationToken ct) =>
         {
+            http.Response.Headers.CacheControl = "no-store";
+            http.Response.Headers["Referrer-Policy"] = "no-referrer";
             var frontend = (config["Frontend:BaseUrl"] ?? "").TrimEnd('/');
-            IResult Fail(string reason) => Results.Redirect($"{frontend}/auth/callback#error={Uri.EscapeDataString(reason)}");
+            IResult Fail(string reason) => Results.Redirect($"{frontend}/auth/callback?error={Uri.EscapeDataString(reason)}");
 
             var external = await http.AuthenticateAsync(ExternalScheme);
             if (!external.Succeeded || external.Principal is null) return Fail("sign_in_failed");
@@ -140,17 +154,40 @@ public static class IdentityEndpoints
             var providerUserId = external.Principal.FindFirstValue(ClaimTypes.NameIdentifier);
             if (providerUserId is null) return Fail("sign_in_failed");
 
-            var result = await identity.ExternalLoginAsync(
+            var user = await identity.ExternalSignInUserAsync(
                 provider,
                 providerUserId,
                 external.Principal.FindFirstValue(ClaimTypes.Email),
                 external.Principal.FindFirstValue(ClaimTypes.Name),
                 ct);
+            if (!user.IsSuccess) return Fail(user.Error!.Code);
 
-            return result.IsSuccess
-                ? Results.Redirect($"{frontend}/auth/callback#token={Uri.EscapeDataString(result.Value!.AccessToken)}&refresh={Uri.EscapeDataString(result.Value!.RefreshToken)}")
-                : Fail(result.Error!.Code);
+            var code = await codes.IssueAsync(user.Value, OneTimeCodePurpose.ExternalLogin, ct);
+            return Results.Redirect($"{frontend}/auth/callback?code={Uri.EscapeDataString(code.Code)}");
         });
+
+        // PD-41: the one-time code from the callback, exchanged exactly once for the token pair (AuthResponse,
+        // the same body as /login). Unknown, expired, reused or wrong-purpose code → 401 invalid_code.
+        auth.MapPost("/external/exchange", async (ExternalExchangeRequest request, HttpContext http,
+                OneTimeCodeService codes, IdentityService identity, CancellationToken ct) =>
+            {
+                http.Response.Headers.CacheControl = "no-store";
+                if (await codes.ConsumeAsync(request.Code, OneTimeCodePurpose.ExternalLogin, ct) is not { } userId)
+                    return ApiResults.Problem(new Zaagl.SharedKernel.Error(InvalidCode, "This sign-in code is invalid, expired or already used."));
+                return ApiResults.From(await identity.IssueExternalSessionAsync(userId, ct));
+            })
+            .RequireRateLimiting("auth");
+
+        // PD-41 live statistics: a 60-second, single-use ticket that opens one SignalR connection to
+        // /hubs/analytics?ticket=<ticket>, so page script never holds an access token. JWT session only.
+        auth.MapPost("/hub-ticket", async (ClaimsPrincipal user, HttpContext http, OneTimeCodeService codes, CancellationToken ct) =>
+            {
+                http.Response.Headers.CacheControl = "no-store";
+                var ticket = await codes.IssueAsync(user.GetUserId(), OneTimeCodePurpose.HubTicket, ct);
+                return Results.Ok(new HubTicketResponse(ticket.Code, ticket.ExpiresAt));
+            })
+            .RequireAuthorization("Interactive")
+            .RequireRateLimiting("auth");
 
         // API keys are managed by signed-in users only (a key cannot mint more keys).
         var keys = app.MapGroup("/api/api-keys").WithTags("API keys").RequireAuthorization("Interactive");

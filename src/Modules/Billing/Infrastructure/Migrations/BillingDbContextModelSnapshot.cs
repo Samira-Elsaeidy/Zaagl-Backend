@@ -23,6 +23,47 @@ namespace Zaagl.Modules.Billing.Infrastructure.Migrations
 
             NpgsqlModelBuilderExtensions.UseIdentityByDefaultColumns(modelBuilder);
 
+            modelBuilder.Entity("Zaagl.Modules.Billing.Domain.PendingPlanChange", b =>
+                {
+                    b.Property<Guid>("UserId")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid")
+                        .HasColumnName("user_id");
+
+                    b.Property<int>("Attempts")
+                        .HasColumnType("integer")
+                        .HasColumnName("attempts");
+
+                    b.Property<DateTime?>("LastAttemptAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("last_attempt_at");
+
+                    b.Property<string>("LastError")
+                        .HasMaxLength(500)
+                        .HasColumnType("character varying(500)")
+                        .HasColumnName("last_error");
+
+                    b.Property<int>("PreviousTier")
+                        .HasColumnType("integer")
+                        .HasColumnName("previous_tier");
+
+                    b.Property<DateTime>("QueuedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("queued_at");
+
+                    b.Property<int>("Version")
+                        .HasColumnType("integer")
+                        .HasColumnName("version");
+
+                    b.HasKey("UserId")
+                        .HasName("pk_pending_plan_changes");
+
+                    b.HasIndex("QueuedAt")
+                        .HasDatabaseName("ix_pending_plan_changes_queued_at");
+
+                    b.ToTable("pending_plan_changes", "billing");
+                });
+
             modelBuilder.Entity("Zaagl.Modules.Billing.Domain.ProcessedStripeEvent", b =>
                 {
                     b.Property<string>("EventId")

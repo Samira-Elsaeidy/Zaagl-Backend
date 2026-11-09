@@ -1,67 +1,55 @@
 # Session handoff
 
-Read this first in every new session, then STATUS.md, IMPLEMENTATION_PLAN.md, AGENT_TASKS.md and DECISIONS.md.
+Read this first in every new session, then STATUS.md, DECISIONS.md (Approvals table at the end), IMPLEMENTATION_PLAN.md and AGENT_TASKS.md.
 
-## Current state (2026-11-09)
+## Current state (2026-11-09, end of day)
 
 | | |
 |---|---|
-| Stage | **Planning complete. The product owner answered 12 decisions on 2026-11-09 (DECISIONS.md, Approvals). Stage 1 not started.** |
-| Current task | None in progress |
-| Phase 1 code | **None exists.** Resources, Snippets, Files and Media modules are empty; frontend Phase 1 feature files are empty; no desktop or CLI repo. |
-| Next exact action | Start Stage 1 in parallel: ARC-001 contract pack, which also writes the Phase 1 spec addendum (PD-34) with the approved decisions; BE-001 (API-key scopes), BE-030 (forwarded headers), BE-031 (redirect hardening); FE-001, FE-002, FE-027 then FE-029 (BFF session); OPS-004/005/006 (CI). QA-001…QA-003 (test isolation) are deferred by the product owner. |
-| Approved scope changes | No Pro tier (max file 100 MB on Starter); user bytes on a `zaa.gl` subdomain; guests may create snippets and uploads; bytes kept through the 90-day quarantine; desktop shortcut Ctrl+Alt+Z / Cmd+Ctrl+Z. |
+| Stage | **Stage 1 groundwork complete, reviewed, committed and pushed** on branch `phase1/stage-1` in both repos (user approved "Commit and push", 2026-11-09). Stages 2 to 7 are ON HOLD (PD-50/PD-51). |
+| In progress | Nothing. PD-58 finished: build 0 errors; Coordinator 9/9, Links 550/550, API 555/555; frontend 84/84 (2026-11-09). |
+| Next exact action | Ask the user before starting Stage 2. Run CI on GitHub / Docker on the user's Docker machine when they choose. |
+| Final review | docs/phase1-implementation/reviews/stage1-final.md (Head): 33 DONE, 5 PARTIAL, 0 NOT DONE; the pre-commit migration rework is fixed. |
 
-## Completed this session
+## Standing rules from the user (also in memory)
 
-1. **Phase 0 analytics** (before planning): click event list, UTM report, partition-bounds fix. Commit `1effe01` on branch `feat/phase0-click-events-utm`, pushed to GitHub. Not merged to `main`.
-2. **Agent dashboard** installed into `Zaagl-Backend/.claude` and improved (see AGENT_DASHBOARD.md).
-3. **Six parallel planning audits** (architect, backend, frontend, devops, desktop/CLI, QA) → `_drafts/`.
-4. **Consolidated plan**, 13 documents in this folder; 195 tasks; 35 decisions.
+- The user is the project lead and responsible: ask before any commit, branch, push, worktree, or change in how agents work.
+- **No commits until the user explicitly says so** (each commit needs its own approval).
+- Agents work directly in C:\Users\pc\Zaagl-Backend and C:\Users\pc\Zaagl-Frontend, each only in its own files (AGENT_TASKS.md). The zaagl-head agent reviews every piece and collects questions; the lead relays questions to the user unchanged.
+- Testing tasks are deferred (PD-51), but engineers keep the existing tests green.
+- Notify the user's phone (PushNotification) only when a decision or permission is needed or a round is ready for review.
 
-## Files changed this session (not committed)
+## What to commit (when approved)
 
-| Path | What |
-|---|---|
-| `Zaagl-Backend/docs/phase1-implementation/*.md` | the 13 plan documents |
-| `Zaagl-Backend/docs/phase1-implementation/_drafts/*` | raw agent drafts (source material) and the Phase 0 status snapshot |
-| `Zaagl-Backend/.claude/agents/zaagl-*.md` | six agent definitions |
-| `Zaagl-Backend/.claude/agent-dashboard.config.json` | dashboard names, colours, en/ar labels |
-| `Zaagl-Backend/.claude/hooks/agent-dashboard-notify.js`, `.claude/settings.json` | dashboard hooks (backup: `settings.json.bak`) |
-| `C:\Users\pc\Downloads\agent-pixel-dashboard\server.js`, `public\index.html` | dashboard changes (outside the repos) |
+- Zaagl-Backend: all Stage 1 changes under src/, tests/, docs/ (phase1-implementation incl. reviews, design, adr, qa; docs/spec/zaagl-phase1-addendum.md; RUNBOOK, API), .github/workflows/backend-ci.yml, .config/dotnet-tools.json, .dockerignore, Dockerfiles, docker-compose.yml, deploy/secrets/README.md, .claude/agents/zaagl-head.md, .claude/agent-dashboard.config.json.
+- Zaagl-Frontend: all Stage 1 changes under src/, e2e/, docs/, config files (next.config.ts, vitest.config.mts, playwright.config.ts, package.json, package-lock.json, .env.example), .github/workflows/frontend-ci.yml.
+- **Leave out (user decision):** the graphify changes (.gitignore lines, .gitattributes, .graphifyignore, docs/graphify/, tools/) in both repos; .claude/settings.json, .claude/settings.json.bak and .claude/hooks/ (local dashboard tooling).
+- Commit messages end with `Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>`.
 
-**Not from this session, left untouched:** `.gitignore` changes, `.gitattributes`, `docs/graphify/`, `tools/` (backend) and `.gitignore`, `.gitattributes`, `.graphifyignore` (frontend). They come from a separate `graphify` session; check with the user before committing them.
+## Last test results (2026-11-09, uncommitted tree)
 
-## Last test results
-
-- Backend, 2026-11-09, PostgreSQL 17 at `localhost:5433`: 274 tests, 272 passing at baseline. After commit `1effe01`, all 274 passed. One known flaky test (`AdminApiTests.Owner_links_disabled_and_restored_as_user_disabled_kind_only`); cause in SECURITY_AND_QA.md §1.3, fix is QA-002/QA-003.
-- Frontend: no test framework yet (FE-002, QA-039).
+- Backend: build 0 errors; Coordinator 9/9; Links 550/550; API (QA) 555/555. Known flake: EmailJobsTests.Queued_confirm_email_is_sent_with_the_fragment_url (~1 in 20 on the shared test DB).
+- Frontend: tsc and lint clean; 84/84 unit tests; production build OK; headless check: 0 CSP violations on 19 routes (en and ar), 0 hydration errors in Arabic.
+- Not run: CI on GitHub; anything Docker-based; real Google/GitHub sign-in (no provider keys).
 
 ## Environment
 
-| Item | State | How to start |
-|---|---|---|
-| PostgreSQL 17 (portable, no admin needed) | **Stopped** | `C:\Users\pc\tools\pgsql\bin\pg_ctl.exe -D C:\Users\pc\tools\pgdata17 -l C:\Users\pc\tools\pg.log start` (port 5433, user `zaagl` / `zaagl_dev`, WAL archiving to `C:\Users\pc\tools\pgarchive`) |
-| Migrations | Applied up to `AddClickEventUtm` | `ConnectionStrings__Postgres="Host=localhost;Port=5433;Database=zaagl;Username=zaagl;Password=zaagl_dev" dotnet run --project src/Zaagl.Api -- migrate` |
-| Docker | **Not available.** Firmware virtualisation is off and the account is not admin. | Enable virtualisation in the BIOS, install Docker Desktop as admin |
-| Agent dashboard | Running in this session's background; stops when the session ends | `node "C:\Users\pc\Downloads\agent-pixel-dashboard\server.js" "C:\Users\pc\Zaagl-Backend"` then open http://localhost:4317 |
-| Node.js | 24.12 | — |
-| .NET SDK | 10.0.101 | — |
+| Item | State / how to start |
+|---|---|
+| PostgreSQL 17 (portable) | `C:\Users\pc\tools\pgsql\bin\pg_ctl.exe -D C:\Users\pc\tools\pgdata17 -l C:\Users\pc\tools\pg.log start` (port 5433, zaagl / zaagl_dev, WAL archiving to C:\Users\pc\tools\pgarchive) |
+| Local dev DB | Migrations applied through Links ValidateLinkTargetKindChecks, Resources Initial, Files tasks, Identity one-time codes. Allocator reset on 2026-11-09 with the user's approval (pool position 1,000,000; installed with the dev key fingerprint `c4d0005be7b8054b344e7d62ca6d1627a49c9bd1d3fd569fcf8ed5382b659708`). Tests share this DB and can break the allocator again (test isolation deferred). |
+| Run the app locally | Coordinator: `dotnet run --project src/Zaagl.Coordinator --launch-profile http` (5085). API: `dotnet run --project src/Zaagl.Api --launch-profile http` with `ConnectionStrings__Postgres` set (5084). Web: in Zaagl-Frontend, `NEXT_PUBLIC_API_URL=http://localhost:5084 ZAAGL_INTERNAL_API_URL=http://localhost:5084 WEB_SESSION_KEYS=k1:<32 random bytes base64url> npx next dev -p 3000`. Valkey is not installed here: the API now degrades gracefully (redirects ~10 ms after the first). On a Docker machine use `docker compose up -d --build` (includes Valkey) plus the one-time coordinator init. |
+| Docker | Not available on this PC (firmware virtualisation off, no admin). |
+| Agent dashboard | `node "C:\Users\pc\Downloads\agent-pixel-dashboard\server.js" "C:\Users\pc\Zaagl-Backend"` → http://localhost:4317 (Claude-style pixel agents, Head pinned as main card, click a card for details). |
+| Scratch DB | `zaagl_fe_pd41` (created by a frontend agent for a live check) still exists on the dev server; drop it only if the user agrees. |
 
-## Dashboard state and restart
+## Open questions for the user (none block the commit)
 
-- Hooks and the six agent definitions are installed in `Zaagl-Backend/.claude`. A new session started in `Zaagl-Backend` loads the `zaagl-*` agent types, so each agent appears on its own named card.
-- The server keeps no state on disk. After a restart, cards fill again from hook events and from agent transcripts written in the last 6 hours.
-
-## Blockers
-
-See IMPLEMENTATION_PLAN.md §10: 11 decisions before Stage 1, the user-content domain purchase, code-signing procurement, local Docker, and a staging host.
+What a retried share returns (ARC-002 Q1); content shares in the main link list (ARC-002 Q2); PD-08 (content vs Free's monthly link cap); storage at takedown and reinstate (ARC-006 Q2/Q3); `resources:write` scope; CLI sign-in on servers (U-7); Arabic-Indic digits (U-9); staging hostnames (U-10); `www` redirect (U-11); accounts and purchases (U-12); Cloudflare terms PD-52 (before launch).
 
 ## Resume checklist
 
-1. Read this file, STATUS.md, IMPLEMENTATION_PLAN.md, AGENT_TASKS.md, DECISIONS.md.
-2. `git status` and `git log -3` in both repos; compare with "Last verified commit" in STATUS.md.
-3. Check DECISIONS.md "Approvals" for what has been approved since.
-4. Start PostgreSQL and the dashboard if needed.
-5. Continue with the next unblocked task in STATUS.md; do not redo VERIFIED tasks.
-6. After each task: update STATUS.md (status, evidence, commit), this file, and DECISIONS.md if anything was decided.
+1. Read this file, STATUS.md and the DECISIONS.md Approvals table.
+2. `git status` / `git log -3` in both repos; compare with STATUS.md.
+3. Start PostgreSQL and the dashboard if needed.
+4. Continue with "Next exact action" above; never commit without the user's explicit approval.

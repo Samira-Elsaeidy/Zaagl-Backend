@@ -65,6 +65,7 @@ public sealed record PagedResult<T>(IReadOnlyList<T> Items, int Total, int Page,
 public sealed record DeleteAccountRequest(string Password);
 
 public sealed record ExportProfileDto(Guid UserId, string Email, DateTime CreatedAt);
-public sealed record ExportLinkDto(string Code, string TargetUrl, DateTime CreatedAt, DateTime? ExpiresAt, string State, long ClickCount);
-public sealed record ExportArchivedLinkDto(string Code, bool IsCustom, string TargetUrl, DateTime CreatedAt, DateTime ExpiresAt, DateTime PurgedAt);
+/// <param name="TargetUrl">Null for content links (C1).</param><param name="Kind">url | snippet | file | media.</param>
+public sealed record ExportLinkDto(string Code, string? TargetUrl, DateTime CreatedAt, DateTime? ExpiresAt, string State, long ClickCount, string Kind = "url");
+public sealed record ExportArchivedLinkDto(string Code, bool IsCustom, string? TargetUrl, DateTime CreatedAt, DateTime ExpiresAt, DateTime PurgedAt, string Kind = "url");
 public sealed record AccountExportDto(ExportProfileDto Profile, IReadOnlyList<ExportLinkDto> Links, IReadOnlyList<ExportArchivedLinkDto> ArchivedLinks);

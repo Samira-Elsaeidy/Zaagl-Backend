@@ -27,7 +27,7 @@ public sealed class IdentityServiceTests : IDisposable
 
         var jwt = Options.Create(new JwtOptions { Key = "test-signing-key-at-least-32-characters-long!!" });
         var tokens = new TokenService(jwt);
-        _identity = new IdentityService(_db, tokens, new AlwaysFreePlanProvider(), new NoOpAccountDataEraser(), new NoOpLinkExportSource(), new NoOpArchiveQueries(), NullLogger<IdentityService>.Instance);
+        _identity = new IdentityService(_db, tokens, new FixedContentPlanProvider(PlanTier.Free), new NoOpAccountDataEraser(), new NoOpLinkExportSource(), new NoOpArchiveQueries(), NullLogger<IdentityService>.Instance);
     }
 
     public void Dispose() => _db.Dispose();
@@ -172,7 +172,7 @@ public sealed class IdentityServiceTests : IDisposable
         IdentityModule.Configure(builder, ConnectionString);
         var db = new IdentityDbContext(builder.Options);
         var jwt = Options.Create(new JwtOptions { Key = "test-signing-key-at-least-32-characters-long!!" });
-        return new IdentityService(db, new TokenService(jwt), new AlwaysFreePlanProvider(), new NoOpAccountDataEraser(), new NoOpLinkExportSource(), new NoOpArchiveQueries(), NullLogger<IdentityService>.Instance);
+        return new IdentityService(db, new TokenService(jwt), new FixedContentPlanProvider(PlanTier.Free), new NoOpAccountDataEraser(), new NoOpLinkExportSource(), new NoOpArchiveQueries(), NullLogger<IdentityService>.Instance);
     }
 
     private static string Hash(string value) =>

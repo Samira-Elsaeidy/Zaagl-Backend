@@ -31,7 +31,7 @@ public static class LinksEndpoints
             var totals = await analytics.GetClickTotalsAsync(page.Items.Select(l => l.Id).ToList(), ct);
             var items = page.Items.Select(l => new LinkListItem(l, totals.GetValueOrDefault(l.Id))).ToList();
             return Results.Ok(new PagedResult<LinkListItem>(items, page.Total, page.Page, page.PageSize));
-        });
+        }).RequireScope(ApiScopes.LinksRead);
 
         links.MapPost("", async (
                 LinkInput input, ClaimsPrincipal user, LinkService service, HttpContext http,
@@ -78,27 +78,35 @@ public static class LinksEndpoints
                     dto => Results.Created($"/api/links/{dto.Id}", dto));
             })
             .AllowAnonymous()
+            .RejectFailedCredentials() // PD-36: bad credentials -> 401, never a guest link
+            .RequireScopeWhenAuthenticated(ApiScopes.LinksWrite)
             .RequireRateLimiting("link-write");
 
         links.MapPost("/{id:guid}/renew", async (Guid id, RenewRequest request, ClaimsPrincipal user, LinkService service, CancellationToken ct) =>
                 ApiResults.From(await service.RenewAsync(user.GetUserId(), id, request.ExpiresAt, ct)))
+            .RequireScope(ApiScopes.LinksWrite)
             .RequireRateLimiting("link-write");
 
         links.MapGet("/{id:guid}", async (Guid id, ClaimsPrincipal user, LinkService service, CancellationToken ct) =>
-            await service.GetAsync(user.GetUserId(), id, ct) is { } dto ? Results.Ok(dto) : ApiResults.NotFound("Link not found."));
+            await service.GetAsync(user.GetUserId(), id, ct) is { } dto ? Results.Ok(dto) : ApiResults.NotFound("Link not found."))
+            .RequireScope(ApiScopes.LinksRead);
 
         links.MapPut("/{id:guid}", async (Guid id, LinkInput input, ClaimsPrincipal user, LinkService service, CancellationToken ct) =>
                 ApiResults.From(await service.UpdateAsync(user.GetUserId(), id, input, ct)))
+            .RequireScope(ApiScopes.LinksWrite)
             .RequireRateLimiting("link-write");
 
         links.MapPatch("/{id:guid}", async (Guid id, LinkFlagsInput flags, ClaimsPrincipal user, LinkService service, CancellationToken ct) =>
-            ApiResults.From(await service.SetFlagsAsync(user.GetUserId(), id, flags, ct)));
+            ApiResults.From(await service.SetFlagsAsync(user.GetUserId(), id, flags, ct)))
+            .RequireScope(ApiScopes.LinksWrite);
 
         links.MapDelete("/{id:guid}", async (Guid id, ClaimsPrincipal user, LinkService service, CancellationToken ct) =>
-            await service.DeleteAsync(user.GetUserId(), id, ct) ? Results.NoContent() : ApiResults.NotFound("Link not found."));
+            ApiResults.From(await service.DeleteAsync(user.GetUserId(), id, ct), _ => Results.NoContent()))
+            .RequireScope(ApiScopes.LinksWrite);
 
         links.MapGet("/slug-available", async (string? slug, LinkService service, CancellationToken ct) =>
-            Results.Ok(await service.CheckSlugAsync(slug, ct)));
+            Results.Ok(await service.CheckSlugAsync(slug, ct)))
+            .RequireScope(ApiScopes.LinksRead);
 
         links.MapPost("/bulk", async (IFormFile file, ClaimsPrincipal user, BulkLinkImporter importer, CancellationToken ct) =>
             {
@@ -109,25 +117,31 @@ public static class LinksEndpoints
                 return ApiResults.From(await importer.ImportAsync(user.GetUserId(), stream, ct));
             })
             .DisableAntiforgery()
+            .WithRequestBodyLimit(MaxCsvBytes + 64 * 1024) // BE-005: the 1 MB CSV plus multipart framing
+            .RequireScope(ApiScopes.LinksWrite)
             .RequireRateLimiting("link-write");
 
         app.MapGet("/api/tags", async (ClaimsPrincipal user, LinkService service, CancellationToken ct) =>
             Results.Ok(await service.ListTagsAsync(user.GetUserId(), ct)))
-            .WithTags("Links").RequireAuthorization();
+            .WithTags("Links").RequireAuthorization().RequireScope(ApiScopes.LinksRead);
 
         var folders = app.MapGroup("/api/folders").WithTags("Folders").RequireAuthorization();
 
         folders.MapGet("", async (ClaimsPrincipal user, FolderService service, CancellationToken ct) =>
-            Results.Ok(await service.ListAsync(user.GetUserId(), ct)));
+            Results.Ok(await service.ListAsync(user.GetUserId(), ct)))
+            .RequireScope(ApiScopes.LinksRead);
 
         folders.MapPost("", async (FolderInput input, ClaimsPrincipal user, FolderService service, CancellationToken ct) =>
             ApiResults.From(await service.CreateAsync(user.GetUserId(), input.Name, ct),
-                dto => Results.Created($"/api/folders/{dto.Id}", dto)));
+                dto => Results.Created($"/api/folders/{dto.Id}", dto)))
+            .RequireScope(ApiScopes.LinksWrite);
 
         folders.MapPut("/{id:guid}", async (Guid id, FolderInput input, ClaimsPrincipal user, FolderService service, CancellationToken ct) =>
-            ApiResults.From(await service.RenameAsync(user.GetUserId(), id, input.Name, ct)));
+            ApiResults.From(await service.RenameAsync(user.GetUserId(), id, input.Name, ct)))
+            .RequireScope(ApiScopes.LinksWrite);
 
         folders.MapDelete("/{id:guid}", async (Guid id, ClaimsPrincipal user, FolderService service, CancellationToken ct) =>
-            await service.DeleteAsync(user.GetUserId(), id, ct) ? Results.NoContent() : ApiResults.NotFound("Folder not found."));
+            await service.DeleteAsync(user.GetUserId(), id, ct) ? Results.NoContent() : ApiResults.NotFound("Folder not found."))
+            .RequireScope(ApiScopes.LinksWrite);
     }
 }

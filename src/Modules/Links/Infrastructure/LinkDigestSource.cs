@@ -17,7 +17,7 @@ public sealed class LinkExportSource(LinksDbContext db) : ILinkExportSource
             .Take(Cap)
             .Select(l => new
             {
-                l.Slug, l.DestinationUrl, l.CreatedAt, l.ClickCount,
+                l.Slug, l.DestinationUrl, l.TargetKind, l.CreatedAt, l.ClickCount,
                 ExpiresAt = l.Policy != null ? l.Policy.ExpiresAt : null,
                 l.PurgeAfter, l.DeletedAt, l.DisabledAt,
             })
@@ -26,7 +26,7 @@ public sealed class LinkExportSource(LinksDbContext db) : ILinkExportSource
         return rows.Select(r => new LinkExportRow(
             r.Slug, r.DestinationUrl, r.CreatedAt, r.ExpiresAt,
             LinkStateCalculator.Compute(r.PurgeAfter, r.DeletedAt, r.DisabledAt, r.ExpiresAt, now).ToString().ToLowerInvariant(),
-            r.ClickCount)).ToList();
+            r.ClickCount, LinkExportKinds.For(r.TargetKind))).ToList();
     }
 }
 

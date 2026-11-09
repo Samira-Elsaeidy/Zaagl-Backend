@@ -95,7 +95,9 @@ public sealed class LinkCacheInvalidationListener(
                     {
                         var keys = JsonSerializer.Deserialize<string[]>(e.Payload) ?? [];
                         foreach (var key in keys)
-                            await cache.RemoveAsync($"link:{key}", stoppingToken);
+                            // ARC-002 §3: always the versioned key shape (a hard-coded "link:{key}" silently
+                            // stopped invalidating once the key was bumped to link:v2:).
+                            await cache.RemoveAsync(Application.LinkCache.Key(key), stoppingToken);
                     }
                     catch (Exception ex)
                     {

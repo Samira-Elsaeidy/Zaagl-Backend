@@ -18,6 +18,23 @@ whether generated/alias creation is currently gated open or closed).
 The coordinator's own status: `GET http://coordinator:8080/v1/status` (or via the admin proxy,
 `GET /api/admin/allocator`, Admin-only).
 
+### Existing `coordstate` volume after the image UID change (one-time)
+
+The API and coordinator images now run as fixed UID/GID `10001:10001` (previously a system user created by
+`useradd -r`). A **new** `coordstate` volume takes `/state`'s ownership from the image, so nothing is needed.
+An **existing** volume keeps the old owner, and the coordinator then cannot write
+`/state/hwm.json` (`Coordinator__StateFilePath`). Fix it once, before starting the rebuilt coordinator:
+
+```
+docker compose stop coordinator
+docker volume ls | grep coordstate          # the name is <compose project>_coordstate
+docker run --rm -v <compose project>_coordstate:/state alpine chown -R 10001:10001 /state
+docker compose up -d coordinator
+```
+
+On a dev machine, deleting the volume instead is also fine. **Never delete it on a host with real issued
+codes** (it holds the allocator high-water mark; see "Database restore" below).
+
 ## First-time coordinator initialisation
 
 A fresh `alloc` schema has no installation row. `POST /v1/admin/init` (bearer `Coordinator:AdminToken`)
@@ -90,6 +107,42 @@ requires both the role claim and a session issued after TOTP passed).
 An empty list (this build's dev default) allows every address - **production must configure real ranges**,
 since an empty list there defeats the restriction entirely.
 
+## Client IP: trusted proxies (spec §7.13)
+
+The client IP (used by every IP limiter, guest quotas and `Admin:AllowedNetworks`) comes from
+`X-Forwarded-For` only when the connection comes from a trusted hop:
+
+| Setting | Value |
+|---|---|
+| `Network__KnownProxies__0`, `__1`, ... | Exact IPs of the reverse proxy and the web/BFF container on `edge` (fixed addresses). Never a subnet: a `/` fails startup. |
+| `Network__KnownNetworks__0`, ... | CIDR ranges of the staging access gate. Staging only. |
+| `Network__ForwardLimit` | `2` in production (proxy, web), `3` on staging (gate, proxy, web). Default `2`. |
+
+`X-Forwarded-For`, `X-Forwarded-Proto` and `X-Forwarded-Host` are read right to left and stop at the first
+untrusted address. **With both lists empty no forwarded header is trusted** (ASP.NET itself would trust
+everyone in that state, so the API switches forwarding off): every request then counts against the address
+of whatever connected to the API, so behind a proxy all visitors would share one rate-limit partition. Set the
+proxy and BFF addresses before going live. An invalid entry fails startup.
+
+## Rate limits (spec §7.3)
+
+In memory per instance (a Valkey-backed limiter can replace `IRedirectRateLimiter` later). Every IP limiter
+partitions by IPv4 address / IPv6 `/64`. Settings under `RateLimits` (per minute): `AuthPerMinute` (10),
+`LinkWritePerMinute` (60), `UnlockPerMinute` (10), and `Redirects`: `PerMinute` (300), `MissesPerMinute`
+(30 per `/64` or IPv4 address), `MissesPerMinutePer56` (120), `MissesPerMinutePer48` (300 per `/48` or IPv4
+`/24`), `Enabled`. A partition over any redirect limit gets `429` with `Retry-After` on every `GET`/`HEAD
+/{code}` until the minute ends. Paths of 1-3 characters or with several segments are `404` before any I/O.
+
+## Valkey (cache L2) outage and API restarts
+
+Each API instance remembers, in memory only, the link snapshot keys whose Valkey delete was lost or whose write
+was abandoned during an outage, and does not read those keys from Valkey for `Cache:L2:MaxEntryLifetimeSeconds`
+(300 s). That memory is per process: if an instance restarts within 5 minutes of a Valkey outage while Valkey is
+back, another instance's stale copy of a just-changed link (for example a link that was disabled) can be read from
+Valkey until it expires (at most 5 minutes). After a Valkey outage, either wait 5 minutes before restarting API
+instances, or flush the link snapshot keys first: `valkey-cli --scan --pattern 'link:v2:*' | xargs -r valkey-cli del`
+(add `-a "$VALKEY_PASSWORD"` when a password is set; the key prefix is `LinkCache.Key`, versioned `link:v2:`).
+
 ## Abuse reports and takedowns
 
 See `docs/ABUSE.md` for the response-time targets and the moderation workflow itself.
@@ -112,3 +165,21 @@ Run the restore procedure above end-to-end on an isolated copy (separate WAL arc
 sink credentials - the drill must never write to production's archive or sink). Confirm sample codes
 resolve correctly afterward, and record the time taken as the measured RTO. **Not automated in this
 build** - there is no `scripts/chaos.sh` or drill harness yet (see `docs/TRACEABILITY.md`).
+
+## Cloudflare edge: settings that must stay off (OPS-001)
+
+The host, DNS, TLS, cache and WAF plan is `docs/phase1-implementation/design/ops-001-hosts-and-dns.md`. Changing
+any of the following breaks the rule that no cookie is set on `usercontent.zaa.gl`, `zaa.gl` or `Domain=zaa.gl`
+(addendum §4.2.2), or lets the edge alter or cache user bytes:
+
+- Bot Fight Mode on.
+- Any WAF or rate-limit action other than **Block**, such as a Managed or JS Challenge.
+- I'm Under Attack mode.
+- Turnstile pre-clearance.
+- Always Online.
+- Email Obfuscation, Rocket Loader or Automatic HTTPS Rewrites on the inert hosts.
+- Removing the cache-bypass rule.
+- Adding any DNS-only (grey-cloud) record that points at the VPS.
+
+Do not make any of these changes without the product owner. After **any** Cloudflare change, re-run the cookie check
+in step 9 of that document.

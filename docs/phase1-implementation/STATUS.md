@@ -2,38 +2,38 @@
 
 | | |
 |---|---|
-| Current stage | **Planning complete. Stage 1 decisions answered on 2026-11-09 (DECISIONS.md, Approvals). Stage 1 has not started.** |
-| Current task | None. Next: start Stage 1 (see SESSION_HANDOFF.md, "Next exact action"). |
-| Scope changes from the answers | No Pro tier in Phase 1, so no 5 GB uploads (PD-04); user bytes on a `zaa.gl` subdomain (PD-03); guests may upload (PD-14); bytes kept 90 days after expiry (PD-06); desktop shortcut Ctrl+Alt+Z / Cmd+Ctrl+Z (PD-19); only three Phase 0 fixes in Stage 1, test isolation deferred (PD-24). Task titles still mention Pro where the draft did; read them with PD-04 applied. |
-| Last verified commit | Zaagl-Backend `1effe01` (Phase 0 analytics; 274 tests, 272 passing on 2026-11-09, failures explained in SECURITY_AND_QA.md). Zaagl-Frontend `2c70b59`. No Phase 1 commit exists. |
-| Planning outputs | Not committed. They sit untracked in `Zaagl-Backend/docs/phase1-implementation/` and `Zaagl-Backend/.claude/`. |
+| Current stage | **Stage 1 groundwork complete (PD-51), committed and pushed on `phase1/stage-1` (user approved 2026-11-09).** PD-58 (key-revocation retry) done; final run: build 0 errors, Coordinator 9/9, Links 555/555, API 555/555, frontend 84/84. |
+| Scope | PD-50/PD-51: Stage 1 finished with its important groundwork only; testing tasks deferred; **Stages 2 to 7 ON HOLD** until the product owner decides (the lead asks before starting Stage 2). |
+| Last verified run | 2026-11-09 on the Stage 1 tree (committed unchanged): backend build 0 errors; tests Coordinator 9/9, Links 550/550, API (QA) 555/555; frontend tsc and lint clean, 72/72 tests (84/84 after the later Arabic/formatBytes fix). |
+| Last commit | Zaagl-Backend `9923526` (plan docs only) on `phase1/stage-1`; Zaagl-Frontend `985948d` (user's own docs commit). Stage 1 code: the "Phase 1 Stage 1 groundwork" commit on `phase1/stage-1` in both repos (see `git log`). |
+| Final review | docs/phase1-implementation/reviews/stage1-final.md (Head): 38 groundwork items, 33 DONE, 5 PARTIAL, 0 NOT DONE; the one pre-commit REWORK (migration validation) is fixed. |
 | Updated | 2026-11-09 |
 
-Status values: `NOT_STARTED`, `IN_PROGRESS`, `BLOCKED`, `IMPLEMENTED`, `TESTING`, `VERIFIED`, `FAILED`. A task is `VERIFIED` only when the Definition of Done in IMPLEMENTATION_PLAN.md §7 is met, including independent QA evidence.
+Status values: NOT_STARTED, IN_PROGRESS, BLOCKED, IMPLEMENTED, TESTING, VERIFIED, FAILED.
 
-## Summary
+## Stage 1 summary
 
-| Stage | Tasks | Not started | Blocked | In progress | Verified |
-|---|---|---|---|---|---|
-| 1 Architecture and foundation | 52 | 48 | 4 | 0 | 0 |
-| 2 Snippets and CLI core | 31 | 30 | 1 | 0 | 0 |
-| 3 Upload pipeline and media | 29 | 28 | 1 | 0 | 0 |
-| 4 Files, burn, lifecycle | 25 | 24 | 1 | 0 | 0 |
-| 5 Desktop and CLI release | 34 | 29 | 5 | 0 | 0 |
-| 6 Final QA | 7 | 7 | 0 | 0 | 0 |
-| 7 Production readiness | 17 | 15 | 2 | 0 | 0 |
-| **Total** | **195** | **181** | **14** | **0** | **0** |
-
-BLOCKED means the task depends on an unanswered decision (PD-nn), on credentials, or was deferred by the product owner (QA-001…QA-003 under PD-24). Each blocked row names what it waits for.
-
-## Planning tasks (this session)
-
-| Item | Status | Evidence |
+| Result | Count | Tasks |
 |---|---|---|
-| Agent dashboard installed and validated with real subagents | VERIFIED | AGENT_DASHBOARD.md, validation table |
-| Six specialist planning audits, run in parallel | VERIFIED | `_drafts/*.md`; tool-call counts on the dashboard matched each agent's report |
-| Consolidated plan documents (13 files) | IMPLEMENTED | this folder |
-| Plan approval | NOT_STARTED | waits for the product owner |
+| VERIFIED (independent QA tests) | 3 | BE-001, BE-030, BE-031 |
+| IMPLEMENTED (Head accepted, tests green) | 32 | see table below |
+| PARTIAL (IN_PROGRESS) | 4 | FE-001, FE-004, OPS-003, QA-010 |
+| Deferred testing (PD-51) | 11 | QA-001, 002, 003, 004, 007, 013, 014, 015, 039, ARC-017, BE-027 |
+| Not in the groundwork list | 2 | ARC-013 (rate limiting v2 design), and the QA tasks above |
+
+Extra work done in Stage 1 beyond the original task list (all approved decisions): PD-36 (bad credentials → 401), PD-39/42/43/47/48/49 (410 pages, fallback, click limit, HEAD and bots), PD-41 (one-time sign-in code, hub tickets), PD-44 (fallback URL checks), AZ-01 (admin enrol-only token), admin social sign-in refused, cache resilience when Valkey is down, refresh_raced → 409, PD-58 (key-revocation retry with Billing outbox, migration PendingPlanChanges).
+
+## Known issues and follow-ups (before Stage 2)
+
+- Flaky test: EmailJobsTests.Queued_confirm_email_is_sent_with_the_fragment_url fails about 1 run in 20 on the shared test database (test isolation deferred, PD-24/PD-51).
+- next dev returned 500 on [slug] routes once; not reproduced since.
+- CSP reporting endpoint /bff/csp-report required before production enforcement (ADR-0023).
+- Open product questions: what a retried share returns (ARC-002 Q1); content in the main link list (ARC-002 Q2); PD-08 content vs Free monthly cap; storage at takedown and on reinstate (ARC-006 Q2/Q3); resources:write scope; CLI sign-in on servers (U-7); staging hostnames (U-10); www redirect (U-11); accounts and purchases (U-12); Arabic digits kept (U-9); Cloudflare terms (PD-52, before launch).
+- Local dev DB: migrations applied through ValidateLinkTargetKindChecks, Resources Initial, Files tasks, Identity one-time codes; the allocator was reset on 2026-11-09 with the user's approval (position 1,000,000, dev key fingerprint).
+
+## Stages 2 to 7
+
+ON HOLD (PD-50/PD-51). Their task rows below keep their planning status.
 
 ## Task status
 
@@ -41,58 +41,58 @@ BLOCKED means the task depends on an unanswered decision (PD-nn), on credentials
 
 | ID | Owner | Pri | Status | Blocked by | Evidence | Last commit |
 |---|---|---|---|---|---|---|
-| ARC-001 | architect | P0 | NOT_STARTED | — | — | — |
-| ARC-002 | architect | P0 | NOT_STARTED | — | — | — |
-| ARC-004 | architect | P0 | NOT_STARTED | — | — | — |
-| ARC-005 | architect | P0 | NOT_STARTED | — | — | — |
-| ARC-006 | architect | P0 | NOT_STARTED | — | — | — |
-| ARC-008 | architect | P0 | NOT_STARTED | — | — | — |
-| ARC-014 | architect | P0 | NOT_STARTED | — | — | — |
-| ARC-016 | architect | P0 | NOT_STARTED | — | — | — |
-| BE-001 | backend | P0 | NOT_STARTED | — | — | — |
-| BE-002 | backend | P0 | NOT_STARTED | — | — | — |
-| BE-003 | backend | P0 | NOT_STARTED | — | — | — |
-| BE-004 | backend | P0 | NOT_STARTED | — | — | — |
-| BE-005 | backend | P0 | NOT_STARTED | — | — | — |
-| BE-006 | backend | P0 | NOT_STARTED | — | — | — |
-| BE-007 | backend | P0 | NOT_STARTED | — | — | — |
-| BE-013 | backend | P0 | NOT_STARTED | — | — | — |
-| BE-030 | backend | P0 | NOT_STARTED | — | — | — |
-| BE-031 | backend | P0 | NOT_STARTED | — | — | — |
-| FE-001 | frontend | P0 | NOT_STARTED | — | — | — |
-| FE-002 | frontend | P0 | NOT_STARTED | — | — | — |
-| FE-003 | frontend | P0 | NOT_STARTED | — | — | — |
-| FE-004 | frontend | P0 | NOT_STARTED | — | — | — |
-| FE-005 | frontend | P0 | NOT_STARTED | — | — | — |
-| FE-006 | frontend | P0 | NOT_STARTED | — | — | — |
-| FE-029 | frontend | P0 | NOT_STARTED | — | — | — |
-| OPS-001 | devops | P0 | NOT_STARTED | — | — | — |
+| ARC-001 | architect | P0 | IMPLEMENTED | — | Head final review reviews/stage1-final.md; full run 2026-11-09: build 0 errors, 1,186 tests passed | Stage 1 commit (phase1/stage-1) |
+| ARC-002 | architect | P0 | IMPLEMENTED | — | Head final review reviews/stage1-final.md; full run 2026-11-09: build 0 errors, 1,186 tests passed | Stage 1 commit (phase1/stage-1) |
+| ARC-004 | architect | P0 | IMPLEMENTED | — | Head final review reviews/stage1-final.md; full run 2026-11-09: build 0 errors, 1,186 tests passed | Stage 1 commit (phase1/stage-1) |
+| ARC-005 | architect | P0 | IMPLEMENTED | — | Head final review reviews/stage1-final.md; full run 2026-11-09: build 0 errors, 1,186 tests passed | Stage 1 commit (phase1/stage-1) |
+| ARC-006 | architect | P0 | IMPLEMENTED | — | Head final review reviews/stage1-final.md; full run 2026-11-09: build 0 errors, 1,186 tests passed | Stage 1 commit (phase1/stage-1) |
+| ARC-008 | architect | P0 | IMPLEMENTED | — | Head final review reviews/stage1-final.md; full run 2026-11-09: build 0 errors, 1,186 tests passed | Stage 1 commit (phase1/stage-1) |
+| ARC-014 | architect | P0 | IMPLEMENTED | — | Head final review reviews/stage1-final.md; full run 2026-11-09: build 0 errors, 1,186 tests passed | Stage 1 commit (phase1/stage-1) |
+| ARC-016 | architect | P0 | IMPLEMENTED | — | Head final review reviews/stage1-final.md; full run 2026-11-09: build 0 errors, 1,186 tests passed | Stage 1 commit (phase1/stage-1) |
+| BE-001 | backend | P0 | VERIFIED | — | QA suite tests/Zaagl.Api.Tests 555/555; Head ACCEPT (reviews/stage1-backend-fixes.md) | Stage 1 commit (phase1/stage-1) |
+| BE-002 | backend | P0 | IMPLEMENTED | — | Head final review reviews/stage1-final.md; full run 2026-11-09: build 0 errors, 1,186 tests passed | Stage 1 commit (phase1/stage-1) |
+| BE-003 | backend | P0 | IMPLEMENTED | — | Head final review reviews/stage1-final.md; full run 2026-11-09: build 0 errors, 1,186 tests passed | Stage 1 commit (phase1/stage-1) |
+| BE-004 | backend | P0 | IMPLEMENTED | — | Head final review reviews/stage1-final.md; full run 2026-11-09: build 0 errors, 1,186 tests passed | Stage 1 commit (phase1/stage-1) |
+| BE-005 | backend | P0 | IMPLEMENTED | — | Head final review reviews/stage1-final.md; full run 2026-11-09: build 0 errors, 1,186 tests passed | Stage 1 commit (phase1/stage-1) |
+| BE-006 | backend | P0 | IMPLEMENTED | — | Head final review reviews/stage1-final.md; full run 2026-11-09: build 0 errors, 1,186 tests passed | Stage 1 commit (phase1/stage-1) |
+| BE-007 | backend | P0 | IMPLEMENTED | — | Head final review reviews/stage1-final.md; full run 2026-11-09: build 0 errors, 1,186 tests passed | Stage 1 commit (phase1/stage-1) |
+| BE-013 | backend | P0 | IMPLEMENTED | — | Head final review reviews/stage1-final.md; full run 2026-11-09: build 0 errors, 1,186 tests passed | Stage 1 commit (phase1/stage-1) |
+| BE-030 | backend | P0 | VERIFIED | — | QA suite tests/Zaagl.Api.Tests 555/555; Head ACCEPT (reviews/stage1-backend-fixes.md) | Stage 1 commit (phase1/stage-1) |
+| BE-031 | backend | P0 | VERIFIED | — | QA suite tests/Zaagl.Api.Tests 555/555; Head ACCEPT (reviews/stage1-backend-fixes.md) | Stage 1 commit (phase1/stage-1) |
+| FE-001 | frontend | P0 | IN_PROGRESS | — | PARTIAL: viewer route group, viewer layout, nav entries for /files and /paste/new missing | Stage 1 commit (phase1/stage-1) |
+| FE-002 | frontend | P0 | IMPLEMENTED | — | Head final review reviews/stage1-final.md; full run 2026-11-09: build 0 errors, 1,186 tests passed | Stage 1 commit (phase1/stage-1) |
+| FE-003 | frontend | P0 | IMPLEMENTED | — | Head final review reviews/stage1-final.md; full run 2026-11-09: build 0 errors, 1,186 tests passed | Stage 1 commit (phase1/stage-1) |
+| FE-004 | frontend | P0 | IN_PROGRESS | — | PARTIAL: lib/server-api.ts not done | Stage 1 commit (phase1/stage-1) |
+| FE-005 | frontend | P0 | IMPLEMENTED | — | Head final review reviews/stage1-final.md; full run 2026-11-09: build 0 errors, 1,186 tests passed | Stage 1 commit (phase1/stage-1) |
+| FE-006 | frontend | P0 | IMPLEMENTED | — | Head final review reviews/stage1-final.md; full run 2026-11-09: build 0 errors, 1,186 tests passed | Stage 1 commit (phase1/stage-1) |
+| FE-029 | frontend | P0 | IMPLEMENTED | — | Head final review reviews/stage1-final.md; full run 2026-11-09: build 0 errors, 1,186 tests passed | Stage 1 commit (phase1/stage-1) |
+| OPS-001 | devops | P0 | IMPLEMENTED | — | Head final review reviews/stage1-final.md; full run 2026-11-09: build 0 errors, 1,186 tests passed | Stage 1 commit (phase1/stage-1) |
 | OPS-002 | devops | P0 | BLOCKED | PD-11 | — | — |
-| OPS-003 | devops | P0 | NOT_STARTED | — | — | — |
-| OPS-004 | devops | P0 | NOT_STARTED | — | — | — |
-| OPS-005 | devops | P0 | NOT_STARTED | — | — | — |
-| OPS-006 | devops | P0 | NOT_STARTED | — | — | — |
-| OPS-014 | devops | P0 | NOT_STARTED | — | — | — |
-| QA-001 | qa | P0 | BLOCKED | PD-24 (deferred) | — | — |
-| QA-002 | qa | P0 | BLOCKED | PD-24 (deferred) | — | — |
-| QA-003 | qa | P0 | BLOCKED | PD-24 (deferred) | — | — |
-| QA-004 | qa | P0 | NOT_STARTED | — | — | — |
-| QA-006 | qa | P0 | NOT_STARTED | — | — | — |
-| QA-007 | qa | P0 | NOT_STARTED | — | — | — |
-| QA-008 | qa | P0 | NOT_STARTED | — | — | — |
-| QA-009 | qa | P0 | NOT_STARTED | — | — | — |
-| QA-010 | qa | P0 | NOT_STARTED | — | — | — |
-| QA-011 | qa | P0 | NOT_STARTED | — | — | — |
-| QA-013 | qa | P0 | NOT_STARTED | — | — | — |
-| QA-015 | qa | P0 | NOT_STARTED | — | — | — |
-| QA-039 | qa | P0 | NOT_STARTED | — | — | — |
-| QA-040 | qa | P0 | NOT_STARTED | — | — | — |
-| ARC-012 | architect | P1 | NOT_STARTED | — | — | — |
-| ARC-013 | architect | P1 | NOT_STARTED | — | — | — |
-| BE-027 | backend | P1 | NOT_STARTED | — | — | — |
-| FE-027 | frontend | P1 | NOT_STARTED | — | — | — |
-| QA-014 | qa | P1 | NOT_STARTED | — | — | — |
-| ARC-017 | architect | P2 | NOT_STARTED | — | — | — |
+| OPS-003 | devops | P0 | IN_PROGRESS | — | PARTIAL: base images not pinned by digest (no registry access) | Stage 1 commit (phase1/stage-1) |
+| OPS-004 | devops | P0 | IMPLEMENTED | — | Head final review reviews/stage1-final.md; full run 2026-11-09: build 0 errors, 1,186 tests passed | Stage 1 commit (phase1/stage-1) |
+| OPS-005 | devops | P0 | IMPLEMENTED | — | Head final review reviews/stage1-final.md; full run 2026-11-09: build 0 errors, 1,186 tests passed | Stage 1 commit (phase1/stage-1) |
+| OPS-006 | devops | P0 | IMPLEMENTED | — | Head final review reviews/stage1-final.md; full run 2026-11-09: build 0 errors, 1,186 tests passed | Stage 1 commit (phase1/stage-1) |
+| OPS-014 | devops | P0 | IMPLEMENTED | — | Head final review reviews/stage1-final.md; full run 2026-11-09: build 0 errors, 1,186 tests passed | Stage 1 commit (phase1/stage-1) |
+| QA-001 | qa | P0 | BLOCKED | PD-51 (testing deferred) | — | Stage 1 commit (phase1/stage-1) |
+| QA-002 | qa | P0 | BLOCKED | PD-51 (testing deferred) | — | Stage 1 commit (phase1/stage-1) |
+| QA-003 | qa | P0 | BLOCKED | PD-51 (testing deferred) | — | Stage 1 commit (phase1/stage-1) |
+| QA-004 | qa | P0 | BLOCKED | PD-51 (testing deferred) | — | Stage 1 commit (phase1/stage-1) |
+| QA-006 | qa | P0 | IMPLEMENTED | — | Head final review reviews/stage1-final.md; full run 2026-11-09: build 0 errors, 1,186 tests passed | Stage 1 commit (phase1/stage-1) |
+| QA-007 | qa | P0 | BLOCKED | PD-51 (testing deferred) | — | Stage 1 commit (phase1/stage-1) |
+| QA-008 | qa | P0 | IMPLEMENTED | — | Head final review reviews/stage1-final.md; full run 2026-11-09: build 0 errors, 1,186 tests passed | Stage 1 commit (phase1/stage-1) |
+| QA-009 | qa | P0 | IMPLEMENTED | — | Head final review reviews/stage1-final.md; full run 2026-11-09: build 0 errors, 1,186 tests passed | Stage 1 commit (phase1/stage-1) |
+| QA-010 | qa | P0 | IN_PROGRESS | — | PARTIAL: authorization matrix covers part of the routes (testing deferred, PD-51) | Stage 1 commit (phase1/stage-1) |
+| QA-011 | qa | P0 | IMPLEMENTED | — | Head final review reviews/stage1-final.md; full run 2026-11-09: build 0 errors, 1,186 tests passed | Stage 1 commit (phase1/stage-1) |
+| QA-013 | qa | P0 | BLOCKED | PD-51 (testing deferred) | — | Stage 1 commit (phase1/stage-1) |
+| QA-015 | qa | P0 | BLOCKED | PD-51 (testing deferred) | — | Stage 1 commit (phase1/stage-1) |
+| QA-039 | qa | P0 | BLOCKED | PD-51 (testing deferred) | — | Stage 1 commit (phase1/stage-1) |
+| QA-040 | qa | P0 | IMPLEMENTED | — | Head final review reviews/stage1-final.md; full run 2026-11-09: build 0 errors, 1,186 tests passed | Stage 1 commit (phase1/stage-1) |
+| ARC-012 | architect | P1 | IMPLEMENTED | — | Head final review reviews/stage1-final.md; full run 2026-11-09: build 0 errors, 1,186 tests passed | Stage 1 commit (phase1/stage-1) |
+| ARC-013 | architect | P1 | NOT_STARTED | not in PD-51 groundwork list | — | Stage 1 commit (phase1/stage-1) |
+| BE-027 | backend | P1 | BLOCKED | PD-51 (testing deferred) | — | Stage 1 commit (phase1/stage-1) |
+| FE-027 | frontend | P1 | IMPLEMENTED | — | Head final review reviews/stage1-final.md; full run 2026-11-09: build 0 errors, 1,186 tests passed | Stage 1 commit (phase1/stage-1) |
+| QA-014 | qa | P1 | BLOCKED | PD-51 (testing deferred) | — | Stage 1 commit (phase1/stage-1) |
+| ARC-017 | architect | P2 | BLOCKED | PD-51 (testing deferred) | — | Stage 1 commit (phase1/stage-1) |
 
 ### Stage 2: Code and text sharing (E1.1, CLI core)
 

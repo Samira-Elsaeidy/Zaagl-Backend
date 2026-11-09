@@ -17,6 +17,7 @@ public sealed class IdentityDbContext(DbContextOptions<IdentityDbContext> option
     public DbSet<EmailOutbox> EmailOutbox => Set<EmailOutbox>();
     public DbSet<EmailOutboxItem> EmailOutboxItems => Set<EmailOutboxItem>();
     public DbSet<EmailSuppression> EmailSuppressions => Set<EmailSuppression>();
+    public DbSet<OneTimeCode> OneTimeCodes => Set<OneTimeCode>();
 
     protected override void OnModelCreating(ModelBuilder b)
     {
@@ -110,6 +111,15 @@ public sealed class IdentityDbContext(DbContextOptions<IdentityDbContext> option
             e.HasKey(x => x.Email);
             e.Property(x => x.Email).HasMaxLength(320);
             e.Property(x => x.Reason).HasMaxLength(200).IsRequired();
+        });
+
+        b.Entity<OneTimeCode>(e =>
+        {
+            e.ToTable("one_time_codes");
+            e.HasKey(x => x.CodeHash);
+            e.Property(x => x.CodeHash).HasMaxLength(64);
+            e.Property(x => x.Purpose).HasMaxLength(20).IsRequired();
+            e.HasIndex(x => x.ExpiresAt);
         });
     }
 }

@@ -21,6 +21,9 @@ namespace Zaagl.Links.Tests;
 /// <summary>Spec §7.14, against the real local dev Postgres with the real cross-module services wired
 /// up (same convention as PurgeJobTests), not fakes - this is the one place that genuinely exercises
 /// IAccountDataEraser/ILinkExportSource/IArchiveQueries together.</summary>
+/// <remarks>In <see cref="AdminRoleCollection"/>: these tests clear and restore every other admin's role, so no
+/// other test may create or remove an Admin while they run.</remarks>
+[Collection(AdminRoleCollection.Name)]
 public sealed class AccountDeletionTests : IDisposable
 {
     private const string ConnectionString = "Host=localhost;Port=5433;Database=zaagl;Username=zaagl;Password=zaagl_dev";
@@ -43,6 +46,7 @@ public sealed class AccountDeletionTests : IDisposable
         sc.AddScoped<Zaagl.Modules.Links.Contracts.IAccountDataEraser, AccountDataEraser>();
         sc.AddScoped<Zaagl.Modules.Links.Contracts.ILinkExportSource, LinkExportSource>();
         sc.AddSingleton<IPlanProvider>(new FixedPlanProvider(PlanTier.Free));
+        sc.AddSingleton<IContentPlanProvider>(new FixedContentPlanProvider(PlanTier.Free));
         sc.AddSingleton(Options.Create(new JwtOptions { Key = "test-signing-key-at-least-32-characters-long!!" }));
         sc.AddSingleton<TokenService>();
         sc.AddScoped<IdentityService>();

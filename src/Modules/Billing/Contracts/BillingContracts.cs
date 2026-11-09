@@ -38,6 +38,23 @@ public interface IPlanProvider
     Task<PlanLimits> GetLimitsAsync(Guid userId, CancellationToken cancellationToken);
 }
 
-public sealed record BillingStatusDto(PlanTier Tier, PlanLimits Limits, bool HasStripeCustomer);
+/// <summary>
+/// Spec §7.4/§8.2 (BE-003, PD-58): called by Billing after a user's plan changed (Stripe webhook), with the
+/// capabilities before and after. Identity implements it to revoke every API key whenever
+/// <see cref="PlanCapabilities.ApiKeys"/> of the NEW plan is false and to queue a security notice. Called after
+/// Billing's own commit (separate module schemas, so not one transaction): Billing records a pending marker in the
+/// same transaction as the tier change and retries it on each later billing event and every 5 minutes until every
+/// listener succeeded. So a listener can be called again for the same change (or for an event that kept the tier)
+/// and MUST be idempotent. Key authentication also re-checks the plan, so a failed call cannot keep a key working.
+/// Added after the C5 freeze: needs architect review (contracts.md change rule).
+/// </summary>
+public interface IPlanChangeListener
+{
+    Task OnPlanChangedAsync(Guid userId, PlanCapabilities previous, PlanCapabilities current, CancellationToken cancellationToken);
+}
+
+/// <param name="Capabilities">C5 (Phase 1): what the plan allows, so clients stop comparing tiers
+/// (design/ARC-005-plan-model-v2.md). Filled by BE-003.</param>
+public sealed record BillingStatusDto(PlanTier Tier, PlanLimits Limits, bool HasStripeCustomer, PlanCapabilities? Capabilities = null);
 
 public sealed record RedirectUrlDto(string Url);

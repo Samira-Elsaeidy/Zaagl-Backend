@@ -1,6 +1,7 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Hosting;
 using Zaagl.Modules.Identity.Application;
 using Zaagl.Modules.Identity.Infrastructure;
@@ -29,6 +30,9 @@ public static class IdentityModule
         services.AddSingleton<TokenService>();
         services.AddSingleton<SecurityStampValidator>();
         services.AddScoped<IdentityService>();
+        services.AddScoped<Zaagl.Modules.Billing.Contracts.IPlanChangeListener, ApiKeyPlanChangeListener>();
+        services.TryAddSingleton(TimeProvider.System);
+        services.AddScoped<OneTimeCodeService>(); // PD-41: social sign-in exchange codes and hub tickets
 
         // Spec §7.10: real SMTP when configured, else a console-logging dev fallback - same shape as
         // WebRiskChecker's "no API key -> skip" and ShortLinks:ScrambleKey's dev-only random fallback.

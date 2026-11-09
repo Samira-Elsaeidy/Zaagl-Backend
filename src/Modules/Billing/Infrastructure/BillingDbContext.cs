@@ -10,6 +10,7 @@ public sealed class BillingDbContext(DbContextOptions<BillingDbContext> options)
 
     public DbSet<Subscription> Subscriptions => Set<Subscription>();
     public DbSet<ProcessedStripeEvent> ProcessedEvents => Set<ProcessedStripeEvent>();
+    public DbSet<PendingPlanChange> PendingPlanChanges => Set<PendingPlanChange>();
 
     protected override void OnModelCreating(ModelBuilder b)
     {
@@ -32,6 +33,15 @@ public sealed class BillingDbContext(DbContextOptions<BillingDbContext> options)
             e.ToTable("processed_stripe_events");
             e.HasKey(x => x.EventId);
             e.Property(x => x.EventId).HasMaxLength(100);
+        });
+
+        b.Entity<PendingPlanChange>(e =>
+        {
+            e.ToTable("pending_plan_changes");
+            e.HasKey(x => x.UserId);
+            e.Property(x => x.PreviousTier).HasConversion<int>();
+            e.Property(x => x.LastError).HasMaxLength(500);
+            e.HasIndex(x => x.QueuedAt);
         });
     }
 }

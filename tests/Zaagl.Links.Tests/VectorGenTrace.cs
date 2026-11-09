@@ -81,9 +81,16 @@ public class VectorGenTrace(ITestOutputHelper output)
         sb.AppendLine("  ]");
         sb.AppendLine("}");
 
-        var path = Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "vectors.json");
+        // Never write into the source folder (that rewrote the committed file's line endings on every run):
+        // write to a temp path and check the committed copy (copied to the output folder) still matches.
+        var path = Path.Combine(Path.GetTempPath(), $"zaagl-vectors-{Guid.NewGuid():N}.json");
         File.WriteAllText(path, sb.ToString());
         output.WriteLine("");
         output.WriteLine("Wrote vectors to: " + Path.GetFullPath(path));
+
+        static string Lf(string text) => text.ReplaceLineEndings();
+        var committed = File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "vectors.json"));
+        Assert.Equal(Lf(committed), Lf(sb.ToString()));
+        File.Delete(path);
     }
 }

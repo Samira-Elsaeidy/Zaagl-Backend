@@ -52,19 +52,20 @@ public sealed class PurgeJob(
         {
             using var scope = scopes.CreateScope();
             var db = scope.ServiceProvider.GetRequiredService<LinksDbContext>();
-            var plans = scope.ServiceProvider.GetRequiredService<IPlanProvider>();
+            var plans = scope.ServiceProvider.GetRequiredService<IContentPlanProvider>();
             var archive = scope.ServiceProvider.GetRequiredService<IArchiveWriter>();
             var invalidator = scope.ServiceProvider.GetRequiredService<ILinkCacheInvalidator>();
+            var cache = scope.ServiceProvider.GetService<Microsoft.Extensions.Caching.Hybrid.HybridCache>();
 
             var now = clock.GetUtcNow().UtcDateTime;
-            batchCount = await PurgeBatchAsync(db, plans, archive, invalidator, now, ct);
+            batchCount = await PurgeBatchAsync(db, plans, archive, invalidator, cache, now, ct);
         }
         while (batchCount >= BatchSize); // keep draining while a full batch suggests more work is waiting
     }
 
     private async Task<int> PurgeBatchAsync(
-        LinksDbContext db, IPlanProvider plans, IArchiveWriter archive, ILinkCacheInvalidator invalidator,
-        DateTime now, CancellationToken ct)
+        LinksDbContext db, IContentPlanProvider plans, IArchiveWriter archive, ILinkCacheInvalidator invalidator,
+        Microsoft.Extensions.Caching.Hybrid.HybridCache? cache, DateTime now, CancellationToken ct)
     {
         // Spec §7.8 exactly: SELECT id ... WHERE purge_after <= @now ORDER BY purge_after LIMIT 200
         // FOR UPDATE SKIP LOCKED, in a real transaction so the row locks actually hold - EF Core's LINQ
@@ -99,11 +100,12 @@ public sealed class PurgeJob(
             // Guest links (spec §7.12): no owner, no plan, no statistics ever kept - just delete the row.
             if (link.OwnerId is { } ownerId)
             {
-                var isPremium = (await plans.GetLimitsAsync(ownerId, ct)).Tier == PlanTier.Starter;
+                // BE-003 (ARC-005 §4): the KeepStatsAfterPurge capability, never a tier comparison.
+                var isPremium = (await plans.GetForUserAsync(ownerId, ct)).Capabilities.KeepStatsAfterPurge;
                 if (isPremium)
                     await archive.ArchiveAsync(
                         link.Id, ownerId, link.Slug, link.IsCustom, link.DestinationUrl,
-                        link.CreatedAt, link.Policy?.ExpiresAt ?? link.CreatedAt, now, ct);
+                        link.CreatedAt, link.Policy?.ExpiresAt ?? link.CreatedAt, now, ct, (short)link.TargetKind);
                 else
                     await archive.DeleteDailyStatsAsync(link.Id, ct);
             }
@@ -116,7 +118,8 @@ public sealed class PurgeJob(
         await tx.CommitAsync(ct);
         if (purgedSlugKeys.Count > 0)
         {
-            await invalidator.NotifyChangedAsync(purgedSlugKeys, ct);
+            // Committed: a cache/NOTIFY failure is logged and counted, never thrown (LinkCacheEviction).
+            await LinkCacheEviction.EvictAfterCommitAsync(cache, invalidator, purgedSlugKeys, logger);
             logger.LogInformation("Purged {Count} links.", purgedSlugKeys.Count);
         }
 

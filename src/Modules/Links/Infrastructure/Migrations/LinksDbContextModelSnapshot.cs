@@ -55,6 +55,10 @@ namespace Zaagl.Modules.Links.Infrastructure.Migrations
                         .HasColumnType("character varying(500)")
                         .HasColumnName("reason");
 
+                    b.Property<Guid?>("ResourceId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("resource_id");
+
                     b.Property<string>("Slug")
                         .IsRequired()
                         .HasMaxLength(64)
@@ -62,7 +66,6 @@ namespace Zaagl.Modules.Links.Infrastructure.Migrations
                         .HasColumnName("slug");
 
                     b.Property<string>("TargetUrl")
-                        .IsRequired()
                         .HasMaxLength(2048)
                         .HasColumnType("character varying(2048)")
                         .HasColumnName("target_url");
@@ -158,6 +161,10 @@ namespace Zaagl.Modules.Links.Infrastructure.Migrations
                         .HasColumnType("character varying(2048)")
                         .HasColumnName("fallback_url");
 
+                    b.Property<byte[]>("LinkKeyHash")
+                        .HasColumnType("bytea")
+                        .HasColumnName("link_key_hash");
+
                     b.Property<int?>("MaxClicks")
                         .HasColumnType("integer")
                         .HasColumnName("max_clicks");
@@ -170,7 +177,10 @@ namespace Zaagl.Modules.Links.Infrastructure.Migrations
                     b.HasKey("LinkId")
                         .HasName("pk_access_policies");
 
-                    b.ToTable("access_policies", "links");
+                    b.ToTable("access_policies", "links", t =>
+                        {
+                            t.HasCheckConstraint("ck_access_policies_link_key_hash", "link_key_hash IS NULL OR octet_length(link_key_hash) = 32");
+                        });
                 });
 
             modelBuilder.Entity("Zaagl.Modules.Links.Domain.AliasDenylistEntry", b =>
@@ -407,7 +417,6 @@ namespace Zaagl.Modules.Links.Infrastructure.Migrations
                         .HasColumnName("description");
 
                     b.Property<string>("DestinationUrl")
-                        .IsRequired()
                         .HasMaxLength(2048)
                         .HasColumnType("character varying(2048)")
                         .HasColumnName("destination_url");
@@ -485,6 +494,10 @@ namespace Zaagl.Modules.Links.Infrastructure.Migrations
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("purge_notice_queued_at");
 
+                    b.Property<Guid?>("ResourceId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("resource_id");
+
                     b.Property<DateTime?>("SafetyCheckedAt")
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("safety_checked_at");
@@ -507,10 +520,15 @@ namespace Zaagl.Modules.Links.Infrastructure.Migrations
                         .HasColumnName("tags");
 
                     b.Property<string>("TargetHost")
-                        .IsRequired()
                         .HasMaxLength(255)
                         .HasColumnType("character varying(255)")
                         .HasColumnName("target_host");
+
+                    b.Property<short>("TargetKind")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("smallint")
+                        .HasDefaultValue((short)0)
+                        .HasColumnName("target_kind");
 
                     b.Property<string>("Title")
                         .HasMaxLength(200)
@@ -529,6 +547,11 @@ namespace Zaagl.Modules.Links.Infrastructure.Migrations
 
                     b.HasIndex("PurgeAfter")
                         .HasDatabaseName("ix_links_purge_after");
+
+                    b.HasIndex("ResourceId")
+                        .IsUnique()
+                        .HasDatabaseName("ux_links_resource_id")
+                        .HasFilter("resource_id IS NOT NULL");
 
                     b.HasIndex("SafetyCheckedAt")
                         .HasDatabaseName("ix_links_safety_checked_at");
@@ -560,6 +583,12 @@ namespace Zaagl.Modules.Links.Infrastructure.Migrations
                             t.HasCheckConstraint("ck_links_generated_columns", "(is_custom AND code_length IS NULL AND code_number IS NULL AND key_version IS NULL) OR (NOT is_custom AND code_length IS NOT NULL AND code_number IS NOT NULL AND key_version IS NOT NULL)");
 
                             t.HasCheckConstraint("ck_links_owner_xor_guest", "(owner_id IS NULL) <> (guest_creator_key IS NULL)");
+
+                            t.HasCheckConstraint("ck_links_target_destination", "(target_kind = 0) = (destination_url IS NOT NULL AND target_host IS NOT NULL)");
+
+                            t.HasCheckConstraint("ck_links_target_kind", "target_kind IN (0, 1, 2, 3)");
+
+                            t.HasCheckConstraint("ck_links_target_resource", "(target_kind = 0) = (resource_id IS NULL)");
                         });
                 });
 

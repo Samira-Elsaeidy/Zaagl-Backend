@@ -32,8 +32,16 @@ public sealed class LinksDbContext(DbContextOptions<LinksDbContext> options) : D
             e.Property(x => x.Id).ValueGeneratedNever();
             e.Property(x => x.Slug).HasMaxLength(64).IsRequired();
             e.Property(x => x.SlugKey).HasMaxLength(64).IsRequired();
-            e.Property(x => x.DestinationUrl).HasMaxLength(2048).IsRequired();
-            e.Property(x => x.TargetHost).HasMaxLength(255).IsRequired();
+            // C1 (ARC-002 §1): destination/host are null exactly for content kinds; enforced by the checks below.
+            e.Property(x => x.DestinationUrl).HasMaxLength(2048).IsRequired(false);
+            e.Property(x => x.TargetHost).HasMaxLength(255).IsRequired(false);
+            e.Property(x => x.TargetKind).HasConversion<short>().HasDefaultValue(Contracts.LinkTargetKind.Url).HasSentinel(Contracts.LinkTargetKind.Url);
+            e.ToTable(t => t.HasCheckConstraint("ck_links_target_kind", "target_kind IN (0, 1, 2, 3)"));
+            e.ToTable(t => t.HasCheckConstraint("ck_links_target_resource", "(target_kind = 0) = (resource_id IS NULL)"));
+            e.ToTable(t => t.HasCheckConstraint("ck_links_target_destination",
+                "(target_kind = 0) = (destination_url IS NOT NULL AND target_host IS NOT NULL)"));
+            // ux_links_resource_id (unique, partial) is created CONCURRENTLY by migration AddLinkResourceIndex.
+            e.HasIndex(x => x.ResourceId).IsUnique().HasFilter("resource_id IS NOT NULL").HasDatabaseName("ux_links_resource_id");
             e.Property(x => x.Title).HasMaxLength(200);
             e.Property(x => x.Description).HasMaxLength(1000);
             e.Property(x => x.OgTitle).HasMaxLength(200);
@@ -79,6 +87,8 @@ public sealed class LinksDbContext(DbContextOptions<LinksDbContext> options) : D
             e.Property(x => x.LinkId).ValueGeneratedNever();
             e.Property(x => x.PasswordHash).HasMaxLength(100);
             e.Property(x => x.FallbackUrl).HasMaxLength(2048);
+            e.ToTable(t => t.HasCheckConstraint("ck_access_policies_link_key_hash",
+                "link_key_hash IS NULL OR octet_length(link_key_hash) = 32"));
         });
 
         b.Entity<LinkDestination>(e =>
@@ -126,7 +136,7 @@ public sealed class LinksDbContext(DbContextOptions<LinksDbContext> options) : D
             e.HasKey(x => x.Id);
             e.Property(x => x.Id).ValueGeneratedNever();
             e.Property(x => x.Slug).HasMaxLength(64).IsRequired();
-            e.Property(x => x.TargetUrl).HasMaxLength(2048).IsRequired();
+            e.Property(x => x.TargetUrl).HasMaxLength(2048).IsRequired(false);
             e.Property(x => x.DisabledKind).HasMaxLength(20).IsRequired();
             e.Property(x => x.Reason).HasMaxLength(500);
             e.HasIndex(x => x.LinkId);

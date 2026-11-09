@@ -170,8 +170,13 @@ namespace Zaagl.Modules.Analytics.Infrastructure.Migrations
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("purged_at");
 
+                    b.Property<short>("TargetKind")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("smallint")
+                        .HasDefaultValue((short)0)
+                        .HasColumnName("target_kind");
+
                     b.Property<string>("TargetUrl")
-                        .IsRequired()
                         .HasColumnType("text")
                         .HasColumnName("target_url");
 

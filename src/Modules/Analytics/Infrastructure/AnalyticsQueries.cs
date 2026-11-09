@@ -311,8 +311,8 @@ public sealed class AnalyticsQueries(AnalyticsDbContext db, TimeProvider time) :
 public sealed class ArchiveWriter(AnalyticsDbContext db) : IArchiveWriter
 {
     public async Task ArchiveAsync(
-        Guid linkId, Guid ownerId, string code, bool isCustom, string targetUrl,
-        DateTime createdAt, DateTime expiresAt, DateTime purgedAt, CancellationToken ct)
+        Guid linkId, Guid ownerId, string code, bool isCustom, string? targetUrl,
+        DateTime createdAt, DateTime expiresAt, DateTime purgedAt, CancellationToken ct, short targetKind = 0)
     {
         if (await db.LinkArchive.AnyAsync(a => a.LinkId == linkId, ct)) return; // already archived (idempotent)
         db.LinkArchive.Add(new LinkArchiveRow
@@ -322,6 +322,7 @@ public sealed class ArchiveWriter(AnalyticsDbContext db) : IArchiveWriter
             Code = code,
             IsCustom = isCustom,
             TargetUrl = targetUrl,
+            TargetKind = targetKind,
             CreatedAt = createdAt,
             ExpiresAt = expiresAt,
             PurgedAt = purgedAt,
@@ -387,5 +388,5 @@ public sealed class ArchiveQueries(AnalyticsDbContext db) : IArchiveQueries
     }
 
     private static ArchivedLink ToDto(Domain.LinkArchiveRow a) =>
-        new(a.LinkId, a.Code, a.IsCustom, a.TargetUrl, a.CreatedAt, a.ExpiresAt, a.PurgedAt);
+        new(a.LinkId, a.Code, a.IsCustom, a.TargetUrl, a.CreatedAt, a.ExpiresAt, a.PurgedAt, a.TargetKind);
 }

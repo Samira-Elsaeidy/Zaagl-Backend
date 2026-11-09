@@ -30,6 +30,7 @@ public sealed class PurgeJobTests : IDisposable
         sc.AddScoped<IArchiveWriter, ArchiveWriter>();
         sc.AddSingleton<ILinkCacheInvalidator, NoOpLinkCacheInvalidator>();
         sc.AddSingleton<IPlanProvider>(new FixedPlanProvider(PlanTier.Free));
+        sc.AddSingleton<IContentPlanProvider>(new FixedContentPlanProvider(PlanTier.Free)); // BE-003: purge reads KeepStatsAfterPurge
         sc.AddSingleton(TimeProvider.System);
         sc.AddSingleton<Microsoft.Extensions.Logging.ILogger<PurgeJob>>(NullLogger<PurgeJob>.Instance);
         _services = sc.BuildServiceProvider();
@@ -71,6 +72,7 @@ public sealed class PurgeJobTests : IDisposable
         sc.AddScoped<IArchiveWriter, ArchiveWriter>();
         sc.AddSingleton<ILinkCacheInvalidator, NoOpLinkCacheInvalidator>();
         sc.AddSingleton<IPlanProvider>(new FixedPlanProvider(tier));
+        sc.AddSingleton<IContentPlanProvider>(new FixedContentPlanProvider(tier)); // BE-003: purge reads KeepStatsAfterPurge
         var sp = sc.BuildServiceProvider();
         return new PurgeJob(sp.GetRequiredService<IServiceScopeFactory>(), TimeProvider.System, NullLogger<PurgeJob>.Instance);
     }

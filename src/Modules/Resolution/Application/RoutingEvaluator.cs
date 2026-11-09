@@ -35,6 +35,8 @@ public static class RoutingEvaluator
             return variants[^1].Url;
         }
 
-        return link.DestinationUrl;
+        // URL links only: ResolutionService never routes a content link (ARC-002 §6 row 18), and
+        // ck_links_target_destination guarantees a destination for target_kind = 0.
+        return link.DestinationUrl ?? throw new InvalidOperationException("A URL link has no destination.");
     }
 }

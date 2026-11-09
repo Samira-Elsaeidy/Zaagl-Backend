@@ -5,6 +5,18 @@ Scalar in Development) is the authoritative, field-level contract; this page is 
 endpoint quickly. Routes are this app's actual `/api/*` paths, not the spec's literal `/api/v1/*` (a
 documented deviation, see `docs/DECISIONS.md`).
 
+## API-key scopes (spec §7.4)
+
+An API key (`X-Api-Key`) reaches only routes whose scope it holds; a session JWT holds every scope. A missing
+scope answers `403` with problem `code: "insufficient-scope"`.
+
+| Scope | Routes |
+|---|---|
+| `links:read` | `GET /api/links`, `GET /api/links/{id}`, `GET /api/links/slug-available`, `GET /api/tags`, `GET /api/folders` |
+| `links:write` | `POST /api/links` (guests need no key), `PUT`/`PATCH`/`DELETE /api/links/{id}`, `POST /api/links/{id}/renew`, `POST /api/links/bulk`, `POST`/`PUT`/`DELETE /api/folders...` |
+| `stats:read` | `GET /api/links/{id}/analytics...`, `GET /api/analytics/overview`, `GET /api/archive...`, hub `/hubs/analytics` |
+| `snippets:write`, `files:write`, `resources:read` | Accepted when creating a key (never granted by default); enforced once Phase 1 content routes ship |
+
 ## Auth (`/api/auth`)
 
 | Route | Notes |

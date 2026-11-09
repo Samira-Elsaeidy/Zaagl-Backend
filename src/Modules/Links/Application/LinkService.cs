@@ -1,6 +1,8 @@
 using FluentValidation;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Caching.Hybrid;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using Npgsql;
 using Zaagl.Modules.Billing.Contracts;
@@ -25,12 +27,17 @@ public sealed class LinkOptions
     public int QuarantineDays { get; set; } = 90;
 }
 
+/// <summary>ARC-002 §3: the snapshot cache key is versioned. Bump the version whenever <see cref="LinkSnapshot"/>
+/// gains a field whose default would be wrong for existing links, so an older build's entry is never deserialised.
+/// Every reader and remover (resolver, eviction, NOTIFY listener) must build keys through <see cref="Key"/>.</summary>
 public static class LinkCache
 {
-    public static string Key(string slugKey) => $"link:{slugKey}";
+    public const string Version = "v2";
+
+    public static string Key(string slugKey) => $"link:{Version}:{slugKey}";
 }
 
-public sealed class LinkService(
+public sealed partial class LinkService(
     LinksDbContext db,
     IPlanProvider plans,
     CoordinatorLeaseClient leases,
@@ -45,9 +52,14 @@ public sealed class LinkService(
     IValidator<LinkInput> validator,
     IOptions<LinkOptions> options,
     IOptions<GuestOptions> guestOptions,
-    TimeProvider time)
+    TimeProvider time,
+    ILogger<LinkService>? logger = null)
 {
     private const int MaxSlugAttempts = 5;
+
+    /// <summary>After a commit: never fails the request (see <see cref="LinkCacheEviction"/>).</summary>
+    private Task EvictAfterCommitAsync(params IReadOnlyCollection<string> slugKeys) =>
+        LinkCacheEviction.EvictAfterCommitAsync(cache, invalidator, slugKeys, logger ?? (ILogger)NullLogger.Instance);
 
     private readonly IReadOnlyCollection<string> _ownHosts = OwnHosts(options.Value.BaseUrl);
 
@@ -109,7 +121,60 @@ public sealed class LinkService(
         if (input.Policy?.ExpiresAt is { } expires && expires <= DateTime.UtcNow)
             return Error.Validation("The expiry date must be in the future.");
 
-        var customSlug = customSlugRaw;
+        return await AllocateAndInsertAsync(new AllocationRequest<LinkDto>(
+            CustomSlug: customSlugRaw,
+            OwnerId: userId,
+            Now: () => DateTime.UtcNow,
+            InsideTransactionAsync: async c =>
+            {
+                if (idempotencyKey is not null)
+                {
+                    var claimed = await TryClaimIdempotencyKeyAsync<LinkDto>(scope, idempotencyKey, requestHash!, c);
+                    if (claimed.AlreadyDone is { } stored)
+                        return stored.Mismatch
+                            ? Error.Validation("idempotency-mismatch: this key was already used with a different request.")
+                            : Result<LinkDto>.Ok(stored.Dto!);
+                }
+
+                // Spec §11 rule 37: checked inside this transaction, not in Phase B.
+                if (await BlockedUrlErrorAsync(n, c) is { } blocked) return blocked;
+                return null;
+            },
+            Configure: link =>
+            {
+                ApplyInput(link, input, n);
+                link.SafetyCheckedAt = n.SafetyChecked ? time.GetUtcNow().UtcDateTime : null;
+                RecomputePurgeAfter(link);
+            },
+            BeforeCommitAsync: async (link, c) =>
+            {
+                if (idempotencyKey is not null)
+                    await CompleteIdempotencyKeyAsync(scope, idempotencyKey, ToDto(link), c);
+            },
+            Respond: ToDto), ct); // ---- Phase D: response
+    }
+
+    /// <summary>
+    /// One caller's view of the Phase 0 slug allocation and insert (spec §7.2 Phase C), shared by URL creation
+    /// (account and guest) and the content-link issuer (ARC-002 §5.3) so the engine exists once.
+    /// </summary>
+    /// <param name="InsideTransactionAsync">Caller checks that run first inside the transaction (idempotency claim,
+    /// guest quota, destination blocklist). A non-null result stops the attempt: the transaction is rolled back and
+    /// that result (error or idempotent replay) is returned.</param>
+    /// <param name="Configure">Fills the new row (target, policy, purge date) after the slug fields are set.</param>
+    /// <param name="BeforeCommitAsync">Runs after the insert succeeded, inside the transaction (idempotency completion).</param>
+    private sealed record AllocationRequest<T>(
+        string? CustomSlug,
+        Guid? OwnerId,
+        Func<DateTime> Now,
+        Func<CancellationToken, Task<Result<T>?>> InsideTransactionAsync,
+        Action<Link> Configure,
+        Func<Link, CancellationToken, Task> BeforeCommitAsync,
+        Func<Link, T> Respond);
+
+    private async Task<Result<T>> AllocateAndInsertAsync<T>(AllocationRequest<T> request, CancellationToken ct)
+    {
+        var customSlug = request.CustomSlug;
 
         for (var attempt = 0; attempt < (customSlug is null ? MaxSlugAttempts : 1); attempt++)
         {
@@ -134,23 +199,10 @@ public sealed class LinkService(
             await using var tx = await db.Database.BeginTransactionAsync(ct);
             await db.Database.ExecuteSqlRawAsync("SET LOCAL lock_timeout = '3s'", ct);
 
-            if (idempotencyKey is not null)
-            {
-                var claimed = await TryClaimIdempotencyKeyAsync(scope, idempotencyKey, requestHash!, ct);
-                if (claimed.AlreadyDone is { } stored)
-                {
-                    await tx.RollbackAsync(ct);
-                    return stored.Mismatch
-                        ? Error.Validation("idempotency-mismatch: this key was already used with a different request.")
-                        : Result<LinkDto>.Ok(stored.Dto!);
-                }
-            }
-
-            // Spec §11 rule 37: checked inside this transaction, not in Phase B.
-            if (await blocklist.IsBlockedAsync(n.TargetHost, n.Destination, ct))
+            if (await request.InsideTransactionAsync(ct) is { } stop)
             {
                 await tx.RollbackAsync(ct);
-                return Error.Validation("destination-blocked: this destination is not allowed.");
+                return stop;
             }
 
             if (customSlug is not null)
@@ -188,7 +240,7 @@ public sealed class LinkService(
                 if (existingRow is not null)
                 {
                     var existingState = LinkStateCalculator.Compute(
-                        existingRow.PurgeAfter, existingRow.DeletedAt, existingRow.DisabledAt, existingRow.Policy?.ExpiresAt, DateTime.UtcNow);
+                        existingRow.PurgeAfter, existingRow.DeletedAt, existingRow.DisabledAt, existingRow.Policy?.ExpiresAt, request.Now());
                     if (existingState == LinkState.Purgeable)
                     {
                         db.Links.Remove(existingRow); // reclaim: the predecessor is purged inside this same transaction
@@ -196,7 +248,7 @@ public sealed class LinkService(
                     else
                     {
                         await tx.RollbackAsync(ct);
-                        return existingRow.OwnerId == userId
+                        return request.OwnerId is { } owner && existingRow.OwnerId == owner
                             ? Error.Conflict("You already own this slug. Renew it instead of creating it again.")
                             : Error.Conflict("This slug is already taken.");
                     }
@@ -205,7 +257,7 @@ public sealed class LinkService(
 
             var link = new Link
             {
-                OwnerId = userId,
+                OwnerId = request.OwnerId,
                 Slug = slug,
                 SlugKey = SlugRules.Key(slug),
                 IsCustom = customSlug is not null,
@@ -213,16 +265,14 @@ public sealed class LinkService(
                 CodeNumber = codeNumber,
                 KeyVersion = customSlug is null ? CodeGenerator.KeyVersion : null,
             };
-            ApplyInput(link, input, n);
-            link.SafetyCheckedAt = n.SafetyChecked ? time.GetUtcNow().UtcDateTime : null;
-            RecomputePurgeAfter(link);
+            request.Configure(link);
             db.Links.Add(link);
 
             try
             {
                 await db.SaveChangesAsync(ct);
             }
-            catch (DbUpdateException ex) when (ex.InnerException is PostgresException { SqlState: PostgresErrorCodes.UniqueViolation } pg)
+            catch (DbUpdateException ex) when (ex.InnerException is PostgresException { SqlState: PostgresErrorCodes.UniqueViolation })
             {
                 await tx.RollbackAsync(ct);
                 db.ChangeTracker.Clear();
@@ -231,22 +281,21 @@ public sealed class LinkService(
                     // Classify per spec §7.2 step 11: an alias conflict against another alias is a normal
                     // race (someone else just took it); against the generated-number index it would be an
                     // allocator integrity failure, which cannot happen here since this branch never sets
-                    // CodeNumber - so any unique violation on this insert is the slug_key constraint.
+                    // CodeNumber - so any unique violation on this insert is the slug_key constraint
+                    // (or, for a content link, the one-link-per-resource index, which the issuer's
+                    // idempotency claim on the resource id already serialises).
                     return Error.Conflict("This slug is already taken.");
                 }
                 continue; // generated slug collided case-insensitively (SlugKey); take the next leased number
             }
 
-            if (idempotencyKey is not null)
-                await CompleteIdempotencyKeyAsync(scope, idempotencyKey, ToDto(link), ct);
+            await request.BeforeCommitAsync(link, ct);
 
             await tx.CommitAsync(ct);
 
-            await cache.RemoveAsync(LinkCache.Key(link.SlugKey), ct);
-            await invalidator.NotifyChangedAsync([link.SlugKey], ct);
+            await EvictAfterCommitAsync(link.SlugKey);
 
-            // ---- Phase D: response ---------------------------------------------
-            return Result<LinkDto>.Ok(ToDto(link));
+            return Result<T>.Ok(request.Respond(link));
         }
 
         return Error.Conflict("Could not allocate a unique slug. Please try again.");
@@ -301,164 +350,69 @@ public sealed class LinkService(
             expiresAt = maxExpiresAt;
         }
 
-        var customSlug = customSlugRaw;
-
-        for (var attempt = 0; attempt < (customSlug is null ? MaxSlugAttempts : 1); attempt++)
-        {
-            string slug;
-            int? codeLength = null;
-            long? codeNumber = null;
-            if (customSlug is not null)
+        return await AllocateAndInsertAsync(new AllocationRequest<LinkDto>(
+            CustomSlug: customSlugRaw,
+            OwnerId: null,
+            Now: () => now,
+            InsideTransactionAsync: async c =>
             {
-                slug = customSlug;
-            }
-            else
-            {
-                var (length, number) = await leases.NextAsync(ct);
-                var generated = codes.Encode(length, number);
-                if (SlugRules.IsReserved(generated)) continue;
-                slug = generated;
-                codeLength = length;
-                codeNumber = number;
-            }
+                // Spec §7.12: hard, transactional, checked before the insert - a rollback (slug collision,
+                // idempotency replay) also rolls back any quota already claimed by this attempt.
+                if (await GuestQuotaStore.CheckAndIncrementAllAsync(db, quotaChecks, now, c) is { } exceeded)
+                    return Error.TooManyRequests($"quota: the guest link limit for this network ({exceeded}) has been reached.");
 
-            await using var tx = await db.Database.BeginTransactionAsync(ct);
-            await db.Database.ExecuteSqlRawAsync("SET LOCAL lock_timeout = '3s'", ct);
+                // Spec §11 rule 37: checked inside this transaction, not in Phase B.
+                if (await BlockedUrlErrorAsync(n, c) is { } blocked) return blocked;
 
-            // Spec §7.12: hard, transactional, checked before the insert - a rollback (slug collision,
-            // idempotency replay) also rolls back any quota already claimed by this attempt.
-            if (await GuestQuotaStore.CheckAndIncrementAllAsync(db, quotaChecks, now, ct) is { } exceeded)
-            {
-                await tx.RollbackAsync(ct);
-                return Error.TooManyRequests($"quota: the guest link limit for this network ({exceeded}) has been reached.");
-            }
-
-            // Spec §11 rule 37: checked inside this transaction, not in Phase B.
-            if (await blocklist.IsBlockedAsync(n.TargetHost, n.Destination, ct))
-            {
-                await tx.RollbackAsync(ct);
-                return Error.Validation("destination-blocked: this destination is not allowed.");
-            }
-
-            if (idempotencyKey is not null)
-            {
-                var claimed = await TryClaimIdempotencyKeyAsync(scope, idempotencyKey, requestHash!, ct);
-                if (claimed.AlreadyDone is { } stored)
+                if (idempotencyKey is not null)
                 {
-                    await tx.RollbackAsync(ct);
-                    return stored.Mismatch
-                        ? Error.Validation("idempotency-mismatch: this key was already used with a different request.")
-                        : Result<LinkDto>.Ok(stored.Dto!);
+                    var claimed = await TryClaimIdempotencyKeyAsync<LinkDto>(scope, idempotencyKey, requestHash!, c);
+                    if (claimed.AlreadyDone is { } stored)
+                        return stored.Mismatch
+                            ? Error.Validation("idempotency-mismatch: this key was already used with a different request.")
+                            : Result<LinkDto>.Ok(stored.Dto!);
                 }
-            }
-
-            if (customSlug is not null)
+                return null;
+            },
+            Configure: link =>
             {
-                if (await aliasFreeze.GetActiveFreezeAsync(ct) is { } freeze)
-                {
-                    await tx.RollbackAsync(ct);
-                    return Error.Conflict($"alias-frozen: new aliases are frozen until {freeze.Until:O}.");
-                }
-
-                await db.Database.ExecuteSqlInterpolatedAsync(
-                    $"SELECT pg_advisory_xact_lock(hashtextextended('zaagl.alias:' || {customSlug}, 0))", ct);
-
-                var key = SlugRules.Key(customSlug);
-                if (await db.BlockedAliases.AnyAsync(a => a.SlugKey == key, ct))
-                {
-                    await tx.RollbackAsync(ct);
-                    return Error.Conflict("alias-unavailable: this slug was taken down and is not available.");
-                }
-                if (await aliasDenylist.IsDeniedAsync(key, ct))
-                {
-                    await tx.RollbackAsync(ct);
-                    return Error.Validation("This slug is not allowed.");
-                }
-
-                var existingRow = await db.Links.Include(l => l.Policy)
-                    .FirstOrDefaultAsync(l => l.SlugKey == key, ct);
-                if (existingRow is not null)
-                {
-                    var existingState = LinkStateCalculator.Compute(
-                        existingRow.PurgeAfter, existingRow.DeletedAt, existingRow.DisabledAt, existingRow.Policy?.ExpiresAt, now);
-                    if (existingState == LinkState.Purgeable)
-                    {
-                        db.Links.Remove(existingRow);
-                    }
-                    else
-                    {
-                        await tx.RollbackAsync(ct);
-                        return Error.Conflict("This slug is already taken.");
-                    }
-                }
-            }
-
-            var link = new Link
+                link.GuestCreatorKey = creatorKey;
+                ApplyInput(link, input, n);
+                link.SafetyCheckedAt = n.SafetyChecked ? now : null;
+                // Guests get a fixed expiry and no quarantine: purge_after = expires_at exactly (spec §7.12,
+                // §1.1 "Quarantine after expiry: none"), overriding whatever ApplyInput set from input.Policy.
+                var policy = link.Policy ??= new AccessPolicy { LinkId = link.Id };
+                policy.ExpiresAt = expiresAt;
+                link.PurgeAfter = expiresAt;
+            },
+            BeforeCommitAsync: async (link, c) =>
             {
-                OwnerId = null,
-                GuestCreatorKey = creatorKey,
-                Slug = slug,
-                SlugKey = SlugRules.Key(slug),
-                IsCustom = customSlug is not null,
-                CodeLength = codeLength,
-                CodeNumber = codeNumber,
-                KeyVersion = customSlug is null ? CodeGenerator.KeyVersion : null,
-            };
-            ApplyInput(link, input, n);
-            link.SafetyCheckedAt = n.SafetyChecked ? now : null;
-            // Guests get a fixed expiry and no quarantine: purge_after = expires_at exactly (spec §7.12,
-            // §1.1 "Quarantine after expiry: none"), overriding whatever ApplyInput set from input.Policy.
-            var policy = link.Policy ??= new AccessPolicy { LinkId = link.Id };
-            policy.ExpiresAt = expiresAt;
-            link.PurgeAfter = expiresAt;
-            db.Links.Add(link);
-
-            try
-            {
-                await db.SaveChangesAsync(ct);
-            }
-            catch (DbUpdateException ex) when (ex.InnerException is PostgresException { SqlState: PostgresErrorCodes.UniqueViolation })
-            {
-                await tx.RollbackAsync(ct);
-                db.ChangeTracker.Clear();
-                if (customSlug is not null) return Error.Conflict("This slug is already taken.");
-                continue;
-            }
-
-            if (idempotencyKey is not null)
-                await CompleteIdempotencyKeyAsync(scope, idempotencyKey, ToDto(link), ct);
-
-            await tx.CommitAsync(ct);
-
-            await cache.RemoveAsync(LinkCache.Key(link.SlugKey), ct);
-            await invalidator.NotifyChangedAsync([link.SlugKey], ct);
-
-            return Result<LinkDto>.Ok(ToDto(link));
-        }
-
-        return Error.Conflict("Could not allocate a unique slug. Please try again.");
+                if (idempotencyKey is not null)
+                    await CompleteIdempotencyKeyAsync(scope, idempotencyKey, ToDto(link), c);
+            },
+            Respond: ToDto), ct);
     }
 
-    private sealed record ClaimOutcome((LinkDto? Dto, bool Mismatch)? AlreadyDone);
+    private sealed record ClaimOutcome<T>((T? Dto, bool Mismatch)? AlreadyDone);
 
-    private async Task<ClaimOutcome> TryClaimIdempotencyKeyAsync(string scope, string key, byte[] requestHash, CancellationToken ct)
+    private async Task<ClaimOutcome<T>> TryClaimIdempotencyKeyAsync<T>(string scope, string key, byte[] requestHash, CancellationToken ct)
     {
         // INSERT ... ON CONFLICT DO NOTHING: a row appearing means this request owns the key; no row means
         // another transaction already claimed it (it may still be "pending" - PostgreSQL made our insert
         // wait for that transaction's outcome, so by the time we reach here it is either "done" or gone).
         var inserted = await db.Database.ExecuteSqlInterpolatedAsync(
             $"INSERT INTO links.idempotency_keys (scope, key, request_hash, status, created_at) VALUES ({scope}, {key}, {requestHash}, 'pending', {DateTime.UtcNow}) ON CONFLICT DO NOTHING", ct);
-        if (inserted > 0) return new ClaimOutcome(null); // we own it, proceed
+        if (inserted > 0) return new ClaimOutcome<T>(null); // we own it, proceed
 
         var row = await db.IdempotencyKeys.AsNoTracking().FirstOrDefaultAsync(k => k.Scope == scope && k.Key == key, ct);
-        if (row is null) return new ClaimOutcome(null); // raced and lost, then the other rolled back; proceed as owner
-        if (!row.RequestHash.AsSpan().SequenceEqual(requestHash)) return new ClaimOutcome((null, true));
+        if (row is null) return new ClaimOutcome<T>(null); // raced and lost, then the other rolled back; proceed as owner
+        if (!row.RequestHash.AsSpan().SequenceEqual(requestHash)) return new ClaimOutcome<T>((default, true));
         if (row.Status == "done")
-            return new ClaimOutcome((System.Text.Json.JsonSerializer.Deserialize<LinkDto>(row.ResponseBody!), false));
-        return new ClaimOutcome(null); // still pending somehow; proceed as owner (best effort for this phase)
+            return new ClaimOutcome<T>((System.Text.Json.JsonSerializer.Deserialize<T>(row.ResponseBody!), false));
+        return new ClaimOutcome<T>(null); // still pending somehow; proceed as owner (best effort for this phase)
     }
 
-    private async Task CompleteIdempotencyKeyAsync(string scope, string key, LinkDto dto, CancellationToken ct)
+    private async Task CompleteIdempotencyKeyAsync<T>(string scope, string key, T dto, CancellationToken ct)
     {
         var json = System.Text.Json.JsonSerializer.Serialize(dto);
         await db.Database.ExecuteSqlInterpolatedAsync(
@@ -487,6 +441,8 @@ public sealed class LinkService(
         var link = await db.Links.Include(l => l.Policy).Include(l => l.Rules)
             .FirstOrDefaultAsync(l => l.Id == id && l.OwnerId == userId && l.DeletedAt == null, ct);
         if (link is null) return Error.NotFound("Link not found.");
+        // ARC-002 §6 row 4: an update would turn a content link into a URL link.
+        if (ContentLinkRefusal(link) is { } refused) return refused;
 
         var limits = await plans.GetLimitsAsync(userId, ct);
         var prepared = await PrepareAsync(userId, input with { CustomSlug = null }, limits, isCreate: false, ct);
@@ -497,10 +453,10 @@ public sealed class LinkService(
         await db.Database.ExecuteSqlRawAsync("SET LOCAL lock_timeout = '3s'", ct);
 
         // Spec §11 rule 28/37: checked inside the transaction that edits the link.
-        if (await blocklist.IsBlockedAsync(n.TargetHost, n.Destination, ct))
+        if (await BlockedUrlErrorAsync(n, ct) is { } blocked)
         {
             await tx.RollbackAsync(ct);
-            return Error.Validation("destination-blocked: this destination is not allowed.");
+            return blocked;
         }
 
         if (input.Rules is not null) db.Destinations.RemoveRange(link.Rules);
@@ -511,8 +467,7 @@ public sealed class LinkService(
         await db.SaveChangesAsync(ct);
         await tx.CommitAsync(ct);
 
-        await cache.RemoveAsync(LinkCache.Key(link.SlugKey), ct);
-        await invalidator.NotifyChangedAsync([link.SlugKey], ct);
+        await EvictAfterCommitAsync(link.SlugKey);
         return Result<LinkDto>.Ok(ToDto(link));
     }
 
@@ -524,6 +479,7 @@ public sealed class LinkService(
         var link = await db.Links.Include(l => l.Policy).Include(l => l.Rules)
             .FirstOrDefaultAsync(l => l.Id == id && l.OwnerId == userId, ct);
         if (link is null) return Error.NotFound("Link not found.");
+        if (ContentLinkRefusal(link) is { } refused) return refused; // content renews through /api/resources
 
         var now = time.GetUtcNow().UtcDateTime;
         var state = LinkStateCalculator.Compute(link.PurgeAfter, link.DeletedAt, link.DisabledAt, link.Policy?.ExpiresAt, now);
@@ -558,8 +514,7 @@ public sealed class LinkService(
         await db.SaveChangesAsync(ct);
         await tx.CommitAsync(ct);
 
-        await cache.RemoveAsync(LinkCache.Key(link.SlugKey), ct);
-        await invalidator.NotifyChangedAsync([link.SlugKey], ct);
+        await EvictAfterCommitAsync(link.SlugKey);
         return Result<LinkDto>.Ok(ToDto(link));
     }
 
@@ -568,6 +523,7 @@ public sealed class LinkService(
         var link = await db.Links.Include(l => l.Policy).Include(l => l.Rules)
             .FirstOrDefaultAsync(l => l.Id == id && l.OwnerId == userId && l.DeletedAt == null, ct);
         if (link is null) return Error.NotFound("Link not found.");
+        if (ContentLinkRefusal(link) is { } refused) return refused;
 
         // IsActive is this app's pre-existing on/off switch; it's kept as a plain synonym for the spec's
         // "user-disabled" kind (§4.3) rather than a second, independent liveness signal - turning it off
@@ -592,8 +548,7 @@ public sealed class LinkService(
         link.UpdatedAt = time.GetUtcNow().UtcDateTime;
         await db.SaveChangesAsync(ct);
 
-        await cache.RemoveAsync(LinkCache.Key(link.SlugKey), ct);
-        await invalidator.NotifyChangedAsync([link.SlugKey], ct);
+        await EvictAfterCommitAsync(link.SlugKey);
         return Result<LinkDto>.Ok(ToDto(link));
     }
 
@@ -612,12 +567,14 @@ public sealed class LinkService(
         var pageSize = Math.Clamp(query.PageSize, 1, 100);
 
         // Deleted links are owner-invisible per spec §4.3's state table ("Visible to owner: no").
-        var q = db.Links.AsNoTracking().Where(l => l.OwnerId == userId && l.DeletedAt == null);
+        // ARC-002 §6 row 5: URL links only until the "one library" question (ARC-002 Q2) is answered, so
+        // GET /api/links is unchanged by content links.
+        var q = db.Links.AsNoTracking().Where(l => l.OwnerId == userId && l.DeletedAt == null && l.TargetKind == LinkTargetKind.Url);
         if (!string.IsNullOrWhiteSpace(query.Search))
         {
             var pattern = $"%{EscapeLike(query.Search.Trim())}%";
             q = q.Where(l => EF.Functions.ILike(l.Slug, pattern)
-                || EF.Functions.ILike(l.DestinationUrl, pattern)
+                || (l.DestinationUrl != null && EF.Functions.ILike(l.DestinationUrl, pattern))
                 || (l.Title != null && EF.Functions.ILike(l.Title, pattern)));
         }
         if (query.FolderId is { } folderId) q = q.Where(l => l.FolderId == folderId);
@@ -658,11 +615,12 @@ public sealed class LinkService(
     /// <summary>Spec §4.3: delete is soft. The row (and its alias/slug) stays reserved until purge_after,
     /// so nobody can take over a just-deleted alias immediately; an admin can still see deleted links
     /// (not built in this phase). purge_after only ever moves earlier here, never later.</summary>
-    public async Task<bool> DeleteAsync(Guid userId, Guid id, CancellationToken ct)
+    public async Task<Result<bool>> DeleteAsync(Guid userId, Guid id, CancellationToken ct)
     {
         var link = await db.Links.Include(l => l.Policy)
             .FirstOrDefaultAsync(l => l.Id == id && l.OwnerId == userId && l.DeletedAt == null, ct);
-        if (link is null) return false;
+        if (link is null) return Error.NotFound("Link not found.");
+        if (ContentLinkRefusal(link) is { } refused) return refused; // content deletes through /api/resources
 
         var now = time.GetUtcNow().UtcDateTime;
         link.DeletedAt = now;
@@ -671,10 +629,16 @@ public sealed class LinkService(
         link.UpdatedAt = now;
         await db.SaveChangesAsync(ct);
 
-        await cache.RemoveAsync(LinkCache.Key(link.SlugKey), ct);
-        await invalidator.NotifyChangedAsync([link.SlugKey], ct);
-        return true;
+        await EvictAfterCommitAsync(link.SlugKey);
+        return Result<bool>.Ok(true);
     }
+
+    /// <summary>ARC-002 §6 row 4: the Phase 0 owner write routes never touch a content link (409 content-link,
+    /// nothing changed); content is managed through <c>/api/resources</c> and <see cref="IContentLinkCommands"/>.</summary>
+    private static Error? ContentLinkRefusal(Link link) =>
+        link.TargetKind == LinkTargetKind.Url
+            ? null
+            : Error.Of(ErrorCodes.ContentLink, "This link points at shared content. Manage it through /api/resources.");
 
     public async Task<IReadOnlyList<string>> ListTagsAsync(Guid userId, CancellationToken ct)
     {
@@ -719,7 +683,7 @@ public sealed class LinkService(
             l.Id, l.Slug, l.DestinationUrl, l.TargetHost, l.OwnerId,
             l.GuestCreatorKey is null ? null : Convert.ToHexString(l.GuestCreatorKey),
             l.IsCustom, state.ToString().ToLowerInvariant(), l.DisabledKind, l.DisabledReason, l.DisabledAt,
-            l.DeletedAt, l.PurgeAfter, l.SafetyCheckedAt, l.CreatedAt);
+            l.DeletedAt, l.PurgeAfter, l.SafetyCheckedAt, l.CreatedAt, l.TargetKind, l.ResourceId);
     }
 
     /// <summary>Spec §7.9: <c>POST /api/admin/links/{code}/enable</c>. Refuses an abuse/safety takedown
@@ -736,8 +700,7 @@ public sealed class LinkService(
         link.DisabledKind = null;
         link.DisabledReason = null;
         await db.SaveChangesAsync(ct);
-        await cache.RemoveAsync(LinkCache.Key(link.SlugKey), ct);
-        await invalidator.NotifyChangedAsync([link.SlugKey], ct);
+        await EvictAfterCommitAsync(link.SlugKey);
         return Result<AdminLinkDto>.Ok(ToAdminDto(link));
     }
 
@@ -750,11 +713,16 @@ public sealed class LinkService(
         if (link.DisabledKind is not (DisabledKinds.Abuse or DisabledKinds.Safety))
             return Error.Conflict("This link was not taken down.");
 
-        var result = await reputation.CheckAsync(link.DestinationUrl, ct);
-        if (!result.IsSafe)
-            return Error.Validation($"destination-unsafe: still flagged as unsafe ({FriendlyThreat(result.Threat)}).");
-        if (await blocklist.IsBlockedAsync(link.TargetHost, link.DestinationUrl, ct))
-            return Error.Validation("destination-blocked: this destination is still blocked.");
+        // ARC-002 §6 row 9: a content link has no destination to re-check. Restoring its bytes from quarantine is
+        // Resources' reaction to LinkEnabled (ARC-006 T17, C10), not built in Stage 1.
+        if (link.TargetKind == LinkTargetKind.Url)
+        {
+            var result = await reputation.CheckAsync(link.DestinationUrl!, ct);
+            if (!result.IsSafe)
+                return Error.Validation($"destination-unsafe: still flagged as unsafe ({FriendlyThreat(result.Threat)}).");
+            if (await blocklist.IsBlockedAsync(link.TargetHost!, link.DestinationUrl!, ct))
+                return Error.Validation("destination-blocked: this destination is still blocked.");
+        }
 
         await using var tx = await db.Database.BeginTransactionAsync(ct);
         if (link.IsCustom)
@@ -769,8 +737,7 @@ public sealed class LinkService(
         await db.SaveChangesAsync(ct);
         await tx.CommitAsync(ct);
 
-        await cache.RemoveAsync(LinkCache.Key(link.SlugKey), ct);
-        await invalidator.NotifyChangedAsync([link.SlugKey], ct);
+        await EvictAfterCommitAsync(link.SlugKey);
         return Result<AdminLinkDto>.Ok(ToAdminDto(link));
     }
 
@@ -804,11 +771,7 @@ public sealed class LinkService(
                     .SetProperty(l => l.DisabledKind, (string?)null), ct);
         }
 
-        if (affectedKeys.Count > 0)
-        {
-            foreach (var key in affectedKeys) await cache.RemoveAsync(LinkCache.Key(key), ct);
-            await invalidator.NotifyChangedAsync(affectedKeys, ct);
-        }
+        await EvictAfterCommitAsync(affectedKeys);
         return rows;
     }
 
@@ -819,7 +782,8 @@ public sealed class LinkService(
         string reason, bool blockDestination, bool dryRun, TakedownService takedowns, CancellationToken ct)
     {
         var q = db.Links.Where(l => l.DeletedAt == null && l.DisabledKind == null);
-        if (targetHost is not null) q = q.Where(l => l.TargetHost == targetHost || l.TargetHost.EndsWith("." + targetHost));
+        // Content links have no host (null), so a host filter never matches them (ARC-002 §6 row 10).
+        if (targetHost is not null) q = q.Where(l => l.TargetHost != null && (l.TargetHost == targetHost || l.TargetHost.EndsWith("." + targetHost)));
         if (guestCreatorKey is not null) q = q.Where(l => l.GuestCreatorKey == guestCreatorKey);
         if (ownerId is not null) q = q.Where(l => l.OwnerId == ownerId);
         if (createdFrom is not null) q = q.Where(l => l.CreatedAt >= createdFrom);
@@ -888,7 +852,28 @@ public sealed class LinkService(
             allChecked &= result.Checked;
         }
 
+        // PD-44: a fallback URL gets the same reputation lookup and fail-open rule as the destination.
+        if (n.Fallback is { } fallbackUrl && !urls.Contains(fallbackUrl))
+        {
+            var result = await reputation.CheckAsync(fallbackUrl, ct);
+            if (!result.IsSafe)
+                return Error.Validation($"fallback-unsafe: the fallback URL was flagged as unsafe ({FriendlyThreat(result.Threat)}).");
+            allChecked &= result.Checked;
+        }
+
         return Result<Normalized>.Ok(n with { SafetyChecked = allChecked });
+    }
+
+    /// <summary>Spec §11 rule 37 and PD-44: the destination and the fallback URL against the blocklist. Called
+    /// inside the transaction that creates or edits the link.</summary>
+    private async Task<Error?> BlockedUrlErrorAsync(Normalized n, CancellationToken ct)
+    {
+        if (await blocklist.IsBlockedAsync(n.TargetHost, n.Destination, ct))
+            return Error.Validation("destination-blocked: this destination is not allowed.");
+        if (n.Fallback is { } fallback
+            && await blocklist.IsBlockedAsync(new Uri(fallback).IdnHost.TrimEnd('.').ToLowerInvariant(), fallback, ct))
+            return Error.Validation("fallback-blocked: this fallback URL is not allowed.");
+        return null;
     }
 
     private static Error? CheckPlan(LinkInput input, PlanLimits limits)
@@ -1027,7 +1012,9 @@ public sealed class LinkService(
             .Select(r => new RuleDto(r.Kind, r.Match, r.Url, r.Weight, r.Priority)).ToList(),
         l.CreatedAt,
         l.UpdatedAt,
-        l.OwnerId is null);
+        l.OwnerId is null,
+        l.TargetKind,
+        l.ResourceId);
 
     private static string? Clean(string? value) => string.IsNullOrWhiteSpace(value) ? null : value.Trim();
 

@@ -14,10 +14,12 @@ using Zaagl.Modules.Access;
 using Zaagl.Modules.Analytics;
 using Zaagl.Modules.Analytics.Contracts;
 using Zaagl.Modules.Billing;
+using Zaagl.Modules.Files;
 using Zaagl.Modules.Identity;
 using Zaagl.Modules.Identity.Application;
 using Zaagl.Modules.Links;
 using Zaagl.Modules.Resolution;
+using Zaagl.Modules.Resources;
 
 var builder = WebApplication.CreateBuilder(args);
 var config = builder.Configuration;
@@ -42,18 +44,26 @@ if (jwt.EffectiveKeys().Any(k => k.Key.Length < 32))
 builder.Services.AddSingleton<Zaagl.SharedKernel.Testing.IFailpoints, Zaagl.SharedKernel.Testing.NoOpFailpoints>();
 builder.Services.AddHttpContextAccessor();
 builder.Services.Configure<HostRoutingOptions>(config.GetSection(HostRoutingOptions.Section));
+
+// BE-005: small global request-body limit; endpoints that need more raise it per endpoint (WithRequestBodyLimit).
+var bodyLimits = config.GetSection(RequestBodyLimitOptions.Section).Get<RequestBodyLimitOptions>() ?? new RequestBodyLimitOptions();
+builder.WebHost.ConfigureKestrel(o => bodyLimits.Apply(o.Limits));
 builder.Services.AddOpenApi();
+// BE-002: every problem body (ours and the framework's) carries type https://zaa.gl/problems/<code>, title, status, code.
+builder.Services.AddProblemDetails(o => o.CustomizeProblemDetails = ctx => ApiResults.Normalize(ctx.ProblemDetails));
 
-builder.Services.Configure<ForwardedHeadersOptions>(o =>
-{
-    // Kestrel sits behind Nginx on the same host, which sets X-Forwarded-For from Cloudflare's real-IP header.
-    o.ForwardedHeaders = ForwardedHeaders.XForwardedFor | ForwardedHeaders.XForwardedProto;
-    o.KnownIPNetworks.Clear();
-    o.KnownProxies.Clear();
-});
+// Spec §7.13 (BE-030): forwarded headers are trusted only from Network:KnownProxies (exact addresses of the
+// reverse proxy and the web/BFF container) and Network:KnownNetworks (staging gate ranges). Nothing configured
+// means nothing is trusted. Parsed once here so a bad entry fails startup.
+var network = config.GetSection(NetworkOptions.Section).Get<NetworkOptions>() ?? new NetworkOptions();
+builder.Services.Configure<ForwardedHeadersOptions>(o => ForwardedHeadersSetup.Apply(o, network));
 
-// HybridCache: L1 in-memory, L2 Valkey (Redis protocol).
+// HybridCache: L1 in-memory, L2 Valkey (Redis protocol). L2 is optional at run time: every L2 operation is
+// time-boxed and circuit-broken (Cache:L2), so a Valkey outage never fails a write or slows a redirect
+// beyond one short timeout; reads fall back to the database (spec §7.0, §7.3).
+builder.Services.Configure<L2CacheOptions>(config.GetSection(L2CacheOptions.Section));
 builder.Services.AddStackExchangeRedisCache(o => o.Configuration = valkey);
+ResilientDistributedCache.Decorate(builder.Services);
 builder.Services.AddHybridCache();
 
 builder.Services.AddHealthChecks()
@@ -66,11 +76,17 @@ builder.Services.AddCors(o => o.AddPolicy("web", policy => policy
     .AllowAnyMethod()
     .AllowCredentials()));
 
+// Spec §7.3: redirect limits (300/min, tiered misses), in memory per instance behind IRedirectRateLimiter.
+builder.Services.Configure<RedirectRateLimitOptions>(config.GetSection(RedirectRateLimitOptions.Section));
+builder.Services.AddSingleton<IRedirectRateLimiter, InMemoryRedirectRateLimiter>();
+
+var rateLimits = config.GetSection(RateLimitOptions.Section).Get<RateLimitOptions>() ?? new RateLimitOptions();
 builder.Services.AddRateLimiter(o =>
 {
     o.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
 
-    static string Ip(HttpContext c) => c.Connection.RemoteIpAddress?.ToString() ?? "unknown";
+    // Spec §7.3: every IP-based limiter partitions by IpPartition (IPv4 address, IPv6 /64).
+    static string Ip(HttpContext c) => Zaagl.SharedKernel.Net.IpPartition.Key(c.Connection.RemoteIpAddress);
     static RateLimitPartition<string> Fixed(string key, int permits, TimeSpan window) =>
         RateLimitPartition.GetFixedWindowLimiter(key, _ => new FixedWindowRateLimiterOptions
         {
@@ -79,10 +95,10 @@ builder.Services.AddRateLimiter(o =>
             QueueLimit = 0,
         });
 
-    o.AddPolicy("auth", c => Fixed($"auth:{Ip(c)}", 20, TimeSpan.FromMinutes(1)));
-    o.AddPolicy("link-write", c => Fixed($"link:{c.User.FindFirst("sub")?.Value ?? Ip(c)}", 60, TimeSpan.FromMinutes(1)));
+    o.AddPolicy("auth", c => Fixed($"auth:{Ip(c)}", rateLimits.AuthPerMinute, TimeSpan.FromMinutes(1)));
+    o.AddPolicy("link-write", c => Fixed($"link:{c.User.FindFirst("sub")?.Value ?? Ip(c)}", rateLimits.LinkWritePerMinute, TimeSpan.FromMinutes(1)));
     // Password guessing: tight limit per visitor and link.
-    o.AddPolicy("unlock", c => Fixed($"unlock:{Ip(c)}:{c.Request.RouteValues["slug"]}", 10, TimeSpan.FromMinutes(1)));
+    o.AddPolicy("unlock", c => Fixed($"unlock:{Ip(c)}:{c.Request.RouteValues["slug"]}", rateLimits.UnlockPerMinute, TimeSpan.FromMinutes(1)));
 });
 
 // ---- Authentication -------------------------------------------------------
@@ -93,9 +109,9 @@ var authentication = builder.Services.AddAuthentication(o =>
         o.DefaultChallengeScheme = "Smart";
     })
     .AddPolicyScheme("Smart", null, o => o.ForwardDefaultSelector = ctx =>
-        ctx.Request.Headers.ContainsKey(ApiKeyDefaults.Header)
-            ? ApiKeyDefaults.Scheme
-            : JwtBearerDefaults.AuthenticationScheme)
+        ctx.Request.Headers.ContainsKey(ApiKeyDefaults.Header) ? ApiKeyDefaults.Scheme
+        : HubTicketDefaults.Applies(ctx.Request) ? HubTicketDefaults.Scheme // PD-41: /hubs/*?ticket=
+        : JwtBearerDefaults.AuthenticationScheme)
     .AddJwtBearer(o =>
     {
         o.MapInboundClaims = false;
@@ -110,14 +126,8 @@ var authentication = builder.Services.AddAuthentication(o =>
         };
         o.Events = new JwtBearerEvents
         {
-            // Browsers cannot set headers on WebSocket connections, so SignalR sends the token in the query string.
-            OnMessageReceived = ctx =>
-            {
-                var token = ctx.Request.Query["access_token"];
-                if (!string.IsNullOrEmpty(token) && ctx.HttpContext.Request.Path.StartsWithSegments("/hubs"))
-                    ctx.Token = token;
-                return Task.CompletedTask;
-            },
+            // PD-41: no access token is ever read from the query string. Browsers open /hubs/* with a single-use
+            // ?ticket= (POST /api/auth/hub-ticket, HubTicketAuthenticationHandler); "?access_token=" is ignored.
             // Spec §7.4: the "sstamp" claim must match the user's current security stamp, so a password
             // reset or logout-everywhere invalidates every outstanding access token within ~60s (cached),
             // not just at its natural 15-minute expiry.
@@ -130,6 +140,12 @@ var authentication = builder.Services.AddAuthentication(o =>
                     ctx.Fail("Token is missing required claims.");
                     return;
                 }
+                // Spec §7.4 (AZ-01): the Admin enrol-only token is valid only for /totp/enroll and /totp/confirm.
+                if (CredentialRules.EnrolOnlyTokenMisused(ctx.HttpContext, ctx.Principal))
+                {
+                    ctx.Fail("The enrol-only token is valid only for TOTP enrolment.");
+                    return;
+                }
                 var validator = ctx.HttpContext.RequestServices.GetRequiredService<Zaagl.Modules.Identity.Application.SecurityStampValidator>();
                 if (!await validator.IsCurrentAsync(userId, stamp, ctx.HttpContext.RequestAborted))
                     ctx.Fail("This token has been superseded by a more recent sign-in or security event.");
@@ -137,6 +153,7 @@ var authentication = builder.Services.AddAuthentication(o =>
         };
     })
     .AddScheme<AuthenticationSchemeOptions, ApiKeyAuthenticationHandler>(ApiKeyDefaults.Scheme, null)
+    .AddScheme<AuthenticationSchemeOptions, HubTicketAuthenticationHandler>(HubTicketDefaults.Scheme, null)
     .AddCookie(IdentityEndpoints.ExternalScheme, o =>
     {
         o.Cookie.Name = ".zaagl.external";
@@ -172,18 +189,25 @@ builder.Services.Configure<AdminNetworkOptions>(config.GetSection(AdminNetworkOp
 builder.Services.AddSingleton<IAuthorizationHandler, AdminNetworkHandler>();
 
 builder.Services.AddAuthorizationBuilder()
-    // Interactive sign-in only (no API keys): API key management and billing.
+    // Interactive sign-in only (no API keys): API key management, account (/auth/me, /me, logout-everywhere)
+    // and billing. The enrol-only token is refused here too, except where AllowEnrolOnlyToken() marks the endpoint.
+    // ARC-014 §3.1 / C11: a native (CLI/desktop, amr=device) token is never Interactive -> 403.
     .AddPolicy("Interactive", p => p
         .AddAuthenticationSchemes(JwtBearerDefaults.AuthenticationScheme)
-        .RequireAuthenticatedUser())
+        .RequireAuthenticatedUser()
+        .RequireAssertion(ctx => !NativeClientPolicy.IsNativeToken(ctx.User)))
     // Spec §7.4: Admin role + TOTP (a normal session JWT only exists for an Admin after TOTP passed at
     // login - see IdentityService.LoginAsync) + the caller's IP inside Admin:AllowedNetworks. No admin
     // business endpoints exist yet (phase 5 builds them); this policy is ready for them.
+    // ARC-014 §2.4 / MUST NOT 17: native tokens never carry Admin and are refused here as well.
     .AddPolicy("Admin", p => p
         .AddAuthenticationSchemes(JwtBearerDefaults.AuthenticationScheme)
         .RequireAuthenticatedUser()
         .RequireRole("Admin")
-        .AddRequirements(new AdminNetworkRequirement()));
+        .RequireAssertion(ctx => !NativeClientPolicy.IsNativeToken(ctx.User))
+        .AddRequirements(new AdminNetworkRequirement()))
+    // Spec §7.4 (BE-001): "scope:<scope>" policies; a session JWT passes, an API key must hold the scope.
+    .AddScopePolicies();
 
 builder.Services.AddSignalR();
 
@@ -196,7 +220,9 @@ builder.Services
     .AddLinksModule(config)
     .AddAccessModule()
     .AddAnalyticsModule(config)
-    .AddResolutionModule(config);
+    .AddResolutionModule(config)
+    .AddFilesModule(config)
+    .AddResourcesModule(config); // BE-006: resources schema, registry and quota (no endpoints yet)
 builder.Services.AddSingleton<ILiveClickPublisher, SignalRLiveClickPublisher>();
 
 // ---- Pipeline -------------------------------------------------------------

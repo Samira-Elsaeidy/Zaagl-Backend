@@ -1,4 +1,7 @@
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Caching.Hybrid;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using Zaagl.Modules.Analytics.Contracts;
 using Zaagl.Modules.Links.Contracts;
@@ -9,7 +12,8 @@ namespace Zaagl.Modules.Links.Application;
 /// <summary>Spec §7.14 account deletion, steps 1-3's Links-side work.</summary>
 public sealed class AccountDataEraser(
     LinksDbContext db, IArchiveWriter archive, ILinkCacheInvalidator invalidator,
-    IOptions<LinkOptions> options, TimeProvider time) : IAccountDataEraser
+    IOptions<LinkOptions> options, TimeProvider time,
+    HybridCache? cache = null, ILogger<AccountDataEraser>? logger = null) : IAccountDataEraser
 {
     private const int ChunkSize = 1000;
 
@@ -46,7 +50,8 @@ public sealed class AccountDataEraser(
             if (batch.Count < ChunkSize) break;
         }
 
-        if (touchedSlugKeys.Count > 0) await invalidator.NotifyChangedAsync(touchedSlugKeys, ct);
+        // Committed per chunk above: cache/NOTIFY failures are logged, never thrown (LinkCacheEviction).
+        await LinkCacheEviction.EvictAfterCommitAsync(cache, invalidator, touchedSlugKeys, logger ?? (ILogger)NullLogger.Instance);
         await archive.DeleteAllForOwnerAsync(ownerId, liveLinkIds, ct);
         return touchedSlugKeys;
     }

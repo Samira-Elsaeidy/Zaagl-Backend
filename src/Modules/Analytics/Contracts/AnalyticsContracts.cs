@@ -38,8 +38,30 @@ public static class ClickEventCursor
     }
 }
 
+/// <summary>
+/// C6 (Phase 1, addendum §12): what kind of hit an event records. Stored as <c>kind smallint not null default 0</c>
+/// on <c>analytics.click_events</c> (index per partition) and <c>link_daily_stats</c>. Phase 0 rows are all
+/// <see cref="Redirect"/>, so URL-link dashboards show identical numbers. Guest content records nothing. Counts used
+/// for burn or billing never come from this pipeline (they come from the durable download-grant table).
+/// The headline "views" metric and its de-duplication are PROPOSED (PD-10) and not defined by this enum. Until PD-10
+/// is approved no content event (View, Raw, Download) is written; the owner's download count always comes from the
+/// grant table, never from these events.
+/// </summary>
+public enum ClickEventKind : short
+{
+    /// <summary>The 302 from <c>zaa.gl</c> (Phase 0 behaviour, URL and content links).</summary>
+    Redirect = 0,
+    /// <summary>The content descriptor was served to a non-bot by <c>GET /api/public/content/{code}</c>.</summary>
+    View = 1,
+    /// <summary>Raw snippet text was served (first authorized GET of a raw ticket).</summary>
+    Raw = 2,
+    /// <summary>A download ticket's first authorized GET (never HEAD, never an owner download).</summary>
+    Download = 3,
+}
+
 /// <summary>One redirect. Bot and crawler hits are recorded too, flagged, and excluded from human counts.</summary>
 /// <param name="Utm">UTM tags of the destination this visitor was actually sent to (null when it has none).</param>
+/// <param name="Kind">C6: <see cref="ClickEventKind.Redirect"/> for every Phase 0 caller; content events set it.</param>
 public sealed record ClickEvent(
     Guid LinkId,
     Guid OwnerId,
@@ -52,7 +74,8 @@ public sealed record ClickEvent(
     string? Browser,
     string DeviceType,
     bool IsBot,
-    UtmTags? Utm = null);
+    UtmTags? Utm = null,
+    ClickEventKind Kind = ClickEventKind.Redirect);
 
 /// <summary>
 /// The five standard UTM parameters of a destination URL. The UTM builder writes them into the link's
@@ -254,10 +277,11 @@ public sealed record ArchivedLink(
     Guid LinkId,
     string Code,
     bool IsCustom,
-    string TargetUrl,
+    string? TargetUrl,
     DateTime CreatedAt,
     DateTime ExpiresAt,
-    DateTime PurgedAt);
+    DateTime PurgedAt,
+    short TargetKind = 0);
 
 public sealed record PagedArchive(IReadOnlyList<ArchivedLink> Items, string? NextCursor);
 
@@ -280,8 +304,8 @@ public interface IArchiveQueries
 public interface IArchiveWriter
 {
     Task ArchiveAsync(
-        Guid linkId, Guid ownerId, string code, bool isCustom, string targetUrl,
-        DateTime createdAt, DateTime expiresAt, DateTime purgedAt, CancellationToken cancellationToken);
+        Guid linkId, Guid ownerId, string code, bool isCustom, string? targetUrl,
+        DateTime createdAt, DateTime expiresAt, DateTime purgedAt, CancellationToken cancellationToken, short targetKind = 0);
 
     /// <summary>Free-plan (or deleted-account) purge: the link's daily stats are deleted, never archived.</summary>
     Task DeleteDailyStatsAsync(Guid linkId, CancellationToken cancellationToken);

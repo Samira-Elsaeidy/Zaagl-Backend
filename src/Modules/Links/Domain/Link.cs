@@ -40,11 +40,18 @@ public sealed class Link
     /// <summary>Lower-cased slug; unique, so slugs differing only by case cannot coexist.</summary>
     public string SlugKey { get; set; } = "";
 
-    public string DestinationUrl { get; set; } = "";
+    /// <summary>C1 (ARC-002): what the link points at. <see cref="Contracts.LinkTargetKind.Url"/> for every Phase 0 link.</summary>
+    public Contracts.LinkTargetKind TargetKind { get; set; } = Contracts.LinkTargetKind.Url;
+
+    /// <summary>C1: the Resources row of a content link; null exactly when <see cref="TargetKind"/> is Url (check constraint).</summary>
+    public Guid? ResourceId { get; set; }
+
+    /// <summary>Null exactly for content kinds (check constraint <c>ck_links_target_destination</c>).</summary>
+    public string? DestinationUrl { get; set; } = "";
 
     /// <summary>Normalised host of DestinationUrl (punycode, lower-case, no trailing dot). Spec §7.6:
-    /// used by the destination blocklist, takedowns and re-checks so they never re-parse the URL.</summary>
-    public string TargetHost { get; set; } = "";
+    /// used by the destination blocklist, takedowns and re-checks so they never re-parse the URL. Null for content kinds.</summary>
+    public string? TargetHost { get; set; } = "";
 
     /// <summary>Spec §7.15: null means never checked (outage, budget exhausted, or just created and not
     /// yet picked up) - fail-open, the link still redirects. Reset to null when a re-check lookup errors.</summary>
@@ -108,6 +115,9 @@ public sealed class AccessPolicy
     public int ClicksUsed { get; set; }
 
     public string? FallbackUrl { get; set; }
+
+    /// <summary>C4 (ARC-004 §2): SHA-256 of the 16 raw bytes of the content link key (PD-01). Never the key itself.</summary>
+    public byte[]? LinkKeyHash { get; set; }
 }
 
 /// <summary>A routing rule: device/OS or country match, or one variant of an A/B split.</summary>
@@ -155,7 +165,10 @@ public sealed class AbuseEvidence
     public Guid Id { get; set; } = Guid.CreateVersion7();
     public Guid LinkId { get; set; }
     public string Slug { get; set; } = "";
-    public string TargetUrl { get; set; } = "";
+    /// <summary>Null for a content link (ARC-002 §6 row 11); content evidence carries <see cref="ResourceId"/>.</summary>
+    public string? TargetUrl { get; set; } = "";
+    /// <summary>C12: the content resource taken down; null for URL links.</summary>
+    public Guid? ResourceId { get; set; }
     public string DisabledKind { get; set; } = "";
     public string? Reason { get; set; }
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;

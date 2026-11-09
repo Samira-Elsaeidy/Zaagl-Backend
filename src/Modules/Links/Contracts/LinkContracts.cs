@@ -58,10 +58,13 @@ public sealed record OpenGraphDto(string? Title, string? Description, string? Im
 
 public sealed record PolicyDto(bool HasPassword, DateTime? ExpiresAt, int? MaxClicks, int ClicksUsed, string? FallbackUrl);
 
+/// <param name="TargetKind">C1 (Phase 1): what the link points at. <see cref="LinkTargetKind.Url"/> for every
+/// Phase 0 link. <c>DestinationUrl</c> is null for content kinds (BE-007, design/ARC-002-link-target-model.md).</param>
+/// <param name="ResourceId">C1: the Resources row of a content link; null exactly when TargetKind is Url.</param>
 public sealed record LinkDto(
     Guid Id,
     string Slug,
-    string DestinationUrl,
+    string? DestinationUrl,
     string? Title,
     string? Description,
     Guid? FolderId,
@@ -73,7 +76,9 @@ public sealed record LinkDto(
     IReadOnlyList<RuleDto> Rules,
     DateTime CreatedAt,
     DateTime UpdatedAt,
-    bool IsGuest = false);
+    bool IsGuest = false,
+    LinkTargetKind TargetKind = LinkTargetKind.Url,
+    Guid? ResourceId = null);
 
 public sealed record PagedResult<T>(IReadOnlyList<T> Items, int Total, int Page, int PageSize);
 
@@ -83,9 +88,10 @@ public sealed record SlugAvailabilityDto(bool Available, string? Reason);
 
 /// <summary>Spec §7.9: the admin link view - adds everything an owner's view intentionally hides.</summary>
 public sealed record AdminLinkDto(
-    Guid Id, string Slug, string DestinationUrl, string TargetHost, Guid? OwnerId, string? GuestCreatorKeyHex,
+    Guid Id, string Slug, string? DestinationUrl, string? TargetHost, Guid? OwnerId, string? GuestCreatorKeyHex,
     bool IsCustom, string State, string? DisabledKind, string? DisabledReason, DateTime? DisabledAt,
-    DateTime? DeletedAt, DateTime? PurgeAfter, DateTime? SafetyCheckedAt, DateTime CreatedAt);
+    DateTime? DeletedAt, DateTime? PurgeAfter, DateTime? SafetyCheckedAt, DateTime CreatedAt,
+    LinkTargetKind TargetKind = LinkTargetKind.Url, Guid? ResourceId = null);
 
 // ---- Admin (spec §7.9, §7.15) ---------------------------------------------
 
@@ -140,8 +146,26 @@ public interface IAccountDataEraser
     Task DeleteIdempotencyKeysAsync(Guid userId, CancellationToken ct);
 }
 
-/// <summary>Spec §7.14 export: every link's code, target, dates, state and click count.</summary>
-public sealed record LinkExportRow(string Code, string TargetUrl, DateTime CreatedAt, DateTime? ExpiresAt, string State, long ClickCount);
+/// <summary>Spec §7.14 export: every link's code, target, dates, state and click count. C1: <paramref name="TargetUrl"/>
+/// is null for content links; <paramref name="Kind"/> is one of <see cref="LinkExportKinds"/>.</summary>
+public sealed record LinkExportRow(string Code, string? TargetUrl, DateTime CreatedAt, DateTime? ExpiresAt, string State, long ClickCount, string Kind = LinkExportKinds.Url);
+
+/// <summary>C1 export kind names (<c>url|snippet|file|media</c>).</summary>
+public static class LinkExportKinds
+{
+    public const string Url = "url";
+    public const string Snippet = "snippet";
+    public const string File = "file";
+    public const string Media = "media";
+
+    public static string For(LinkTargetKind kind) => kind switch
+    {
+        LinkTargetKind.Snippet => Snippet,
+        LinkTargetKind.File => File,
+        LinkTargetKind.Media => Media,
+        _ => Url,
+    };
+}
 
 public interface ILinkExportSource
 {
@@ -199,12 +223,14 @@ public static class LinkStateCalculator
         Compute(link.PurgeAfter, link.DeletedAt, link.DisabledAt, link.ExpiresAt, now);
 }
 
-/// <summary>Everything the redirect path needs about a link; cached as one unit.</summary>
+/// <summary>Everything the redirect path needs about a link; cached as one unit. C1 (Phase 1) adds
+/// <paramref name="TargetKind"/>, <paramref name="ResourceId"/> and <paramref name="LinkKeyHash"/>; the cache key is
+/// versioned (<c>link:v2:</c>, design/ARC-002-link-target-model.md §3), and <c>DestinationUrl</c> is null for content kinds.</summary>
 public sealed record LinkSnapshot(
     Guid Id,
     Guid? OwnerId,
     string Slug,
-    string DestinationUrl,
+    string? DestinationUrl,
     bool IsActive,
     string? PasswordHash,
     DateTime? ExpiresAt,
@@ -218,7 +244,10 @@ public sealed record LinkSnapshot(
     DateTime? PurgeAfter = null,
     DateTime? DeletedAt = null,
     DateTime? DisabledAt = null,
-    string? DisabledKind = null)
+    string? DisabledKind = null,
+    LinkTargetKind TargetKind = LinkTargetKind.Url,
+    Guid? ResourceId = null,
+    byte[]? LinkKeyHash = null)
 {
     [JsonIgnore] public bool HasPassword => !string.IsNullOrEmpty(PasswordHash);
 
@@ -244,7 +273,7 @@ public interface ILinkResolver
 
 public sealed record OwnedLink(Guid Id, string Slug);
 
-public sealed record PublicLink(Guid Id, string Slug, string DestinationUrl, string? Title);
+public sealed record PublicLink(Guid Id, string Slug, string? DestinationUrl, string? Title);
 
 public interface ILinkDirectory
 {

@@ -90,8 +90,24 @@ public class AccessGateTests
         Assert.Equal(AccessOutcome.Allowed, _gate.Evaluate(Snapshots.Make(), Now));
 
     [Fact]
-    public void Inactive_link_is_expired() =>
-        Assert.Equal(AccessOutcome.Expired, _gate.Evaluate(Snapshots.Make(isActive: false), Now));
+    public void Inactive_link_is_disabled() =>
+        Assert.Equal(AccessOutcome.Disabled, _gate.Evaluate(Snapshots.Make(isActive: false), Now));
+
+    // PD-39: deleted and disabled are distinct outcomes (each its own 410 page, never the fallback URL).
+    [Fact]
+    public void Deleted_link_is_deleted_even_when_also_disabled_or_expired() =>
+        Assert.Equal(AccessOutcome.Deleted, _gate.Evaluate(
+            Snapshots.Make(expiresAt: Now.UtcDateTime.AddDays(-1)) with { DeletedAt = Now.UtcDateTime, DisabledAt = Now.UtcDateTime }, Now));
+
+    [Fact]
+    public void Disabled_link_is_disabled_even_when_expired() =>
+        Assert.Equal(AccessOutcome.Disabled, _gate.Evaluate(
+            Snapshots.Make(expiresAt: Now.UtcDateTime.AddDays(-1)) with { DisabledAt = Now.UtcDateTime, DisabledKind = "abuse" }, Now));
+
+    [Fact]
+    public void Purgeable_wins_over_everything() =>
+        Assert.Equal(AccessOutcome.Purgeable, _gate.Evaluate(
+            Snapshots.Make() with { PurgeAfter = Now.UtcDateTime.AddSeconds(-1), DeletedAt = Now.UtcDateTime }, Now));
 
     [Fact]
     public void Link_past_its_expiry_is_expired() =>

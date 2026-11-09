@@ -1,0 +1,46 @@
+# Build context for src/Zaagl.Api/Dockerfile and src/Zaagl.Coordinator/Dockerfile is the repository root
+# (`COPY . .`). Keep it small and free of local state (DEVOPS_PLAN.md A14, OPS-003).
+
+# VCS and editor/agent state
+.git
+.gitignore
+.gitattributes
+.github
+.vs
+.vscode
+.idea
+.claude
+
+# Build output (restored and rebuilt inside the image)
+**/bin
+**/obj
+**/out
+**/publish
+artifacts
+
+# Test output
+**/TestResults
+**/test-results
+**/coverage*.json
+**/coverage*.xml
+**/*.trx
+
+# Docs and generated knowledge graphs (not needed to build)
+docs/graphify
+graphify-out
+**/graphify-out
+
+# Node tooling, if any appears
+**/node_modules
+
+# Local secrets and env files must never enter an image
+.env
+.env.*
+deploy/secrets/*
+!deploy/secrets/README.md
+**/*.pfx
+**/*.key
+
+# OS noise
+**/.DS_Store
+**/Thumbs.db

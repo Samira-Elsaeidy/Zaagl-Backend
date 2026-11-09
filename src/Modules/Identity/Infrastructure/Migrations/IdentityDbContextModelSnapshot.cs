@@ -327,6 +327,40 @@ namespace Zaagl.Modules.Identity.Infrastructure.Migrations
                     b.ToTable("login_failures", "identity");
                 });
 
+            modelBuilder.Entity("Zaagl.Modules.Identity.Domain.OneTimeCode", b =>
+                {
+                    b.Property<string>("CodeHash")
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)")
+                        .HasColumnName("code_hash");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at");
+
+                    b.Property<DateTime>("ExpiresAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("expires_at");
+
+                    b.Property<string>("Purpose")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("character varying(20)")
+                        .HasColumnName("purpose");
+
+                    b.Property<Guid>("UserId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("user_id");
+
+                    b.HasKey("CodeHash")
+                        .HasName("pk_one_time_codes");
+
+                    b.HasIndex("ExpiresAt")
+                        .HasDatabaseName("ix_one_time_codes_expires_at");
+
+                    b.ToTable("one_time_codes", "identity");
+                });
+
             modelBuilder.Entity("Zaagl.Modules.Identity.Domain.RefreshToken", b =>
                 {
                     b.Property<Guid>("Id")

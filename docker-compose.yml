@@ -100,8 +100,12 @@ services:
       Coordinator__BaseUrl: "http://coordinator:8080"
       Coordinator__Token: "dev-coordinator-token"
       ASPNETCORE_ENVIRONMENT: "Development"
+      # Same filesystem as the worker (Files module, one volume so temp -> objects is an atomic rename).
+      Storage__Root: "/srv/zaagl/storage"
     ports:
       - "5084:8080" # spec: edge-network-only, port not published in production; published here for dev access
+    volumes:
+      - storage:/srv/zaagl/storage
     depends_on:
       migrator:
         condition: service_completed_successfully
@@ -115,6 +119,40 @@ services:
       interval: 10s
       timeout: 3s
       retries: 5
+
+  # ARC-012 / BE-013: background job runner (files.tasks). Backend network only, no port, no DNS name. Its own
+  # small Postgres pool (Jobs:MaxPoolSize 10) so job bursts never take the api's redirect connections.
+  worker:
+    build:
+      context: .
+      dockerfile: src/Zaagl.Worker/Dockerfile
+    container_name: zaagl-worker
+    environment:
+      ConnectionStrings__Postgres: "Host=postgres;Port=5432;Database=zaagl;Username=zaagl;Password=zaagl_dev"
+      Jobs__MaxPoolSize: "10"
+      # Must be the same filesystem the api uses (appsettings.json "Storage"): both mount the `storage` volume.
+      Storage__Root: "/srv/zaagl/storage"
+      Worker__LivenessFile: "/tmp/zaagl-worker-alive"
+      DOTNET_ENVIRONMENT: "Development"
+    volumes:
+      - storage:/srv/zaagl/storage
+    depends_on:
+      migrator:
+        condition: service_completed_successfully
+    networks:
+      - backend
+    restart: unless-stopped
+    # Host.ShutdownTimeout is 60 s (Program.cs), Jobs:Files:ShutdownGraceSeconds 55: give it that before SIGKILL.
+    stop_grace_period: 65s
+    # ARC-012 §5 proposes 6g / 4 CPUs on the 12-16 vCPU production host. CPU limit left out here because
+    # `cpus: 4` is rejected on a dev host with fewer cores.
+    mem_limit: 6g
+    healthcheck:
+      test: ["CMD-SHELL", "find /tmp/zaagl-worker-alive -mmin -1 | grep -q . || exit 1"]
+      interval: 15s
+      timeout: 3s
+      retries: 3
+      start_period: 30s
 
   # Spec §3: catches outgoing email in development (dev only - never started in a production compose).
   mailpit:
@@ -135,3 +173,4 @@ networks:
 volumes:
   postgres-data:
   coordstate:
+  storage:

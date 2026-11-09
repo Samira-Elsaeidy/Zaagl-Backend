@@ -53,7 +53,8 @@ public sealed class AnalyticsDbContext(DbContextOptions<AnalyticsDbContext> opti
             e.ToTable("link_archive");
             e.HasKey(x => x.LinkId);
             e.Property(x => x.Code).HasMaxLength(64).IsRequired();
-            e.Property(x => x.TargetUrl).IsRequired();
+            e.Property(x => x.TargetUrl).IsRequired(false); // null for content links (ARC-002 §6 row 13)
+            e.Property(x => x.TargetKind).HasDefaultValue((short)0);
             e.HasIndex(x => new { x.OwnerId, x.PurgedAt });
         });
 

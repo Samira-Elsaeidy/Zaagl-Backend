@@ -156,7 +156,7 @@ public sealed class ChaosScenarioTests : IDisposable
         await _identityDb.SaveChangesAsync();
 
         var jwt = Options.Create(new JwtOptions { Key = "test-signing-key-at-least-32-characters-long!!" });
-        var identity = new IdentityService(_identityDb, new TokenService(jwt), new FixedPlanProvider(PlanTier.Free),
+        var identity = new IdentityService(_identityDb, new TokenService(jwt), new FixedContentPlanProvider(PlanTier.Free),
             new NoOpAccountDataEraser(), new NoOpLinkExportSource(), new NoOpArchiveQueries(), NullLogger<IdentityService>.Instance);
 
         var outcome = await identity.LoginAsync(new Zaagl.Modules.Identity.Contracts.LoginRequest(email, "correct-password-123", null), "test:partition", default);

@@ -1,0 +1,1456 @@
+openapi: 3.1.0
+info:
+  title: Zaagl Phase 1 content API (draft)
+  version: 0.1.0-draft
+  description: |
+    DRAFT for ARC-016. Written by hand from the Phase 1 contract pack (docs/phase1-implementation/contracts.md C1-C12),
+    the approved rulebook docs/spec/zaagl-phase1-addendum.md and the contract stubs in src/Modules/*/Contracts. It is
+    NOT generated from code; BE-028 generates the real document and this draft is its review baseline.
+
+    Conventions
+    - Route prefix `/api` vs `/api/v1` is OPEN (PD-33). Paths are written `/api/...` like the Phase 0 code.
+    - JSON is camelCase, times are UTC ISO 8601 (`2026-11-09T12:00:00Z`). The RFC 8628 device-flow endpoints use the
+      RFC's snake_case field names on the wire.
+    - Errors are RFC 7807 `application/problem+json` with `type: https://zaa.gl/problems/<code>` and a `code`
+      extension (BE-002). The device token endpoint uses the OAuth error body instead (RFC 6749 §5.2).
+    - Auth notation (extension `x-zaagl-auth`): J = session JWT (web through the BFF, or a device session),
+      K(scope) = API key with that scope (`X-Api-Key`, paid plans only), G = guest (no credential at all plus
+      `Captcha-Token`), P = public (the access gate is evaluated: link key, grant), T = delivery ticket in the path,
+      owner = the owner only (any other principal, admins included, gets 404; PD-40, addendum §18).
+    - `x-zaagl-scopes` lists the scope an API key needs; JWT and device sessions hold every non-admin scope.
+    - `x-zaagl-status` marks parts that are OPEN, PROPOSED (treated as OPEN) or TO_CONFIRM; implementations must not
+      invent behaviour for them (addendum MUST NOT #20).
+    - Every write transaction uses `SET LOCAL lock_timeout = '3s'`; a lock timeout answers `503 busy` with
+      `Retry-After: 1` (spec §7.0).
+
+    Failing credentials are never guests (PD-36, addendum §19). On every guest-capable route (marked G) a request is a
+    guest only when it carries no credential. Any credential that fails (malformed, wrong, revoked, expired,
+    superseded security stamp, a key whose owner lost the ApiKeys capability, an enrol-only token) gets `401` with
+    `WWW-Authenticate`, before CAPTCHA, guest counters, reservations or any creation. A valid credential without the
+    scope gets `403 insufficient-scope`.
+
+    Idempotency (spec §7.2 step 4). Where `Idempotency-Key` is accepted: the first request claims the key; a replay with
+    the same key and the same canonical request returns the stored response and status unchanged, whatever the plan,
+    quota or clock says now; the same key with a different request returns `422 idempotency-mismatch`; a replay while
+    the first request is still running returns `409 conflict` with `Retry-After`. Keys are scoped per principal
+    (`u:<userId>` or the guest creator key).
+servers:
+  - url: https://api.zaa.gl
+    description: JSON API and tus uploads (behind Cloudflare; every request body at most 90,000,000 bytes).
+  - url: https://usercontent.zaa.gl
+    description: User bytes only, by ticket (`/d/{ticket}`). Never sets cookies, ignores credentials (addendum §4.2).
+
+tags:
+  - name: Snippets
+  - name: Uploads
+  - name: Resources
+  - name: Public content
+  - name: Delivery
+  - name: Account
+  - name: Device authorization
+
+security:
+  - sessionJwt: []
+  - apiKey: []
+
+paths:
+  # ---------------------------------------------------------------- Snippets
+  /api/snippets:
+    post:
+      tags: [Snippets]
+      operationId: createSnippet
+      summary: Create a snippet and its content link.
+      description: |
+        Creates the resource (pending, quota reserved), the content link through ILinkIssuer, and binds them
+        (addendum §2.2). Default is keyed (`#k=`, PD-01); `public: true` creates a keyless link.
+        The plain `linkKey` is returned once and never again.
+      x-zaagl-auth: [J, "K(snippets:write)", G]
+      x-zaagl-scopes: [snippets:write]
+      x-zaagl-rate-limit: content-write (per principal); guests 30/hour and 60/rolling 24 h per IP partition, snippets and uploads counted together (PD-14)
+      security:
+        - sessionJwt: []
+        - apiKey: []
+        - {}
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKeyRequired'
+        - $ref: '#/components/parameters/CaptchaToken'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SnippetCreateRequest' }
+      responses:
+        '201':
+          description: Created.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SnippetCreatedDto' }
+        '400': { $ref: '#/components/responses/ValidationOrExpiryBeyondPlan' }
+        '401': { $ref: '#/components/responses/UnauthorizedOrCaptcha' }
+        '402': { $ref: '#/components/responses/PlanRequired' }
+        '403': { $ref: '#/components/responses/InsufficientScopeOrQuotaExceeded' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '413': { $ref: '#/components/responses/SnippetTooLarge' }
+        '422': { $ref: '#/components/responses/IdempotencyMismatch' }
+        '429': { $ref: '#/components/responses/Quota' }
+        '503': { $ref: '#/components/responses/Busy' }
+
+  /api/snippets/raw:
+    post:
+      tags: [Snippets]
+      operationId: createSnippetRaw
+      summary: CLI pipe. Create a snippet from a streamed text/plain body.
+      description: |
+        The size cap is enforced while reading, not after. With `Accept: text/plain` the response body is only the
+        share URL including `#k=<key>` for keyed snippets, followed by `\n`.
+      x-zaagl-auth: [J, "K(snippets:write)"]
+      x-zaagl-scopes: [snippets:write]
+      x-zaagl-rate-limit: content-write
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKeyOptional'
+        - { name: lang, in: query, schema: { type: string, maxLength: 64 } }
+        - { name: title, in: query, schema: { type: string, maxLength: 200 } }
+        - { name: renderMode, in: query, schema: { $ref: '#/components/schemas/SnippetRenderMode' } }
+        - { name: ansi, in: query, schema: { type: string, enum: [keep, strip], default: strip } }
+        - { name: expiresAt, in: query, description: Clamped to the plan retention; later than the plan maximum gives 400 expiry-beyond-plan., schema: { type: string, format: date-time } }
+        - { name: public, in: query, schema: { type: boolean, default: false } }
+      requestBody:
+        required: true
+        content:
+          text/plain:
+            schema: { type: string, description: 'UTF-8 text (charset=utf-8).' }
+      responses:
+        '201':
+          description: Created.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SnippetCreatedDto' }
+            text/plain:
+              schema: { type: string, example: "https://zaa.gl/Ab3xY#k=q1w2e3r4t5y6u7i8o9p0aS\n" }
+        '400': { $ref: '#/components/responses/ValidationOrExpiryBeyondPlan' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/InsufficientScopeOrQuotaExceeded' }
+        '413': { $ref: '#/components/responses/SnippetTooLarge' }
+        '415': { $ref: '#/components/responses/UnsupportedMediaType' }
+        '422': { $ref: '#/components/responses/IdempotencyMismatch' }
+        '429': { $ref: '#/components/responses/Quota' }
+        '503': { $ref: '#/components/responses/Busy' }
+
+  /api/snippets/{id}:
+    parameters:
+      - $ref: '#/components/parameters/ResourceIdPath'
+    get:
+      tags: [Snippets]
+      operationId: getOwnSnippet
+      summary: Owner view of a snippet (latest version).
+      x-zaagl-auth: [owner, "K(resources:read)"]
+      x-zaagl-scopes: [resources:read]
+      responses:
+        '200':
+          description: The snippet.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SnippetViewDto' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/InsufficientScope' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    put:
+      tags: [Snippets]
+      operationId: updateSnippet
+      summary: Save a new version (versions are immutable).
+      x-zaagl-auth: [owner, "K(snippets:write)"]
+      x-zaagl-scopes: [snippets:write]
+      x-zaagl-rate-limit: content-write
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SnippetUpdateRequest' }
+      responses:
+        '200':
+          description: New version stored.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SnippetVersionDto' }
+        '400': { $ref: '#/components/responses/Validation' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/InsufficientScopeOrQuotaExceeded' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/VersionConflict' }
+        '413': { $ref: '#/components/responses/SnippetTooLarge' }
+        '503': { $ref: '#/components/responses/Busy' }
+    delete:
+      tags: [Snippets]
+      operationId: deleteSnippet
+      summary: Delete the snippet; its link answers 410 and cannot be renewed.
+      x-zaagl-auth: [owner, "K(snippets:write)"]
+      x-zaagl-scopes: [snippets:write]
+      responses:
+        '204': { description: Deleted. }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/InsufficientScope' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /api/snippets/{id}/versions:
+    parameters:
+      - $ref: '#/components/parameters/ResourceIdPath'
+    get:
+      tags: [Snippets]
+      operationId: listSnippetVersions
+      x-zaagl-auth: [owner, "K(resources:read)"]
+      x-zaagl-scopes: [resources:read]
+      x-zaagl-status: { versionLimit: 'PROPOSED (PD-17: 100 versions)' }
+      responses:
+        '200':
+          description: Versions, newest first.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/SnippetVersionDto' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /api/snippets/{id}/versions/{n}:
+    parameters:
+      - $ref: '#/components/parameters/ResourceIdPath'
+      - { name: n, in: path, required: true, schema: { type: integer, minimum: 1 } }
+    get:
+      tags: [Snippets]
+      operationId: getSnippetVersion
+      x-zaagl-auth: [owner, "K(resources:read)"]
+      x-zaagl-scopes: [resources:read]
+      responses:
+        '200':
+          description: One version with its content.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SnippetViewDto' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /api/snippets/{id}/diff:
+    parameters:
+      - $ref: '#/components/parameters/ResourceIdPath'
+      - { name: from, in: query, required: true, schema: { type: integer, minimum: 1 } }
+      - { name: to, in: query, required: true, schema: { type: integer, minimum: 1 } }
+    get:
+      tags: [Snippets]
+      operationId: diffSnippetVersions
+      summary: Side-by-side diff between two versions of one snippet (computed by the backend, rendered by the client).
+      x-zaagl-auth: [owner, "K(resources:read)"]
+      x-zaagl-scopes: [resources:read]
+      x-zaagl-status: { publicDiff: 'OPEN (diff for public viewers not decided)' }
+      responses:
+        '200':
+          description: Diff.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SnippetDiffDto' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '413': { $ref: '#/components/responses/DiffTooLarge' }
+
+  # ---------------------------------------------------------------- Uploads (tus 1.0.0, PD-12)
+  /api/uploads:
+    options:
+      tags: [Uploads]
+      operationId: tusOptions
+      summary: tus capability discovery.
+      security: [{}]
+      x-zaagl-auth: [anonymous]
+      responses:
+        '204':
+          description: Capabilities.
+          headers:
+            Tus-Resumable: { $ref: '#/components/headers/TusResumable' }
+            Tus-Version: { schema: { type: string, example: 1.0.0 } }
+            Tus-Extension: { schema: { type: string, example: 'creation,termination,expiration,checksum' } }
+            Tus-Max-Size: { description: The caller's plan MaxFileBytes when authenticated, else the guest cap., schema: { type: integer } }
+            Tus-Checksum-Algorithm: { schema: { type: string, example: sha1 } }
+    post:
+      tags: [Uploads]
+      operationId: createUpload
+      summary: Create an upload session. Size, plan and quota checks run before any byte is accepted.
+      description: |
+        `Upload-Length` is mandatory (deferred length is refused). `Upload-Metadata` keys: `filename`, `filetype`,
+        `kind` (`file` or `media`), all untrusted display data. Disk admission failure answers `507` with
+        `Retry-After`. Guests: CAPTCHA (`guest-upload` action) and the PD-14 counters; an upload counts at session
+        create.
+      x-zaagl-auth: [J, "K(files:write)", G]
+      x-zaagl-scopes: [files:write]
+      x-zaagl-rate-limit: upload-session (per principal); guest counters as POST /api/snippets
+      security:
+        - sessionJwt: []
+        - apiKey: []
+        - {}
+      parameters:
+        - $ref: '#/components/parameters/TusResumable'
+        - $ref: '#/components/parameters/UploadLength'
+        - $ref: '#/components/parameters/UploadMetadata'
+        - $ref: '#/components/parameters/IdempotencyKeyOptional'
+        - $ref: '#/components/parameters/CaptchaToken'
+      responses:
+        '201':
+          description: Session created.
+          headers:
+            Location: { description: '/api/uploads/{id}', schema: { type: string } }
+            Upload-Expires: { $ref: '#/components/headers/UploadExpires' }
+            Tus-Resumable: { $ref: '#/components/headers/TusResumable' }
+        '400': { $ref: '#/components/responses/UploadLengthRequiredOrValidation' }
+        '401': { $ref: '#/components/responses/UnauthorizedOrCaptcha' }
+        '403': { $ref: '#/components/responses/InsufficientScopeOrQuotaExceeded' }
+        '413': { $ref: '#/components/responses/FileTooLarge' }
+        '422': { $ref: '#/components/responses/IdempotencyMismatch' }
+        '429': { $ref: '#/components/responses/Quota' }
+        '503': { $ref: '#/components/responses/Busy' }
+        '507': { $ref: '#/components/responses/InsufficientStorage' }
+
+  /api/uploads/{id}:
+    parameters:
+      - $ref: '#/components/parameters/UploadIdPath'
+      - $ref: '#/components/parameters/TusResumable'
+    description: |
+      The session id is a capability AND the principal must match the creator (owner id or guest creator key);
+      otherwise 404 (addendum §6.3). Sessions idle for 24 hours expire (temp bytes deleted, reservation released).
+    head:
+      tags: [Uploads]
+      operationId: getUploadOffset
+      x-zaagl-auth: [creator]
+      security: [{ sessionJwt: [] }, { apiKey: [] }, {}]
+      responses:
+        '200':
+          description: Current offset.
+          headers:
+            Upload-Offset: { $ref: '#/components/headers/UploadOffset' }
+            Upload-Length: { schema: { type: integer } }
+            Cache-Control: { schema: { type: string, const: no-store } }
+        '404': { description: Unknown session or another principal. }
+        '410': { description: 'upload-expired (no body on HEAD).' }
+    patch:
+      tags: [Uploads]
+      operationId: appendUploadChunk
+      summary: Append one chunk. Each request body is at most 90,000,000 bytes; clients default to 64 MiB.
+      x-zaagl-auth: [creator]
+      security: [{ sessionJwt: [] }, { apiKey: [] }, {}]
+      parameters:
+        - $ref: '#/components/parameters/UploadOffset'
+        - $ref: '#/components/parameters/UploadChecksum'
+      requestBody:
+        required: true
+        content:
+          application/offset+octet-stream:
+            schema: { type: string, format: binary, maxLength: 90000000 }
+      responses:
+        '204':
+          description: Chunk stored.
+          headers:
+            Upload-Offset: { $ref: '#/components/headers/UploadOffset' }
+            Upload-Expires: { $ref: '#/components/headers/UploadExpires' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/UploadOffsetMismatch' }
+        '410': { $ref: '#/components/responses/UploadExpired' }
+        '413': { $ref: '#/components/responses/ChunkTooLarge' }
+        '460': { $ref: '#/components/responses/ChecksumMismatch' }
+    delete:
+      tags: [Uploads]
+      operationId: abortUpload
+      summary: tus termination. Temp bytes deleted, reservation released.
+      x-zaagl-auth: [creator]
+      security: [{ sessionJwt: [] }, { apiKey: [] }, {}]
+      responses:
+        '204': { description: Aborted. }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /api/uploads/{id}/complete:
+    parameters:
+      - $ref: '#/components/parameters/UploadIdPath'
+    post:
+      tags: [Uploads]
+      operationId: completeUpload
+      summary: Finalise an upload. Creates the resource and its content link; scanning starts.
+      description: |
+        Answers `202` with `state: processing`. The link may be shared at once (PD-28 APPROVED); no bytes are served
+        before the resource is `ready` (addendum §2.4). `customSlug` is allowed for every caller, guests included
+        (PD-57). `burnAfterDownload` and `password` need the Starter plan (PD-54), else `402 plan_required`.
+      x-zaagl-auth: [creator]
+      x-zaagl-scopes: [files:write]
+      x-zaagl-rate-limit: content-write
+      x-zaagl-status:
+        guestPublicChoice: TO_CONFIRM (may a guest set public at creation)
+      security: [{ sessionJwt: [] }, { apiKey: [] }, {}]
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKeyRequired'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CompleteUploadRequest' }
+      responses:
+        '202':
+          description: Accepted, processing.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CompleteUploadResponse' }
+        '400': { $ref: '#/components/responses/ValidationOrExpiryBeyondPlan' }
+        '402': { $ref: '#/components/responses/PlanRequired' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/UploadIncompleteOrConflict' }
+        '410': { $ref: '#/components/responses/UploadExpired' }
+        '422': { $ref: '#/components/responses/IdempotencyMismatch' }
+        '503': { $ref: '#/components/responses/Busy' }
+
+  /api/uploads/simple:
+    post:
+      tags: [Uploads]
+      operationId: simpleUpload
+      summary: Single-request upload for small files (screenshots, CLI). Same rules as tus, body at most 90,000,000 bytes.
+      x-zaagl-auth: [J, "K(files:write)", G]
+      x-zaagl-scopes: [files:write]
+      x-zaagl-rate-limit: upload-session; guest counters as POST /api/snippets
+      security:
+        - sessionJwt: []
+        - apiKey: []
+        - {}
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKeyRequired'
+        - $ref: '#/components/parameters/CaptchaToken'
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file, kind]
+              properties:
+                file: { type: string, format: binary }
+                kind: { type: string, enum: [file, media] }
+                metadata:
+                  $ref: '#/components/schemas/CompleteUploadRequest'
+            encoding:
+              metadata: { contentType: application/json }
+      responses:
+        '202':
+          description: Accepted, processing.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CompleteUploadResponse' }
+        '400': { $ref: '#/components/responses/ValidationOrExpiryBeyondPlan' }
+        '401': { $ref: '#/components/responses/UnauthorizedOrCaptcha' }
+        '403': { $ref: '#/components/responses/InsufficientScopeOrQuotaExceeded' }
+        '411': { $ref: '#/components/responses/LengthRequired' }
+        '413': { $ref: '#/components/responses/FileTooLarge' }
+        '422': { $ref: '#/components/responses/IdempotencyMismatch' }
+        '429': { $ref: '#/components/responses/Quota' }
+        '503': { $ref: '#/components/responses/Busy' }
+        '507': { $ref: '#/components/responses/InsufficientStorage' }
+
+  # ---------------------------------------------------------------- Resources (owner)
+  /api/resources:
+    get:
+      tags: [Resources]
+      operationId: listResources
+      summary: The caller's content library (keyset pagination, newest first).
+      x-zaagl-auth: [J, "K(resources:read)"]
+      x-zaagl-scopes: [resources:read]
+      parameters:
+        - { name: kind, in: query, schema: { $ref: '#/components/schemas/ContentKind' } }
+        - { name: state, in: query, schema: { $ref: '#/components/schemas/ResourceState' } }
+        - { name: cursor, in: query, description: Opaque cursor from nextCursor., schema: { type: string, maxLength: 200 } }
+        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 100, default: 25 } }
+      responses:
+        '200':
+          description: One page.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: '#/components/schemas/ResourceSummary' }
+                  nextCursor: { type: [string, 'null'] }
+        '400': { $ref: '#/components/responses/Validation' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/InsufficientScope' }
+
+  /api/resources/{id}:
+    parameters:
+      - $ref: '#/components/parameters/ResourceIdPath'
+    get:
+      tags: [Resources]
+      operationId: getResource
+      x-zaagl-auth: [owner, "K(resources:read)"]
+      x-zaagl-scopes: [resources:read]
+      responses:
+        '200':
+          description: Detail.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ResourceDetail' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    patch:
+      tags: [Resources]
+      operationId: updateResource
+      summary: Owner changes (title, renewal, public/keyed, password, burn). Guests cannot manage content.
+      description: |
+        - `expiresAt`: renewal, only forward and at most the plan maximum from now (spec §7.4); moves `purge_after`.
+          Not possible for burned, deleted or purged content.
+        - `public: true` removes the key hash (the old `#k=` URL keeps working without needing the key);
+          `public: false` on a public link issues a new key, returned once in `linkKey`; the keyless URL stops working.
+        - `password` / `clearPassword`: capability `PasswordOnContent` (Starter only, PD-54).
+        - `burnAfterDownload`: capability `BurnAfterDownload` (Starter only, PD-54); cannot change after a claim
+          (`409 burn-already-claimed`).
+        - API key scope: the kind's write scope, `snippets:write` for snippets, `files:write` for files and media.
+      x-zaagl-auth: [owner, "K(snippets:write | files:write by kind)"]
+      x-zaagl-scopes: [snippets:write, files:write]
+      x-zaagl-status: { scope: 'Interim rule (contracts.md C9). A separate resources:write scope is OPEN (ARC-014 Q3).' }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ResourcePatchRequest' }
+      responses:
+        '200':
+          description: Updated. `linkKey` present only when a new key was issued.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ResourceDetail' }
+        '400': { $ref: '#/components/responses/ValidationOrExpiryBeyondPlan' }
+        '402': { $ref: '#/components/responses/PlanRequired' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/BurnAlreadyClaimedOrConflict' }
+        '503': { $ref: '#/components/responses/Busy' }
+    delete:
+      tags: [Resources]
+      operationId: deleteResource
+      summary: Delete content. The link answers 410 and the bytes become unreachable at once.
+      description: Bytes are kept through the 90-day quarantine and deleted at purge_after; the owner's storage is freed only at purge (PD-55).
+      x-zaagl-auth: [owner, "K(snippets:write | files:write by kind)"]
+      x-zaagl-scopes: [snippets:write, files:write]
+      x-zaagl-status: { scope: 'Interim rule; resources:write OPEN (ARC-014 Q3)' }
+      responses:
+        '204': { description: Deleted. }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /api/resources/{id}/status:
+    parameters:
+      - $ref: '#/components/parameters/ResourceIdPath'
+    get:
+      tags: [Resources]
+      operationId: getResourceStatus
+      summary: Processing status for desktop and CLI polling.
+      x-zaagl-auth: [owner, "K(resources:read)"]
+      x-zaagl-scopes: [resources:read]
+      responses:
+        '200':
+          description: Status.
+          headers:
+            Retry-After: { description: Polling hint while processing., schema: { type: integer } }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ResourceStatusDto' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /api/resources/{id}/download:
+    parameters:
+      - $ref: '#/components/parameters/ResourceIdPath'
+    post:
+      tags: [Resources]
+      operationId: mintOwnerTicket
+      summary: Owner download ticket (purpose owner). Never consumes burn.
+      x-zaagl-auth: [owner]
+      x-zaagl-scopes: [resources:read]
+      responses:
+        '200':
+          description: Ticket URL.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DownloadTicketResponse' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Processing' }
+        '410': { $ref: '#/components/responses/Gone' }
+        '422': { $ref: '#/components/responses/ContentRejected' }
+
+  /api/me/storage:
+    get:
+      tags: [Account]
+      operationId: getStorage
+      summary: Plan limits, used, reserved and quota.
+      x-zaagl-auth: [J, "K(resources:read)"]
+      x-zaagl-scopes: [resources:read]
+      responses:
+        '200':
+          description: Storage.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/StorageDto' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  # ---------------------------------------------------------------- Public content (viewer, CLI, desktop)
+  /api/public/content/{code}:
+    parameters:
+      - $ref: '#/components/parameters/CodePath'
+      - $ref: '#/components/parameters/LinkKey'
+      - $ref: '#/components/parameters/Grant'
+    get:
+      tags: [Public content]
+      operationId: getContentDescriptor
+      summary: Viewer descriptor. Runs the full access gate; never contains a download ticket.
+      description: |
+        Gate order (addendum §5.2): link and resource state, then the link key (missing or wrong key on a keyed link
+        answers exactly like an unknown code, 404, same timing class), then the password (valid grant or
+        `401 password-required`). Inline, preview and raw ticket URLs appear only when the state is `ready` and the
+        resource is not a burn file. Recording a `view` event: definition PROPOSED (PD-10).
+      security: [{}]
+      x-zaagl-auth: [P]
+      x-zaagl-rate-limit: OPEN (ARC-013 content read policy)
+      x-zaagl-status: { viewCounting: PROPOSED (PD-10), maxViews: 'OPEN (not in C4 until PD-10)' }
+      responses:
+        '200':
+          description: Descriptor (also for state processing).
+          headers:
+            Cache-Control: { schema: { type: string, const: 'private, no-store' } }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ContentDescriptor' }
+        '401': { $ref: '#/components/responses/PasswordRequired' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '410': { $ref: '#/components/responses/Gone' }
+        '422': { $ref: '#/components/responses/ContentRejected' }
+
+  /api/public/content/{code}/unlock:
+    parameters:
+      - $ref: '#/components/parameters/CodePath'
+      - $ref: '#/components/parameters/LinkKey'
+    post:
+      tags: [Public content]
+      operationId: unlockContent
+      summary: Exchange a password for an access grant (HMAC, bound to one link, its resource and purposes; default 10 minutes).
+      security: [{}]
+      x-zaagl-auth: [P]
+      x-zaagl-rate-limit: unlock (existing policy, per IP partition and code)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/UnlockRequest' }
+      responses:
+        '200':
+          description: Grant. Send it as X-Zaagl-Grant.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/UnlockResponse' }
+        '400': { $ref: '#/components/responses/Validation' }
+        '401': { $ref: '#/components/responses/PasswordRequired' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '410': { $ref: '#/components/responses/Gone' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /api/public/content/{code}/download:
+    parameters:
+      - $ref: '#/components/parameters/CodePath'
+      - $ref: '#/components/parameters/LinkKey'
+      - $ref: '#/components/parameters/Grant'
+    post:
+      tags: [Public content]
+      operationId: mintDownloadTicket
+      summary: The download button. Mints a download ticket valid 120 s if unused (Content:DownloadTicketSeconds).
+      description: |
+        Only a POST mints a download ticket (preview bots never POST). For a burn file, the first GET of the ticket
+        claims the burn (PD-05); minting does not. A password-protected burn file needs a valid grant.
+      security: [{}]
+      x-zaagl-auth: [P]
+      x-zaagl-rate-limit: download-grant (per IP partition and code)
+      x-zaagl-status:
+        captchaOnBurn: OPEN
+        multiPartAssembly: 'OPEN (ARC-008, FE: how the browser saves a file larger than Content:MaxResponseBytes)'
+        maxDownloads: 'OPEN (not in C4 until PD-10)'
+      responses:
+        '200':
+          description: Ticket URL on usercontent.zaa.gl.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DownloadTicketResponse' }
+        '401': { $ref: '#/components/responses/PasswordRequired' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Processing' }
+        '410': { $ref: '#/components/responses/GoneOrBurned' }
+        '422': { $ref: '#/components/responses/ContentRejected' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  # ---------------------------------------------------------------- Delivery (usercontent.zaa.gl)
+  /d/{ticket}:
+    servers:
+      - url: https://usercontent.zaa.gl
+    parameters:
+      - { name: ticket, in: path, required: true, description: 'At most 256 characters (ARC-008 §3). base64url(payload) "." base64url(HMAC-SHA256); see contracts.md C3.', schema: { type: string, maxLength: 256 } }
+    get:
+      tags: [Delivery]
+      operationId: getBytes
+      summary: Bytes by ticket. Range supported; every response body at most Content:MaxResponseBytes (PD-38).
+      description: |
+        Credentials (Authorization, cookies) are ignored; access is only by ticket. A burn download ticket's first GET
+        claims the burn atomically; the winning grant may serve further Range requests for 30 minutes, at most 16
+        requests in total. A request for an object larger than Content:MaxResponseBytes must carry one byte range of at most that size;
+        otherwise `416 range-required` (no partial body is sent unasked).
+        Every response, errors included, carries the addendum §4.4 headers.
+      security: [{}]
+      x-zaagl-auth: [T]
+      x-zaagl-rate-limit: OPEN (ARC-013, Nginx limit_conn / limit_rate)
+      x-zaagl-status: { maxResponseBytes: 'TO_CONFIRM (proposed 90,000,000)', multiPartAssembly: OPEN }
+      parameters:
+        - { name: Range, in: header, schema: { type: string, example: 'bytes=0-89999999' } }
+      responses:
+        '200':
+          description: Whole object (only when it fits in one response).
+          headers:
+            X-Content-Type-Options: { $ref: '#/components/headers/UcXContentTypeOptions' }
+            Content-Security-Policy: { $ref: '#/components/headers/UcContentSecurityPolicy' }
+            Content-Disposition: { $ref: '#/components/headers/UcContentDisposition' }
+            Content-Type: { $ref: '#/components/headers/UcContentType' }
+            Cache-Control: { $ref: '#/components/headers/UcCacheControl' }
+            Referrer-Policy: { $ref: '#/components/headers/UcReferrerPolicy' }
+            Cross-Origin-Resource-Policy: { $ref: '#/components/headers/UcCrossOriginResourcePolicy' }
+            X-Robots-Tag: { $ref: '#/components/headers/UcXRobotsTag' }
+            Accept-Ranges: { $ref: '#/components/headers/UcAcceptRanges' }
+          content:
+            application/octet-stream:
+              schema: { type: string, format: binary }
+        '206':
+          description: Partial content.
+          headers:
+            Content-Range: { schema: { type: string } }
+            Accept-Ranges: { schema: { type: string, const: bytes } }
+          content:
+            application/octet-stream:
+              schema: { type: string, format: binary }
+        '403': { $ref: '#/components/responses/TicketInvalid' }
+        '409': { $ref: '#/components/responses/Processing' }
+        '410': { $ref: '#/components/responses/DeliveryGone' }
+        '416': { $ref: '#/components/responses/RangeRequired' }
+        '422': { $ref: '#/components/responses/ContentRejected' }
+    head:
+      tags: [Delivery]
+      operationId: headBytes
+      summary: Same status and headers as GET, no body. Never claims burn and never counts.
+      security: [{}]
+      x-zaagl-auth: [T]
+      responses:
+        '200': { description: Exists and is servable. }
+        '403': { description: ticket-invalid }
+        '409': { description: processing }
+        '410': { description: 'burned or gone (codes as GET)' }
+        '422': { description: content-rejected }
+
+  # ---------------------------------------------------------------- Device authorization (C11, RFC 8628)
+  /api/auth/device/code:
+    post:
+      tags: [Device authorization]
+      operationId: deviceCode
+      summary: Start a device authorization (CLI and desktop, every account plan).
+      security: [{}]
+      x-zaagl-auth: [anonymous]
+      x-zaagl-rate-limit: device-code (per IP partition; ARC-014 §2.1)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/DeviceCodeRequest' }
+          application/x-www-form-urlencoded:
+            schema: { $ref: '#/components/schemas/DeviceCodeRequest' }
+      responses:
+        '200':
+          description: Codes.
+          headers:
+            Cache-Control: { schema: { type: string, const: no-store } }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DeviceCodeResponse' }
+        '400':
+          description: invalid_client or invalid_request (OAuth error body).
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OAuthError' }
+
+  /api/auth/device/token:
+    post:
+      tags: [Device authorization]
+      operationId: deviceToken
+      summary: Poll for the token pair. Errors use the OAuth body, not problem+json.
+      description: |
+        `authorization_pending` (keep polling), `slow_down` (add 5 s to the interval), `access_denied`,
+        `expired_token`, `invalid_grant` (already redeemed or unknown). Success returns the existing AuthResponse plus
+        `sessionId`. The token carries `client_id` and `amr=device`, never the Admin role, and is refused by the
+        Interactive policy (API keys, billing, account deletion and export).
+      security: [{}]
+      x-zaagl-auth: [anonymous]
+      x-zaagl-rate-limit: device-token (per IP partition, ARC-014 §2.3; plus slow_down per device_code)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/DeviceTokenRequest' }
+          application/x-www-form-urlencoded:
+            schema: { $ref: '#/components/schemas/DeviceTokenRequest' }
+      responses:
+        '200':
+          description: Token pair.
+          headers:
+            Cache-Control: { schema: { type: string, const: no-store } }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DeviceAuthResponse' }
+        '400':
+          description: RFC 8628 §3.5 error.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OAuthError' }
+
+  /api/auth/device/activation:
+    get:
+      tags: [Device authorization]
+      operationId: getDeviceActivation
+      summary: What app.zaa.gl/activate shows before approval (through the BFF, session JWT only).
+      x-zaagl-auth: [J]
+      x-zaagl-rate-limit: device-activate (per user and per IP partition; ARC-014 §2.2)
+      x-zaagl-status: { routeName: 'PROPOSED (BE-024)' }
+      security: [{ sessionJwt: [] }]
+      parameters:
+        - { name: userCode, in: query, required: true, schema: { type: string, pattern: '^[A-Z]{4}-?[A-Z]{4}$' } }
+      responses:
+        '200':
+          description: Pending request.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DeviceActivationInfo' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /api/auth/device/activate:
+    post:
+      tags: [Device authorization]
+      operationId: activateDevice
+      summary: Approve or deny a user code (session JWT only; not an API key, not a device token).
+      x-zaagl-auth: [J]
+      x-zaagl-rate-limit: device-activate (per user and per IP partition; ARC-014 §2.2)
+      x-zaagl-status: { routeName: 'PROPOSED (BE-024)' }
+      security: [{ sessionJwt: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/DeviceActivationRequest' }
+      responses:
+        '204': { description: Recorded. User codes are single-use. }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '410': { $ref: '#/components/responses/Gone' }
+
+  /api/me/sessions:
+    get:
+      tags: [Device authorization]
+      operationId: listDeviceSessions
+      summary: The account's device sessions.
+      x-zaagl-auth: [J]
+      x-zaagl-status: { routeName: 'PROPOSED (BE-024)' }
+      security: [{ sessionJwt: [] }]
+      responses:
+        '200':
+          description: Sessions.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/DeviceSessionDto' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /api/me/sessions/{id}:
+    delete:
+      tags: [Device authorization]
+      operationId: revokeDeviceSession
+      summary: Revoke one device session (its refresh-token family).
+      x-zaagl-auth: [J]
+      x-zaagl-status: { routeName: 'PROPOSED (BE-024)' }
+      security: [{ sessionJwt: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '204': { description: Revoked. }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+components:
+  securitySchemes:
+    sessionJwt:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: |
+        Session JWT. Web: only the BFF holds it (PD-23); browsers call app.zaa.gl/bff/api/*. Native: device-session
+        tokens (`amr=device`, `client_id`). Holds every non-admin scope.
+    apiKey:
+      type: apiKey
+      in: header
+      name: X-Api-Key
+      description: Paid plans only (capability ApiKeys, PD-07). Holds only the scopes it was created with (BE-001).
+
+  parameters:
+    CodePath:
+      name: code
+      in: path
+      required: true
+      description: Short code or custom alias.
+      schema: { type: string, minLength: 4, maxLength: 64 }
+    ResourceIdPath:
+      name: id
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+    UploadIdPath:
+      name: id
+      in: path
+      required: true
+      description: Upload session id (a capability; principal must also match).
+      schema: { type: string, maxLength: 64 }
+    LinkKey:
+      name: X-Zaagl-Link-Key
+      in: header
+      required: false
+      description: The `#k=` value (22 chars base64url). Never in a path or query string.
+      schema: { type: string, pattern: '^[A-Za-z0-9_-]{22}$' }
+    Grant:
+      name: X-Zaagl-Grant
+      in: header
+      required: false
+      description: Access grant from unlock (at most 256 characters, ARC-004 §4.3).
+      schema: { type: string, maxLength: 256 }
+    IdempotencyKeyRequired:
+      name: Idempotency-Key
+      in: header
+      required: true
+      description: See info.description "Idempotency".
+      schema: { type: string, minLength: 8, maxLength: 128 }
+    IdempotencyKeyOptional:
+      name: Idempotency-Key
+      in: header
+      required: false
+      description: See info.description "Idempotency".
+      schema: { type: string, minLength: 8, maxLength: 128 }
+    CaptchaToken:
+      name: Captcha-Token
+      in: header
+      required: false
+      description: Turnstile token. Required for guests (actions guest-snippet / guest-upload, names fixed by BE-026); ignored with a credential.
+      schema: { type: string, maxLength: 2048 }
+    TusResumable:
+      name: Tus-Resumable
+      in: header
+      required: true
+      schema: { type: string, const: 1.0.0 }
+    UploadLength:
+      name: Upload-Length
+      in: header
+      required: true
+      schema: { type: integer, minimum: 1 }
+    UploadOffset:
+      name: Upload-Offset
+      in: header
+      required: true
+      schema: { type: integer, minimum: 0 }
+    UploadMetadata:
+      name: Upload-Metadata
+      in: header
+      required: true
+      description: 'tus metadata: "filename <b64>,filetype <b64>,kind <b64 of file|media>". Display data only.'
+      schema: { type: string, maxLength: 4096 }
+    UploadChecksum:
+      name: Upload-Checksum
+      in: header
+      required: false
+      schema: { type: string, example: 'sha1 Kq5sNclPz7QV2+lfQIuc6R7oRu0=' }
+
+  headers:
+    TusResumable:
+      schema: { type: string, const: 1.0.0 }
+    UploadOffset:
+      schema: { type: integer }
+    UploadExpires:
+      description: RFC 9110 date; 24 hours after the last activity.
+      schema: { type: string }
+    RetryAfter:
+      schema: { type: integer }
+    WwwAuthenticate:
+      schema: { type: string, example: 'Bearer error="invalid_token"' }
+    UcXContentTypeOptions: { schema: { type: string, const: nosniff } }
+    UcContentSecurityPolicy: { schema: { type: string, const: "sandbox; default-src 'none'; img-src 'self' data:; media-src 'self'; style-src 'unsafe-inline'" } }
+    UcContentDisposition: { description: 'attachment (with filename and filename*) except allowlisted raster images, video and derived previews (inline).', schema: { type: string } }
+    UcContentType: { description: 'Detected type; application/octet-stream for unknown attachments; text/plain; charset=utf-8 for raw snippets. Never the declared type.', schema: { type: string } }
+    UcCacheControl: { schema: { type: string, const: 'private, no-store' } }
+    UcReferrerPolicy: { schema: { type: string, const: no-referrer } }
+    UcCrossOriginResourcePolicy: { schema: { type: string, const: cross-origin } }
+    UcXRobotsTag: { schema: { type: string, const: 'noindex, nofollow' } }
+    UcAcceptRanges: { schema: { type: string, const: bytes } }
+
+  schemas:
+    Problem:
+      type: object
+      required: [type, title, status, code]
+      properties:
+        type: { type: string, format: uri, example: 'https://zaa.gl/problems/quota-exceeded' }
+        title: { type: string }
+        status: { type: integer }
+        code: { type: string, description: The last segment of `type`. }
+        detail: { type: string }
+        instance: { type: string }
+
+    OAuthError:
+      type: object
+      required: [error]
+      properties:
+        error: { type: string, enum: [authorization_pending, slow_down, access_denied, expired_token, invalid_grant, invalid_client, invalid_request] }
+        error_description: { type: string }
+
+    ContentKind:
+      type: string
+      enum: [snippet, file, media]
+    ResourceState:
+      type: string
+      description: Computed (addendum §2.4), first match wins. Only ready serves bytes.
+      enum: [purgeable, deleted, disabled, burned, expired, processing, rejected, ready]
+    ProcessingStatus:
+      type: string
+      enum: [pending, scanning, ready, rejected, error]
+    RejectedReason:
+      type: string
+      enum: [infected, type-not-allowed, too-large, blocked-hash, scan-unavailable]
+    SnippetRenderMode:
+      type: string
+      enum: [code, plain, markdown, terminal]
+      description: Where Markdown is rendered is OPEN (PD-09); the API returns raw text only.
+    MediaType:
+      type: string
+      enum: [image, animatedImage, svg, video]
+
+    SnippetCreateRequest:
+      type: object
+      required: [content]
+      properties:
+        content: { type: string, description: 'UTF-8; cap on the UTF-8 byte count: guest 256 KB, Free 512 KB, Starter 2 MB (PD-56, 1 KB = 1,024 bytes).' }
+        language: { type: [string, 'null'], maxLength: 64 }
+        renderMode: { $ref: '#/components/schemas/SnippetRenderMode' }
+        title: { type: [string, 'null'], maxLength: 200 }
+        expiresAt: { type: [string, 'null'], format: date-time, description: 'min(requested, now + plan RetentionDays); later gives 400 expiry-beyond-plan.' }
+        password: { type: [string, 'null'], description: 'Starter only (PasswordOnContent, PD-54), else 402 plan_required.' }
+        customSlug: { type: [string, 'null'], description: 'Alias; allowed for everyone, guests included (PD-57). Phase 0 alias rules apply.' }
+        public: { type: boolean, default: false, description: 'false mints a link key (PD-01).', x-zaagl-status: 'TO_CONFIRM for guests' }
+        burnAfterView: { type: boolean, x-zaagl-status: 'OPEN (burn after view for snippets); not accepted until decided' }
+    SnippetCreatedDto:
+      type: object
+      required: [resourceId, code, shortUrl, version, sizeBytes, lineCount, expiresAt, isGuest]
+      properties:
+        resourceId: { type: string, format: uuid }
+        code: { type: string }
+        shortUrl: { type: string, format: uri, description: 'Without the fragment; append #k=<linkKey> when linkKey is present.' }
+        linkKey: { type: [string, 'null'], description: Returned once. }
+        version: { type: integer }
+        sizeBytes: { type: integer }
+        lineCount: { type: integer }
+        expiresAt: { type: string, format: date-time }
+        isGuest: { type: boolean }
+    SnippetUpdateRequest:
+      type: object
+      required: [content, baseVersion]
+      properties:
+        content: { type: string }
+        language: { type: [string, 'null'] }
+        renderMode: { $ref: '#/components/schemas/SnippetRenderMode' }
+        baseVersion: { type: integer, description: 'Must equal the current version, else 409 version-conflict.' }
+    SnippetVersionDto:
+      type: object
+      required: [version, sizeBytes, lineCount, createdAt]
+      properties:
+        version: { type: integer }
+        sizeBytes: { type: integer }
+        lineCount: { type: integer }
+        createdAt: { type: string, format: date-time }
+    SnippetViewDto:
+      type: object
+      required: [renderMode, version, versions, content, sizeBytes, lineCount, expiresAt]
+      properties:
+        title: { type: [string, 'null'] }
+        language: { type: [string, 'null'] }
+        renderMode: { $ref: '#/components/schemas/SnippetRenderMode' }
+        version: { type: integer }
+        versions: { type: array, items: { type: integer } }
+        content: { type: string, description: Plain data; clients render it inertly. }
+        sizeBytes: { type: integer }
+        lineCount: { type: integer }
+        expiresAt: { type: string, format: date-time }
+    SnippetDiffDto:
+      type: object
+      required: [from, to, lines, stats]
+      properties:
+        from: { type: integer }
+        to: { type: integer }
+        lines:
+          type: array
+          items:
+            type: object
+            properties:
+              left: { $ref: '#/components/schemas/DiffSide' }
+              right: { $ref: '#/components/schemas/DiffSide' }
+        stats:
+          type: object
+          properties:
+            added: { type: integer }
+            removed: { type: integer }
+            changed: { type: integer }
+    DiffSide:
+      type: [object, 'null']
+      properties:
+        no: { type: [integer, 'null'] }
+        text: { type: string }
+        type: { type: string, enum: [unchanged, inserted, deleted, modified, imaginary] }
+
+    MediaDerivativeDto:
+      type: object
+      properties:
+        kind: { type: string, enum: [thumb-320, preview-1600, poster, preview-mp4, svg-raster] }
+        status: { type: string, enum: [pending, ready, failed, skipped] }
+        width: { type: [integer, 'null'] }
+        height: { type: [integer, 'null'] }
+        url: { type: [string, 'null'], description: 'Preview ticket URL; never for burn files.' }
+    MediaDto:
+      type: object
+      properties:
+        mediaType: { $ref: '#/components/schemas/MediaType' }
+        detectedMime: { type: string }
+        width: { type: [integer, 'null'] }
+        height: { type: [integer, 'null'] }
+        durationMs: { type: [integer, 'null'] }
+        frameCount: { type: [integer, 'null'] }
+        hasAlpha: { type: [boolean, 'null'] }
+        colorSpace: { type: [string, 'null'] }
+        iccProfileName: { type: [string, 'null'] }
+        browserPlayable: { type: boolean }
+        derivatives: { type: array, items: { $ref: '#/components/schemas/MediaDerivativeDto' } }
+      x-zaagl-status: 'EXIF/GPS policy OPEN (PD-13); allowlist OPEN (PD-16); SVG PROPOSED (PD-18); transcoding PROPOSED (PD-30)'
+
+    ContentDescriptor:
+      type: object
+      description: Viewer descriptor. MUST NOT contain a download ticket (addendum §8.1.2).
+      required: [kind, state, expiresAt, burnAfterDownload, hasPassword]
+      properties:
+        kind: { $ref: '#/components/schemas/ContentKind' }
+        state: { $ref: '#/components/schemas/ResourceState' }
+        title: { type: [string, 'null'] }
+        sizeBytes: { type: [integer, 'null'] }
+        mime: { type: [string, 'null'], description: Detected type. }
+        filename: { type: [string, 'null'], description: Sanitised display name, never a path. }
+        expiresAt: { type: string, format: date-time }
+        burnAfterDownload: { type: boolean }
+        hasPassword: { type: boolean }
+        inlineUrl: { type: [string, 'null'], description: 'Inline ticket URL (15 min). Only when ready, not burn, allowlisted type.' }
+        previewUrl: { type: [string, 'null'], description: 'Preview ticket URL. Only when ready and not burn.' }
+        rawUrl: { type: [string, 'null'], description: 'Raw snippet text ticket URL. Snippets only, when ready.' }
+        snippet: { oneOf: [{ $ref: '#/components/schemas/SnippetViewDto' }, { type: 'null' }] }
+        media: { oneOf: [{ $ref: '#/components/schemas/MediaDto' }, { type: 'null' }] }
+        file:
+          type: [object, 'null']
+          properties:
+            detectedMime: { type: string }
+            sizeBytes: { type: integer }
+            sha256: { type: [string, 'null'], description: 'Hex. Whether to expose it publicly is OPEN.' }
+
+    UnlockRequest:
+      type: object
+      required: [password]
+      properties:
+        password: { type: string, maxLength: 256 }
+    UnlockResponse:
+      type: object
+      required: [grant, expiresAt]
+      properties:
+        grant: { type: string }
+        expiresAt: { type: string, format: date-time }
+    DownloadTicketResponse:
+      type: object
+      required: [url, expiresAt]
+      properties:
+        url: { type: string, format: uri, example: 'https://usercontent.zaa.gl/d/AAEC....sig' }
+        expiresAt: { type: string, format: date-time }
+
+    ResourceSummary:
+      type: object
+      required: [id, kind, code, shortUrl, state, sizeBytes, expiresAt, burnAfterDownload, isPublic, createdAt]
+      properties:
+        id: { type: string, format: uuid }
+        kind: { $ref: '#/components/schemas/ContentKind' }
+        title: { type: [string, 'null'] }
+        code: { type: string }
+        shortUrl: { type: string, format: uri, description: Without the fragment; the key is never returned again. }
+        state: { $ref: '#/components/schemas/ResourceState' }
+        processingStatus: { $ref: '#/components/schemas/ProcessingStatus' }
+        sizeBytes: { type: integer }
+        expiresAt: { type: string, format: date-time }
+        purgeAfter: { type: [string, 'null'], format: date-time }
+        burnAfterDownload: { type: boolean }
+        isPublic: { type: boolean }
+        downloadCount: { type: integer, description: 'From the durable grant table only (single source of truth; no analytics events until PD-10).' }
+        createdAt: { type: string, format: date-time }
+    ResourceDetail:
+      allOf:
+        - $ref: '#/components/schemas/ResourceSummary'
+        - type: object
+          properties:
+            rejectedReason: { oneOf: [{ $ref: '#/components/schemas/RejectedReason' }, { type: 'null' }] }
+            hasPassword: { type: boolean }
+            burnClaimedAt: { type: [string, 'null'], format: date-time }
+            linkKey: { type: [string, 'null'], description: Only in the PATCH response that issued a new key. }
+            snippet: { oneOf: [{ $ref: '#/components/schemas/SnippetVersionDto' }, { type: 'null' }] }
+            media: { oneOf: [{ $ref: '#/components/schemas/MediaDto' }, { type: 'null' }] }
+            file:
+              type: [object, 'null']
+              properties:
+                filename: { type: string }
+                detectedMime: { type: string }
+                sha256: { type: string }
+    ResourcePatchRequest:
+      type: object
+      properties:
+        title: { type: [string, 'null'], maxLength: 200 }
+        expiresAt: { type: [string, 'null'], format: date-time }
+        public: { type: [boolean, 'null'] }
+        password: { type: [string, 'null'] }
+        clearPassword: { type: boolean, default: false }
+        burnAfterDownload: { type: [boolean, 'null'] }
+    ResourceStatusDto:
+      type: object
+      required: [processingStatus, state]
+      properties:
+        state: { $ref: '#/components/schemas/ResourceState' }
+        processingStatus: { $ref: '#/components/schemas/ProcessingStatus' }
+        rejectedReason: { oneOf: [{ $ref: '#/components/schemas/RejectedReason' }, { type: 'null' }] }
+        derivatives: { type: array, items: { $ref: '#/components/schemas/MediaDerivativeDto' } }
+    StorageDto:
+      type: object
+      required: [limits, usedBytes, reservedBytes]
+      properties:
+        limits:
+          type: object
+          properties:
+            maxFileBytes: { type: integer }
+            maxSnippetBytes: { type: integer, description: 'PD-56' }
+            retentionDays: { type: integer }
+            quarantineAfterExpiry: { type: boolean }
+        usedBytes: { type: integer }
+        reservedBytes: { type: integer }
+        quotaBytes: { type: [integer, 'null'], description: 'Free 250 MB, Starter 5 GB (PD-54; 1 MB = 1,048,576 bytes); null for guests.' }
+        openUploads: { type: integer }
+
+    CompleteUploadRequest:
+      type: object
+      properties:
+        title: { type: [string, 'null'], maxLength: 200 }
+        expiresAt: { type: [string, 'null'], format: date-time }
+        burnAfterDownload: { type: boolean, default: false, description: 'Files only; Starter only (BurnAfterDownload, PD-54).' }
+        password: { type: [string, 'null'], description: 'Starter only (PasswordOnContent, PD-54).' }
+        customSlug: { type: [string, 'null'], description: 'Alias; allowed for everyone, guests included (PD-57).' }
+        public: { type: boolean, default: false, x-zaagl-status: 'TO_CONFIRM for guests' }
+    CompleteUploadResponse:
+      type: object
+      required: [resourceId, code, shortUrl, state, expiresAt]
+      properties:
+        resourceId: { type: string, format: uuid }
+        code: { type: string }
+        shortUrl: { type: string, format: uri }
+        linkKey: { type: [string, 'null'], description: Returned once. }
+        state: { type: string, const: processing }
+        expiresAt: { type: string, format: date-time }
+
+    DeviceCodeRequest:
+      type: object
+      required: [client_id]
+      properties:
+        client_id: { type: string, enum: [zaagl-cli, zaagl-desktop] }
+        device_name: { type: [string, 'null'], maxLength: 64 }
+        os: { type: [string, 'null'], maxLength: 32 }
+    DeviceCodeResponse:
+      type: object
+      required: [device_code, user_code, verification_uri, verification_uri_complete, expires_in, interval]
+      properties:
+        device_code: { type: string }
+        user_code: { type: string, example: BCDF-GHJK }
+        verification_uri: { type: string, format: uri, example: 'https://app.zaa.gl/activate', description: 'From configuration DeviceAuth:VerificationUri (staging differs).' }
+        verification_uri_complete: { type: string }
+        expires_in: { type: integer, example: 600 }
+        interval: { type: integer, example: 5 }
+    DeviceTokenRequest:
+      type: object
+      required: [grant_type, device_code, client_id]
+      properties:
+        grant_type: { type: string, const: 'urn:ietf:params:oauth:grant-type:device_code' }
+        device_code: { type: string }
+        client_id: { type: string, enum: [zaagl-cli, zaagl-desktop] }
+    DeviceAuthResponse:
+      type: object
+      description: The existing AuthResponse (camelCase, Identity.Contracts) plus sessionId.
+      required: [accessToken, accessTokenExpiresAt, refreshToken, refreshTokenExpiresAt, user, sessionId]
+      properties:
+        accessToken: { type: string }
+        accessTokenExpiresAt: { type: string, format: date-time }
+        refreshToken: { type: string }
+        refreshTokenExpiresAt: { type: string, format: date-time }
+        user:
+          type: object
+          properties:
+            id: { type: string, format: uuid }
+            email: { type: string }
+            displayName: { type: string }
+            role: { type: [string, 'null'], description: Never Admin on a device token. }
+            emailConfirmed: { type: boolean }
+        sessionId: { type: string, format: uuid }
+    DeviceActivationInfo:
+      type: object
+      properties:
+        userCode: { type: string }
+        clientId: { type: string }
+        deviceName: { type: [string, 'null'] }
+        os: { type: [string, 'null'] }
+        requestedAt: { type: string, format: date-time }
+        expiresAt: { type: string, format: date-time }
+    DeviceActivationRequest:
+      type: object
+      required: [userCode, approve]
+      properties:
+        userCode: { type: string }
+        approve: { type: boolean }
+    DeviceSessionDto:
+      type: object
+      properties:
+        sessionId: { type: string, format: uuid }
+        clientId: { type: string }
+        deviceName: { type: [string, 'null'] }
+        os: { type: [string, 'null'] }
+        createdAt: { type: string, format: date-time }
+        lastUsedAt: { type: [string, 'null'], format: date-time }
+
+  responses:
+    Validation:
+      description: 400 validation
+      content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } }
+    ValidationOrExpiryBeyondPlan:
+      description: 400 validation | expiry-beyond-plan
+      content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } }
+    UploadLengthRequiredOrValidation:
+      description: 400 upload-length-required | validation
+      content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } }
+    Unauthorized:
+      description: 401 unauthorized. Any failing credential (PD-36).
+      headers:
+        WWW-Authenticate: { $ref: '#/components/headers/WwwAuthenticate' }
+      content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } }
+    UnauthorizedOrCaptcha:
+      description: 401 unauthorized (failing credential, never guest; PD-36) | captcha-required | captcha-invalid (guest only)
+      headers:
+        WWW-Authenticate: { $ref: '#/components/headers/WwwAuthenticate' }
+      content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } }
+    PasswordRequired:
+      description: 401 password-required (no, expired, tampered or other-link grant; or wrong password on unlock)
+      content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } }
+    PlanRequired:
+      description: 402 plan_required (capability flag false)
+      content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } }
+    InsufficientScope:
+      description: 403 insufficient-scope
+      content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } }
+    InsufficientScopeOrQuotaExceeded:
+      description: 403 insufficient-scope | quota-exceeded (used + reserved + new > quota)
+      content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } }
+    TicketInvalid:
+      description: 403 ticket-invalid (forged, expired, unknown kid, other resource, grant exhausted). Carries the addendum §4.4 headers like every usercontent response.
+      content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } }
+    NotFound:
+      description: 404 not_found. Also a missing or wrong link key, and any non-owner on an owner route (admins included).
+      content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } }
+    Conflict:
+      description: 409 conflict (alias taken, idempotency key in progress with Retry-After)
+      headers:
+        Retry-After: { $ref: '#/components/headers/RetryAfter' }
+      content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } }
+    VersionConflict:
+      description: 409 version-conflict
+      content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } }
+    UploadOffsetMismatch:
+      description: 409 upload-offset-mismatch
+      content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } }
+    UploadIncompleteOrConflict:
+      description: 409 upload-incomplete | conflict
+      content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } }
+    BurnAlreadyClaimedOrConflict:
+      description: 409 burn-already-claimed | conflict
+      content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } }
+    Processing:
+      description: 409 processing (not ready; fail-closed, no bytes)
+      content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } }
+    Gone:
+      description: '410 with code expired (quarantined), deleted, disabled (owner or admin) or taken-down (abuse or safety: acceptable-use page). BE-002 maps all four to 410 (ARC-004 §3).'
+      content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } }
+    GoneOrBurned:
+      description: '410 with code burned, expired, deleted, disabled or taken-down (ARC-004 §3, ARC-006 §5).'
+      content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } }
+    DeliveryGone:
+      description: '410 burned | gone (usercontent.zaa.gl only; the specific expired/deleted/disabled/taken-down code is given by the API routes, ARC-008 §4.5).'
+      content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } }
+    RangeRequired:
+      description: '416 range-required: object above Content:MaxResponseBytes without one acceptable byte range. Headers Accept-Ranges: bytes and Content-Range: bytes */<size> (ARC-008 §5).'
+      content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } }
+    UploadExpired:
+      description: 410 upload-expired
+      content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } }
+    LengthRequired:
+      description: 411 length-required
+      content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } }
+    FileTooLarge:
+      description: 413 file-too-large (Upload-Length or body above plan MaxFileBytes, before any byte)
+      content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } }
+    ChunkTooLarge:
+      description: 413 chunk-too-large (request body above 90,000,000 bytes)
+      content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } }
+    SnippetTooLarge:
+      description: 413 snippet-too-large (cap per plan, PD-56)
+      content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } }
+    DiffTooLarge:
+      description: 413 diff-too-large
+      content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } }
+    UnsupportedMediaType:
+      description: 415 unsupported-media-type (body not UTF-8 text)
+      content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } }
+    IdempotencyMismatch:
+      description: 422 idempotency-mismatch
+      content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } }
+    ContentRejected:
+      description: 422 content-rejected (infected, blocked-hash, type-not-allowed, scan-unavailable)
+      content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } }
+    TooManyRequests:
+      description: 429 too_many_requests (rate limit)
+      headers:
+        Retry-After: { $ref: '#/components/headers/RetryAfter' }
+      content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } }
+    Quota:
+      description: 429 quota (guest creation counters, hard limits) | too_many_requests
+      headers:
+        Retry-After: { $ref: '#/components/headers/RetryAfter' }
+      content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } }
+    ChecksumMismatch:
+      description: 460 checksum-mismatch (tus checksum extension)
+      content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } }
+    Busy:
+      description: 503 busy (lock timeout) | service_unavailable | guest_creation_paused. Error codes are the contracts.md C9 catalogue.
+      headers:
+        Retry-After: { $ref: '#/components/headers/RetryAfter' }
+      content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } }
+    InsufficientStorage:
+      description: 507 insufficient-storage (disk admission, DEVOPS_PLAN §2.4)
+      headers:
+        Retry-After: { $ref: '#/components/headers/RetryAfter' }
+      content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } }
