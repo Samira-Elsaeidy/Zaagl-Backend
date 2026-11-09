@@ -244,3 +244,34 @@ public sealed class IdempotencyKey
     public string? ResponseBody { get; set; } // jsonb
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
 }
+
+/// <summary>C10 event numbers stored in <c>links.lifecycle_outbox.event</c>.</summary>
+public enum LifecycleEventType : short
+{
+    Deleted = 1,
+    Disabled = 2,
+    Enabled = 3,
+    Renewed = 4,
+    Expired = 5,
+    Purged = 6,
+}
+
+/// <summary>
+/// C10 (contracts.md, ARC-002 §5, addendum §2.3): <c>links.lifecycle_outbox</c>. One row per lifecycle change of a
+/// content link, written in the same transaction as the change; drained at least once by the worker (drain and the
+/// Resources handler arrive with BE-019). Never contains a link key.
+/// </summary>
+public sealed class LifecycleOutboxRow
+{
+    public long Id { get; set; }
+    public Guid LinkId { get; set; }
+    public Guid ResourceId { get; set; }
+    public Contracts.LinkTargetKind Kind { get; set; }
+    public LifecycleEventType Event { get; set; }
+    /// <summary>jsonb: event-specific fields (ExpiresAt/PurgeAfter for Renewed, DisabledKind for Disabled, IsGuest for Expired).</summary>
+    public string? Payload { get; set; }
+    public DateTime OccurredAt { get; set; }
+    public DateTime? ProcessedAt { get; set; }
+    public int Attempts { get; set; }
+    public string? LastError { get; set; }
+}

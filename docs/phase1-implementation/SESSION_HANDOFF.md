@@ -8,7 +8,8 @@ Read this first in every new session, then STATUS.md, DECISIONS.md (Approvals ta
 |---|---|
 | Stage | **Stage 1 groundwork complete, reviewed, committed and pushed** on branch `phase1/stage-1` in both repos (user approved "Commit and push", 2026-11-09). Stages 2 to 7 are ON HOLD (PD-50/PD-51). |
 | In progress | Nothing. PD-58 finished: build 0 errors; Coordinator 9/9, Links 550/550, API 555/555; frontend 84/84 (2026-11-09). |
-| Next exact action | Ask the user before starting Stage 2. Run CI on GitHub / Docker on the user's Docker machine when they choose. |
+| Stage 2 | **Started and PAUSED** (usage limit, PD-59). Read `STAGE_2_PAUSED.md` first: what exists, what is missing, what to do next. Pushed as a WIP commit on `phase1/stage-1`. |
+| Next exact action | Resume the Stage 2 agents (see STAGE_2_PAUSED.md "What to do next"). Run CI on GitHub / Docker on the user's Docker machine when they choose. |
 | Final review | docs/phase1-implementation/reviews/stage1-final.md (Head): 33 DONE, 5 PARTIAL, 0 NOT DONE; the pre-commit migration rework is fixed. |
 
 ## Standing rules from the user (also in memory)

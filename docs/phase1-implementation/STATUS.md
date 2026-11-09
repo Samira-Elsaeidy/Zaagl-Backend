@@ -3,7 +3,7 @@
 | | |
 |---|---|
 | Current stage | **Stage 1 groundwork complete (PD-51), committed and pushed on `phase1/stage-1` (user approved 2026-11-09).** PD-58 (key-revocation retry) done; final run: build 0 errors, Coordinator 9/9, Links 555/555, API 555/555, frontend 84/84. |
-| Scope | PD-50/PD-51: Stage 1 finished with its important groundwork only; testing tasks deferred; **Stages 2 to 7 ON HOLD** until the product owner decides (the lead asks before starting Stage 2). |
+| Scope | PD-50/PD-51: Stage 1 finished with its important groundwork only; testing tasks deferred; **PD-59: Stages 2 to 7 approved, built one stage at a time; Stage 2 IN PROGRESS** (lead checks in between stages). |
 | Last verified run | 2026-11-09 on the Stage 1 tree (committed unchanged): backend build 0 errors; tests Coordinator 9/9, Links 550/550, API (QA) 555/555; frontend tsc and lint clean, 72/72 tests (84/84 after the later Arabic/formatBytes fix). |
 | Last commit | Zaagl-Backend `9923526` (plan docs only) on `phase1/stage-1`; Zaagl-Frontend `985948d` (user's own docs commit). Stage 1 code: the "Phase 1 Stage 1 groundwork" commit on `phase1/stage-1` in both repos (see `git log`). |
 | Final review | docs/phase1-implementation/reviews/stage1-final.md (Head): 38 groundwork items, 33 DONE, 5 PARTIAL, 0 NOT DONE; the one pre-commit REWORK (migration validation) is fixed. |

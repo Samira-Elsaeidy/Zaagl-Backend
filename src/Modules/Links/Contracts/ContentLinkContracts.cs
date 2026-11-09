@@ -168,3 +168,16 @@ public interface ILinkTakedown
 {
     Task<Result<bool>> TakeDownContentAsync(ContentTakedownRequest request, CancellationToken cancellationToken);
 }
+
+// ---- C1 addition (Stage 2, contracts.md change F-4, for architect review) ----
+
+/// <summary>
+/// The cached link snapshot by link id. Content modules only know the link id of their resource; the owner routes
+/// and the user-content authorize hop need the authoritative link state (ARC-006 §2), and the hop must see a
+/// takedown within the spec §7.3 invalidation bound, so it reads the same NOTIFY-invalidated snapshot as the
+/// redirect. Returns null for an unknown id.
+/// </summary>
+public interface ILinkSnapshots
+{
+    Task<LinkSnapshot?> GetSnapshotByIdAsync(Guid linkId, CancellationToken cancellationToken);
+}

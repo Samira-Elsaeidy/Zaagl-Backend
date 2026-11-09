@@ -218,7 +218,7 @@ builder.Services
     .AddIdentityModule(config)
     .AddBillingModule(config)
     .AddLinksModule(config)
-    .AddAccessModule()
+    .AddAccessModule(config, builder.Environment.IsProduction())
     .AddAnalyticsModule(config)
     .AddResolutionModule(config)
     .AddFilesModule(config)

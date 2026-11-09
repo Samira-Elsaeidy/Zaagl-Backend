@@ -19,6 +19,7 @@ public sealed class LinksDbContext(DbContextOptions<LinksDbContext> options) : D
     public DbSet<AbuseReport> AbuseReports => Set<AbuseReport>();
     public DbSet<AliasDenylistEntry> AliasDenylist => Set<AliasDenylistEntry>();
     public DbSet<AliasFreeze> AliasFreezes => Set<AliasFreeze>();
+    public DbSet<LifecycleOutboxRow> LifecycleOutbox => Set<LifecycleOutboxRow>();
 
     protected override void OnModelCreating(ModelBuilder b)
     {
@@ -166,6 +167,20 @@ public sealed class LinksDbContext(DbContextOptions<LinksDbContext> options) : D
             e.Property(x => x.Pattern).HasMaxLength(64).IsRequired();
             e.Property(x => x.Kind).HasMaxLength(10).IsRequired();
             e.HasIndex(x => new { x.Kind, x.Pattern }).IsUnique();
+        });
+
+        // C10 (contracts.md): content-link lifecycle outbox, drained by the worker (BE-019).
+        b.Entity<LifecycleOutboxRow>(e =>
+        {
+            e.ToTable("lifecycle_outbox", t => t.HasCheckConstraint("ck_lifecycle_outbox_event", "event IN (1, 2, 3, 4, 5, 6)"));
+            e.HasKey(x => x.Id);
+            e.Property(x => x.Id).UseIdentityAlwaysColumn();
+            e.Property(x => x.Kind).HasConversion<short>();
+            e.Property(x => x.Event).HasConversion<short>();
+            e.Property(x => x.Payload).HasColumnType("jsonb");
+            e.Property(x => x.LastError).HasMaxLength(1000);
+            e.HasIndex(x => x.OccurredAt).HasFilter("processed_at IS NULL").HasDatabaseName("ix_lifecycle_outbox_pending");
+            e.HasIndex(x => x.LinkId);
         });
 
         b.Entity<AliasFreeze>(e =>

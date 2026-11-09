@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Zaagl Phase 1 content API (draft)
-  version: 0.1.0-draft
+  version: 0.2.0-draft
   description: |
     DRAFT for ARC-016. Written by hand from the Phase 1 contract pack (docs/phase1-implementation/contracts.md C1-C12),
     the approved rulebook docs/spec/zaagl-phase1-addendum.md and the contract stubs in src/Modules/*/Contracts. It is
@@ -54,19 +54,25 @@ security:
   - apiKey: []
 
 paths:
-  # ---------------------------------------------------------------- Snippets
+  # ---------------------------------------------------------------- Snippets (ARC-010)
   /api/snippets:
     post:
       tags: [Snippets]
       operationId: createSnippet
       summary: Create a snippet and its content link.
       description: |
-        Creates the resource (pending, quota reserved), the content link through ILinkIssuer, and binds them
-        (addendum §2.2). Default is keyed (`#k=`, PD-01); `public: true` creates a keyless link.
-        The plain `linkKey` is returned once and never again.
+        ARC-010 §4.1. Creates the resource (pending, quota reserved), stores version 1, issues the content link through
+        ILinkIssuer (idempotency key = resource id), binds and marks it ready (addendum §2.2). Default is keyed (`#k=`,
+        PD-01); `public: true` creates a keyless link (refused for guests until addendum §5.1.3 is confirmed:
+        `400 validation`). The plain `linkKey` is returned once and never again; on an idempotent replay it is null
+        (built behaviour, ARC-002 Q1 OPEN). Text is stored byte-for-byte (no trimming, no line-ending changes).
+        Validation: non-empty, strict UTF-8, no U+0000, language `^[a-z0-9][a-z0-9+#._-]{0,63}$` after lower-casing,
+        title at most 200 characters (control and bidi-override characters stripped).
+        Order of refusals: 401 (failing credential, before anything; PD-36) → 401 captcha (guest) → 400 → idempotency
+        (422/409) → 413/402/400 expiry → 429 guest counters → 403 quota → 409 alias.
       x-zaagl-auth: [J, "K(snippets:write)", G]
       x-zaagl-scopes: [snippets:write]
-      x-zaagl-rate-limit: content-write (per principal); guests 30/hour and 60/rolling 24 h per IP partition, snippets and uploads counted together (PD-14)
+      x-zaagl-rate-limit: content-write (per principal, values ARC-013 OPEN); guests 30/hour and 60/rolling 24 h per IP partition, snippets and uploads counted together (PD-14)
       security:
         - sessionJwt: []
         - apiKey: []
@@ -81,7 +87,7 @@ paths:
             schema: { $ref: '#/components/schemas/SnippetCreateRequest' }
       responses:
         '201':
-          description: Created.
+          description: Created. Share URL = shortUrl + (linkKey ? "#k=" + linkKey : "").
           content:
             application/json:
               schema: { $ref: '#/components/schemas/SnippetCreatedDto' }
@@ -99,21 +105,27 @@ paths:
     post:
       tags: [Snippets]
       operationId: createSnippetRaw
-      summary: CLI pipe. Create a snippet from a streamed text/plain body.
+      summary: CLI pipe. Create a snippet from a streamed text/plain body (no guest path).
       description: |
-        The size cap is enforced while reading, not after. With `Accept: text/plain` the response body is only the
-        share URL including `#k=<key>` for keyed snippets, followed by `\n`.
+        ARC-010 §4.4. `Content-Type: text/plain` with `charset=utf-8` or no charset; anything else → 415.
+        A Content-Length above the plan cap → 413 before reading; otherwise the body is read through a counting stream
+        that stops at cap + 1 bytes (413). Invalid UTF-8 or U+0000 → 415 (binary input). `ansi=strip` (default) removes
+        ECMA-48 escape sequences when `renderMode=terminal`; the cap applies to the received body.
+        No password parameter (secrets never in a query string): use the JSON route or PATCH /api/resources/{id}.
+        With `Accept: text/plain` the response body is only the share URL including `#k=<key>` for keyed snippets,
+        followed by `\n`; otherwise SnippetCreatedDto.
       x-zaagl-auth: [J, "K(snippets:write)"]
       x-zaagl-scopes: [snippets:write]
       x-zaagl-rate-limit: content-write
       parameters:
         - $ref: '#/components/parameters/IdempotencyKeyOptional'
-        - { name: lang, in: query, schema: { type: string, maxLength: 64 } }
+        - { name: lang, in: query, description: 'Shiki language id (ARC-010 §8); omitted = viewer auto-detects.', schema: { type: string, maxLength: 64, pattern: '^[A-Za-z0-9][A-Za-z0-9+#._-]{0,63}$' } }
         - { name: title, in: query, schema: { type: string, maxLength: 200 } }
         - { name: renderMode, in: query, schema: { $ref: '#/components/schemas/SnippetRenderMode' } }
-        - { name: ansi, in: query, schema: { type: string, enum: [keep, strip], default: strip } }
+        - { name: ansi, in: query, description: Only for renderMode=terminal., schema: { type: string, enum: [keep, strip], default: strip } }
         - { name: expiresAt, in: query, description: Clamped to the plan retention; later than the plan maximum gives 400 expiry-beyond-plan., schema: { type: string, format: date-time } }
         - { name: public, in: query, schema: { type: boolean, default: false } }
+        - { name: customSlug, in: query, description: 'Alias (PD-57), Phase 0 alias rules.', schema: { type: string, minLength: 4, maxLength: 64 } }
       requestBody:
         required: true
         content:
@@ -130,6 +142,7 @@ paths:
         '400': { $ref: '#/components/responses/ValidationOrExpiryBeyondPlan' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/InsufficientScopeOrQuotaExceeded' }
+        '409': { $ref: '#/components/responses/Conflict' }
         '413': { $ref: '#/components/responses/SnippetTooLarge' }
         '415': { $ref: '#/components/responses/UnsupportedMediaType' }
         '422': { $ref: '#/components/responses/IdempotencyMismatch' }
@@ -142,25 +155,39 @@ paths:
     get:
       tags: [Snippets]
       operationId: getOwnSnippet
-      summary: Owner view of a snippet (latest version).
+      summary: Owner view of a snippet (current version, all version numbers, resource fields).
+      description: |
+        Resource fields in any state except purgeable (404). `snippet` and `rawUrl` only while the state is `ready`
+        (addendum §9.2: bytes are unreachable once expired, deleted or disabled); otherwise both are null and the
+        owner sees the state. `rawUrl` is a ticket with purpose `owner`, derivative `v<n>` (15 min).
       x-zaagl-auth: [owner, "K(resources:read)"]
       x-zaagl-scopes: [resources:read]
       responses:
         '200':
           description: The snippet.
+          headers:
+            Cache-Control: { schema: { type: string, const: 'private, no-store' } }
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/SnippetViewDto' }
+              schema: { $ref: '#/components/schemas/OwnerSnippetDto' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/InsufficientScope' }
         '404': { $ref: '#/components/responses/NotFound' }
     put:
       tags: [Snippets]
       operationId: updateSnippet
-      summary: Save a new version (versions are immutable).
+      summary: Save a new immutable version (ARC-010 §3, §4.2).
+      description: |
+        Owner only, capability ManageContent (guests have no management). State must be `ready`, else
+        410 expired|deleted|disabled|taken-down or 409 processing. Size checked against the owner's current plan.
+        `baseVersion` must equal the current version (409 version-conflict); at most 100 versions (409 version-limit).
+        A no-op (same text, language and renderMode as the current version) writes nothing and returns the current
+        version with 200. The link, key, expiry and short URL never change; visitors see the new version at once.
       x-zaagl-auth: [owner, "K(snippets:write)"]
       x-zaagl-scopes: [snippets:write]
       x-zaagl-rate-limit: content-write
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKeyOptional'
       requestBody:
         required: true
         content:
@@ -168,7 +195,7 @@ paths:
             schema: { $ref: '#/components/schemas/SnippetUpdateRequest' }
       responses:
         '200':
-          description: New version stored.
+          description: New (or unchanged current) version.
           content:
             application/json:
               schema: { $ref: '#/components/schemas/SnippetVersionDto' }
@@ -176,20 +203,24 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/InsufficientScopeOrQuotaExceeded' }
         '404': { $ref: '#/components/responses/NotFound' }
-        '409': { $ref: '#/components/responses/VersionConflict' }
+        '409': { $ref: '#/components/responses/VersionConflictOrLimitOrProcessing' }
+        '410': { $ref: '#/components/responses/Gone' }
         '413': { $ref: '#/components/responses/SnippetTooLarge' }
+        '422': { $ref: '#/components/responses/IdempotencyMismatch' }
         '503': { $ref: '#/components/responses/Busy' }
     delete:
       tags: [Snippets]
       operationId: deleteSnippet
-      summary: Delete the snippet; its link answers 410 and cannot be renewed.
+      summary: Same as DELETE /api/resources/{id} for a snippet. The link answers 410 and cannot be renewed.
+      description: Text kept through the 90-day quarantine and deleted at purge_after; quota freed only at purge (PD-55).
       x-zaagl-auth: [owner, "K(snippets:write)"]
       x-zaagl-scopes: [snippets:write]
       responses:
-        '204': { description: Deleted. }
+        '204': { description: Deleted (also when already deleted). }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/InsufficientScope' }
         '404': { $ref: '#/components/responses/NotFound' }
+        '503': { $ref: '#/components/responses/Busy' }
 
   /api/snippets/{id}/versions:
     parameters:
@@ -197,9 +228,10 @@ paths:
     get:
       tags: [Snippets]
       operationId: listSnippetVersions
+      summary: All versions (metadata only), newest first. At most 100 (PD-17), no paging.
+      description: Available in every state except purgeable (404); version text needs state `ready`.
       x-zaagl-auth: [owner, "K(resources:read)"]
       x-zaagl-scopes: [resources:read]
-      x-zaagl-status: { versionLimit: 'PROPOSED (PD-17: 100 versions)' }
       responses:
         '200':
           description: Versions, newest first.
@@ -207,45 +239,65 @@ paths:
             application/json:
               schema:
                 type: array
+                maxItems: 100
                 items: { $ref: '#/components/schemas/SnippetVersionDto' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/InsufficientScope' }
         '404': { $ref: '#/components/responses/NotFound' }
 
   /api/snippets/{id}/versions/{n}:
     parameters:
       - $ref: '#/components/parameters/ResourceIdPath'
-      - { name: n, in: path, required: true, schema: { type: integer, minimum: 1 } }
+      - { name: n, in: path, required: true, schema: { type: integer, minimum: 1, maximum: 1000 } }
     get:
       tags: [Snippets]
       operationId: getSnippetVersion
+      summary: One version with its text (immutable; clients may cache it forever).
       x-zaagl-auth: [owner, "K(resources:read)"]
       x-zaagl-scopes: [resources:read]
       responses:
         '200':
-          description: One version with its content.
+          description: One version with its content. `version` = n, `versions` = all version numbers.
+          headers:
+            ETag: { description: '"<hex sha256 of the text>"', schema: { type: string } }
           content:
             application/json:
               schema: { $ref: '#/components/schemas/SnippetViewDto' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Processing' }
+        '410': { $ref: '#/components/responses/Gone' }
 
   /api/snippets/{id}/diff:
     parameters:
       - $ref: '#/components/parameters/ResourceIdPath'
       - { name: from, in: query, required: true, schema: { type: integer, minimum: 1 } }
       - { name: to, in: query, required: true, schema: { type: integer, minimum: 1 } }
+      - { name: ignoreWhitespace, in: query, schema: { type: boolean, default: false } }
     get:
       tags: [Snippets]
       operationId: diffSnippetVersions
-      summary: Side-by-side diff between two versions of one snippet (computed by the backend, rendered by the client).
+      summary: Side-by-side line diff between two versions of one snippet (DiffPlex on the server, rendered by the client).
+      description: |
+        ARC-010 §10. `from != to` (else 400), either order. Combined lines at most Snippets:MaxDiffLines (20,000) and a
+        2-second computation budget, else 413 diff-too-large. State must be `ready` (410/409 otherwise).
       x-zaagl-auth: [owner, "K(resources:read)"]
       x-zaagl-scopes: [resources:read]
-      x-zaagl-status: { publicDiff: 'OPEN (diff for public viewers not decided)' }
+      x-zaagl-status: { publicDiff: 'OPEN (ARC-003 Q2: may visitors see older versions and diffs?)' }
       responses:
         '200':
           description: Diff.
+          headers:
+            Cache-Control: { schema: { type: string, const: 'private, max-age=3600' } }
+            ETag: { schema: { type: string, example: '"d-1-3-0"' } }
           content:
             application/json:
               schema: { $ref: '#/components/schemas/SnippetDiffDto' }
+        '400': { $ref: '#/components/responses/Validation' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Processing' }
+        '410': { $ref: '#/components/responses/Gone' }
         '413': { $ref: '#/components/responses/DiffTooLarge' }
 
   # ---------------------------------------------------------------- Uploads (tus 1.0.0, PD-12)
@@ -1025,7 +1077,10 @@ components:
     SnippetRenderMode:
       type: string
       enum: [code, plain, markdown, terminal]
-      description: Where Markdown is rendered is OPEN (PD-09); the API returns raw text only.
+      default: code
+      description: |
+        ARC-010 §6.2. Where Markdown is rendered is OPEN (PD-09); the API returns text only. If PD-09 chooses server
+        rendering, a nullable `renderedHtml` is added to SnippetViewDto (additive change).
     MediaType:
       type: string
       enum: [image, animatedImage, svg, video]
@@ -1033,16 +1088,16 @@ components:
     SnippetCreateRequest:
       type: object
       required: [content]
+      additionalProperties: false
       properties:
-        content: { type: string, description: 'UTF-8; cap on the UTF-8 byte count: guest 256 KB, Free 512 KB, Starter 2 MB (PD-56, 1 KB = 1,024 bytes).' }
-        language: { type: [string, 'null'], maxLength: 64 }
+        content: { type: string, minLength: 1, description: 'Strict UTF-8, no U+0000; cap on the UTF-8 byte count: guest 262,144, Free 524,288, Starter 2,097,152 bytes (PD-56, 1 KB = 1,024 bytes). Stored byte-for-byte.' }
+        language: { type: [string, 'null'], maxLength: 64, pattern: '^[A-Za-z0-9][A-Za-z0-9+#._-]{0,63}$', description: 'Shiki language id, stored lower-case; null = viewer auto-detects (ARC-010 §8). Unknown ids render as plain text.' }
         renderMode: { $ref: '#/components/schemas/SnippetRenderMode' }
         title: { type: [string, 'null'], maxLength: 200 }
-        expiresAt: { type: [string, 'null'], format: date-time, description: 'min(requested, now + plan RetentionDays); later gives 400 expiry-beyond-plan.' }
-        password: { type: [string, 'null'], description: 'Starter only (PasswordOnContent, PD-54), else 402 plan_required.' }
-        customSlug: { type: [string, 'null'], description: 'Alias; allowed for everyone, guests included (PD-57). Phase 0 alias rules apply.' }
-        public: { type: boolean, default: false, description: 'false mints a link key (PD-01).', x-zaagl-status: 'TO_CONFIRM for guests' }
-        burnAfterView: { type: boolean, x-zaagl-status: 'OPEN (burn after view for snippets); not accepted until decided' }
+        expiresAt: { type: [string, 'null'], format: date-time, description: 'Default and maximum now + plan RetentionDays (guest/Free 7, Starter 30); later gives 400 expiry-beyond-plan.' }
+        password: { type: [string, 'null'], minLength: 1, maxLength: 256, description: 'Starter only (PasswordOnContent, PD-54), else 402 plan_required.' }
+        customSlug: { type: [string, 'null'], minLength: 4, maxLength: 64, description: 'Alias; allowed for everyone, guests included (PD-57). Phase 0 alias rules apply.' }
+        public: { type: boolean, default: false, description: 'false mints a link key (PD-01). Guests: true → 400 validation until confirmed.', x-zaagl-status: 'TO_CONFIRM for guests (addendum §5.1.3)' }
     SnippetCreatedDto:
       type: object
       required: [resourceId, code, shortUrl, version, sizeBytes, lineCount, expiresAt, isGuest]
@@ -1059,19 +1114,23 @@ components:
     SnippetUpdateRequest:
       type: object
       required: [content, baseVersion]
+      additionalProperties: false
+      description: 'The new version''s language and renderMode are exactly what is sent (null language = auto-detect); title is changed through PATCH /api/resources/{id}.'
       properties:
-        content: { type: string }
-        language: { type: [string, 'null'] }
+        content: { type: string, minLength: 1 }
+        language: { type: [string, 'null'], maxLength: 64, pattern: '^[A-Za-z0-9][A-Za-z0-9+#._-]{0,63}$' }
         renderMode: { $ref: '#/components/schemas/SnippetRenderMode' }
-        baseVersion: { type: integer, description: 'Must equal the current version, else 409 version-conflict.' }
+        baseVersion: { type: integer, minimum: 1, description: 'Must equal the current version, else 409 version-conflict.' }
     SnippetVersionDto:
       type: object
-      required: [version, sizeBytes, lineCount, createdAt]
+      required: [version, sizeBytes, lineCount, createdAt, renderMode]
       properties:
         version: { type: integer }
-        sizeBytes: { type: integer }
+        sizeBytes: { type: integer, description: UTF-8 bytes; counted toward the storage quota. }
         lineCount: { type: integer }
         createdAt: { type: string, format: date-time }
+        language: { type: [string, 'null'], description: 'Contract change F-5.' }
+        renderMode: { $ref: '#/components/schemas/SnippetRenderMode' }
     SnippetViewDto:
       type: object
       required: [renderMode, version, versions, content, sizeBytes, lineCount, expiresAt]
@@ -1080,11 +1139,30 @@ components:
         language: { type: [string, 'null'] }
         renderMode: { $ref: '#/components/schemas/SnippetRenderMode' }
         version: { type: integer }
-        versions: { type: array, items: { type: integer } }
-        content: { type: string, description: Plain data; clients render it inertly. }
+        versions: { type: array, items: { type: integer }, description: 'Owner routes: all version numbers, ascending. Public descriptor: only the current version (ARC-003 Q2 OPEN).' }
+        content: { type: string, description: 'Plain data, exactly as stored; clients render it inertly (ARC-010 §6).' }
         sizeBytes: { type: integer }
         lineCount: { type: integer }
         expiresAt: { type: string, format: date-time }
+    SnippetSummary:
+      type: object
+      description: Snippet block of a ResourceSummary (contract F-6 SnippetSummaryDto).
+      required: [version, renderMode, lineCount]
+      properties:
+        version: { type: integer }
+        language: { type: [string, 'null'] }
+        renderMode: { $ref: '#/components/schemas/SnippetRenderMode' }
+        lineCount: { type: integer }
+    OwnerSnippetDto:
+      description: 'GET /api/snippets/{id}: ResourceDetail plus the current version. `snippet` and `rawUrl` are null unless state is ready.'
+      allOf:
+        - $ref: '#/components/schemas/ResourceDetail'
+        - type: object
+          required: [versionCount]
+          properties:
+            versionCount: { type: integer, maximum: 100 }
+            current: { oneOf: [{ $ref: '#/components/schemas/SnippetViewDto' }, { type: 'null' }] }
+            rawUrl: { type: [string, 'null'], description: 'Owner ticket URL on usercontent.zaa.gl (purpose owner, derivative v<n>, 15 min).' }
     SnippetDiffDto:
       type: object
       required: [from, to, lines, stats]
