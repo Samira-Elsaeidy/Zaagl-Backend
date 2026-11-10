@@ -17,7 +17,7 @@ namespace Zaagl.Links.Tests;
 /// suites in this project).</summary>
 public sealed class EmailJobsTests : IDisposable
 {
-    private const string ConnectionString = "Host=localhost;Port=5433;Database=zaagl;Username=zaagl;Password=zaagl_dev";
+    private static readonly string ConnectionString = Environment.GetEnvironmentVariable("ZAAGL_TEST_PG") ?? "Host=localhost;Port=5433;Database=zaagl;Username=zaagl;Password=zaagl_dev";
     private readonly ServiceProvider _services;
     private readonly IdentityDbContext _db;
 

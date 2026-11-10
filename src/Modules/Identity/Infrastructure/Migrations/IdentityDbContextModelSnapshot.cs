@@ -82,6 +82,155 @@ namespace Zaagl.Modules.Identity.Infrastructure.Migrations
                     b.ToTable("api_keys", "identity");
                 });
 
+            modelBuilder.Entity("Zaagl.Modules.Identity.Domain.DeviceActivationFailure", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at");
+
+                    b.Property<DateTime?>("LockedUntil")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("locked_until");
+
+                    b.Property<Guid>("UserId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("user_id");
+
+                    b.HasKey("Id")
+                        .HasName("pk_device_activation_failures");
+
+                    b.HasIndex("UserId", "CreatedAt")
+                        .HasDatabaseName("ix_device_activation_failures_user_id_created_at");
+
+                    b.ToTable("device_activation_failures", "identity");
+                });
+
+            modelBuilder.Entity("Zaagl.Modules.Identity.Domain.DeviceAuthorization", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<string>("ClientId")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)")
+                        .HasColumnName("client_id");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at");
+
+                    b.Property<byte[]>("DeviceCodeHash")
+                        .IsRequired()
+                        .HasColumnType("bytea")
+                        .HasColumnName("device_code_hash");
+
+                    b.Property<string>("DeviceName")
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)")
+                        .HasColumnName("device_name");
+
+                    b.Property<DateTime>("ExpiresAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("expires_at");
+
+                    b.Property<DateTime?>("LastPolledAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("last_polled_at");
+
+                    b.Property<string>("Os")
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)")
+                        .HasColumnName("os");
+
+                    b.Property<int>("PollIntervalSeconds")
+                        .HasColumnType("integer")
+                        .HasColumnName("poll_interval_seconds");
+
+                    b.Property<short>("Status")
+                        .HasColumnType("smallint")
+                        .HasColumnName("status");
+
+                    b.Property<byte[]>("UserCodeHash")
+                        .IsRequired()
+                        .HasColumnType("bytea")
+                        .HasColumnName("user_code_hash");
+
+                    b.Property<Guid?>("UserId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("user_id");
+
+                    b.HasKey("Id")
+                        .HasName("pk_device_authorizations");
+
+                    b.HasIndex("DeviceCodeHash")
+                        .IsUnique()
+                        .HasDatabaseName("ix_device_authorizations_device_code_hash");
+
+                    b.HasIndex("ExpiresAt")
+                        .HasDatabaseName("ix_device_authorizations_expires_at");
+
+                    b.HasIndex("UserCodeHash")
+                        .IsUnique()
+                        .HasDatabaseName("ix_device_authorizations_user_code_hash");
+
+                    b.ToTable("device_authorizations", "identity");
+                });
+
+            modelBuilder.Entity("Zaagl.Modules.Identity.Domain.DeviceSession", b =>
+                {
+                    b.Property<Guid>("FamilyId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("family_id");
+
+                    b.Property<string>("ClientId")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)")
+                        .HasColumnName("client_id");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at");
+
+                    b.Property<string>("DeviceName")
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)")
+                        .HasColumnName("device_name");
+
+                    b.Property<DateTime?>("LastUsedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("last_used_at");
+
+                    b.Property<string>("Os")
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)")
+                        .HasColumnName("os");
+
+                    b.Property<DateTime?>("RevokedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("revoked_at");
+
+                    b.Property<Guid>("UserId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("user_id");
+
+                    b.HasKey("FamilyId")
+                        .HasName("pk_device_sessions");
+
+                    b.HasIndex("UserId")
+                        .HasDatabaseName("ix_device_sessions_user_id");
+
+                    b.ToTable("device_sessions", "identity");
+                });
+
             modelBuilder.Entity("Zaagl.Modules.Identity.Domain.EmailOutbox", b =>
                 {
                     b.Property<Guid>("Id")

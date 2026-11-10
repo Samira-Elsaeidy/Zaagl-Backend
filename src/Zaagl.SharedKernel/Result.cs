@@ -77,6 +77,7 @@ public static class ErrorCodes
     public const string Gone = "gone";
     public const string RangeRequired = "range-required";
     public const string VersionConflict = "version-conflict";
+    public const string VersionLimit = "version-limit";
     public const string DiffTooLarge = "diff-too-large";
     public const string LengthRequired = "length-required";
     /// <summary>503 with <c>Retry-After</c>: a lock timeout (spec §7.0, ARC-006 §4); the caller retries.</summary>

@@ -23,6 +23,224 @@ namespace Zaagl.Modules.Files.Infrastructure.Migrations
 
             NpgsqlModelBuilderExtensions.UseIdentityByDefaultColumns(modelBuilder);
 
+            modelBuilder.Entity("Zaagl.Modules.Files.Domain.BlockedHashRow", b =>
+                {
+                    b.Property<byte[]>("Sha256")
+                        .HasColumnType("bytea")
+                        .HasColumnName("sha256");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at");
+
+                    b.Property<string>("Reason")
+                        .IsRequired()
+                        .HasColumnType("text")
+                        .HasColumnName("reason");
+
+                    b.HasKey("Sha256")
+                        .HasName("pk_blocked_content_hashes");
+
+                    b.ToTable("blocked_content_hashes", "files", t =>
+                        {
+                            t.HasCheckConstraint("ck_blocked_content_hashes_sha256", "octet_length(sha256) = 32");
+                        });
+                });
+
+            modelBuilder.Entity("Zaagl.Modules.Files.Domain.StorageObjectRow", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<short>("Area")
+                        .HasColumnType("smallint")
+                        .HasColumnName("area");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at");
+
+                    b.Property<string>("DetectedExt")
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)")
+                        .HasColumnName("detected_ext");
+
+                    b.Property<string>("DetectedMime")
+                        .HasMaxLength(127)
+                        .HasColumnType("character varying(127)")
+                        .HasColumnName("detected_mime");
+
+                    b.Property<string>("DisplayName")
+                        .IsRequired()
+                        .HasMaxLength(255)
+                        .HasColumnType("character varying(255)")
+                        .HasColumnName("display_name");
+
+                    b.Property<Guid>("ResourceId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("resource_id");
+
+                    b.Property<string>("ScanEngine")
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)")
+                        .HasColumnName("scan_engine");
+
+                    b.Property<string>("ScanSignature")
+                        .HasMaxLength(255)
+                        .HasColumnType("character varying(255)")
+                        .HasColumnName("scan_signature");
+
+                    b.Property<short>("ScanStatus")
+                        .HasColumnType("smallint")
+                        .HasColumnName("scan_status");
+
+                    b.Property<DateTime?>("ScannedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("scanned_at");
+
+                    b.Property<byte[]>("Sha256")
+                        .HasColumnType("bytea")
+                        .HasColumnName("sha256");
+
+                    b.Property<long>("SizeBytes")
+                        .HasColumnType("bigint")
+                        .HasColumnName("size_bytes");
+
+                    b.HasKey("Id")
+                        .HasName("pk_storage_objects");
+
+                    b.HasIndex("ResourceId")
+                        .IsUnique()
+                        .HasDatabaseName("ix_storage_objects_resource_id");
+
+                    b.HasIndex("Sha256")
+                        .HasDatabaseName("ix_storage_objects_sha256")
+                        .HasFilter("sha256 IS NOT NULL");
+
+                    b.ToTable("storage_objects", "files", t =>
+                        {
+                            t.HasCheckConstraint("ck_storage_objects_area", "area IN (0, 1, 2, 3, 4)");
+
+                            t.HasCheckConstraint("ck_storage_objects_scan", "scan_status IN (0, 1, 2, 3)");
+
+                            t.HasCheckConstraint("ck_storage_objects_sha256", "sha256 IS NULL OR octet_length(sha256) = 32");
+                        });
+                });
+
+            modelBuilder.Entity("Zaagl.Modules.Files.Domain.UploadSessionRow", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<byte[]>("CompleteBodyHash")
+                        .HasColumnType("bytea")
+                        .HasColumnName("complete_body_hash");
+
+                    b.Property<byte[]>("CompleteKeyHash")
+                        .HasColumnType("bytea")
+                        .HasColumnName("complete_key_hash");
+
+                    b.Property<string>("CompleteResponse")
+                        .HasColumnType("text")
+                        .HasColumnName("complete_response");
+
+                    b.Property<byte[]>("CreateKeyHash")
+                        .HasColumnType("bytea")
+                        .HasColumnName("create_key_hash");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at");
+
+                    b.Property<short>("CreatedVia")
+                        .HasColumnType("smallint")
+                        .HasColumnName("created_via");
+
+                    b.Property<long>("DeclaredLength")
+                        .HasColumnType("bigint")
+                        .HasColumnName("declared_length");
+
+                    b.Property<string>("DeclaredName")
+                        .HasMaxLength(1024)
+                        .HasColumnType("character varying(1024)")
+                        .HasColumnName("declared_name");
+
+                    b.Property<string>("DeclaredType")
+                        .HasMaxLength(255)
+                        .HasColumnType("character varying(255)")
+                        .HasColumnName("declared_type");
+
+                    b.Property<DateTime>("ExpiresAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("expires_at");
+
+                    b.Property<byte[]>("GuestCreatorKey")
+                        .HasColumnType("bytea")
+                        .HasColumnName("guest_creator_key");
+
+                    b.Property<short>("IntendedKind")
+                        .HasColumnType("smallint")
+                        .HasColumnName("intended_kind");
+
+                    b.Property<DateTime>("LastActivityAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("last_activity_at");
+
+                    b.Property<long>("MaxBytes")
+                        .HasColumnType("bigint")
+                        .HasColumnName("max_bytes");
+
+                    b.Property<Guid?>("OwnerId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("owner_id");
+
+                    b.Property<long>("ReceivedLength")
+                        .HasColumnType("bigint")
+                        .HasColumnName("received_length");
+
+                    b.Property<Guid?>("ReservationId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("reservation_id");
+
+                    b.Property<Guid?>("ResourceId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("resource_id");
+
+                    b.Property<short>("Status")
+                        .HasColumnType("smallint")
+                        .HasColumnName("status");
+
+                    b.HasKey("Id")
+                        .HasName("pk_upload_sessions");
+
+                    b.HasIndex("OwnerId", "CreateKeyHash")
+                        .IsUnique()
+                        .HasDatabaseName("ux_upload_sessions_owner_create_key")
+                        .HasFilter("create_key_hash IS NOT NULL");
+
+                    b.HasIndex("OwnerId", "CreatedAt")
+                        .IsDescending(false, true)
+                        .HasDatabaseName("ix_upload_sessions_owner_created")
+                        .HasFilter("owner_id IS NOT NULL");
+
+                    b.HasIndex("Status", "ExpiresAt")
+                        .HasDatabaseName("ix_upload_sessions_status_expires")
+                        .HasFilter("status IN (0, 1)");
+
+                    b.ToTable("upload_sessions", "files", t =>
+                        {
+                            t.HasCheckConstraint("ck_upload_sessions_declared_length", "declared_length >= 1");
+
+                            t.HasCheckConstraint("ck_upload_sessions_owner_xor_guest", "(owner_id IS NULL) <> (guest_creator_key IS NULL)");
+
+                            t.HasCheckConstraint("ck_upload_sessions_received_length", "received_length BETWEEN 0 AND declared_length");
+
+                            t.HasCheckConstraint("ck_upload_sessions_status", "status IN (0, 1, 2, 3, 4)");
+                        });
+                });
+
             modelBuilder.Entity("Zaagl.SharedKernel.Jobs.QueuedTask", b =>
                 {
                     b.Property<long>("Id")

@@ -1,7 +1,17 @@
-﻿<Project Sdk="Microsoft.NET.Sdk">
+<Project Sdk="Microsoft.NET.Sdk">
 
   <ItemGroup>
     <ProjectReference Include="..\..\Zaagl.SharedKernel\Zaagl.SharedKernel.csproj" />
+    <!-- BE-008 (contracts.md rule 1): Snippets -> Resources.Contracts (C2), Links.Contracts (C1), Billing.Contracts (C5). Contracts only. -->
+    <ProjectReference Include="..\Resources\Zaagl.Modules.Resources.csproj" />
+    <ProjectReference Include="..\Links\Zaagl.Modules.Links.csproj" />
+    <ProjectReference Include="..\Billing\Zaagl.Modules.Billing.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="DiffPlex" Version="1.7.2" />
+    <PackageReference Include="EFCore.NamingConventions" Version="10.0.1" />
+    <PackageReference Include="Npgsql.EntityFrameworkCore.PostgreSQL" Version="10.0.3" />
   </ItemGroup>
 
   <PropertyGroup>
@@ -9,5 +19,9 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
   </PropertyGroup>
+
+  <ItemGroup>
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+  </ItemGroup>
 
 </Project>

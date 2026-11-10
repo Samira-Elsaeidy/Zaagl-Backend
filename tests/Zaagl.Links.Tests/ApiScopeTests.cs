@@ -54,6 +54,8 @@ public sealed class ApiScopeTests(RealApiFactory real) : IAsyncLifetime, IClassF
         ["GET /api/auth/external/{provider}"] = "social sign-in",
         ["GET /api/auth/external/callback"] = "social sign-in",
         ["POST /api/auth/external/exchange"] = "one-time code in body (PD-41)",
+        ["POST /api/auth/device/code"] = "RFC 8628 device authorization start (BE-024)",
+        ["POST /api/auth/device/token"] = "RFC 8628 device_code in body (BE-024)",
         ["POST /api/webhooks/email"] = "HMAC signature",
         ["POST /api/billing/webhook"] = "Stripe signature",
         ["POST /api/unlock/{slug}"] = "visitor unlock",
@@ -62,6 +64,25 @@ public sealed class ApiScopeTests(RealApiFactory real) : IAsyncLifetime, IClassF
         // Guest creation: links:write is enforced by RequireScopeWhenAuthenticated and failed credentials get
         // 401 (RejectFailedCredentials); both are tested below and in CredentialRulesTests.
         ["POST /api/links/"] = "guest link creation",
+        // BE-008 (Phase 1 snippets): the guest create path enforces snippets:write for credentialed callers and 401 for
+        // failed ones (SnippetsApiTests); the public content API is gated by the link key and grant (ARC-004), and the
+        // user-content hop by its ticket (ARC-008).
+        ["POST /api/snippets/"] = "guest snippet creation",
+        ["GET /api/public/content/{code}"] = "visitor read, gate: key and grant",
+        ["POST /api/public/content/{code}/unlock"] = "visitor unlock",
+        // BE-011/BE-012 (E1.2 S1): tus uploads accept accounts only in slice 1 (no credential: 503 guest_creation_paused on create,
+        // 404 on a session route). files:write is enforced for credentialed callers by RequireScopeWhenAuthenticated and a failed
+        // credential is a 401 (RejectFailedCredentials); both are tested in FilesApiTests. The download button is gate-checked.
+        ["OPTIONS /api/uploads/"] = "tus capability discovery",
+        ["POST /api/uploads/"] = "guest-capable create (guests off in S1)",
+        ["HEAD /api/uploads/{id:guid}"] = "creator-only session route",
+        ["PATCH /api/uploads/{id:guid}"] = "creator-only session route",
+        ["DELETE /api/uploads/{id:guid}"] = "creator-only session route",
+        ["POST /api/uploads/{id:guid}/complete"] = "creator-only session route",
+        ["POST /api/uploads/simple"] = "one-request upload; scope files:write when authenticated, guest otherwise",
+        ["POST /api/public/content/{code}/download"] = "visitor download button, gate: key and grant",
+        ["GET /internal/delivery/{ticket}"] = "user-content host only, ticket",
+        ["HEAD /internal/delivery/{ticket}"] = "user-content host only, ticket",
     };
 
     private WebApplication _host = null!;
@@ -78,6 +99,11 @@ public sealed class ApiScopeTests(RealApiFactory real) : IAsyncLifetime, IClassF
                              typeof(LinkService), typeof(FolderService), typeof(BulkLinkImporter), typeof(GuestKeyProvider),
                              typeof(GuestRateLimiter), typeof(ICaptchaVerifier), typeof(IAnalyticsQueries), typeof(IArchiveQueries),
                              typeof(ILinkDirectory), typeof(IPlanProvider),
+                             typeof(Zaagl.Modules.Snippets.Application.SnippetService), typeof(Zaagl.Modules.Snippets.Contracts.ISnippetReader),
+                             typeof(Zaagl.Modules.Resources.Contracts.IDownloadGrants), typeof(Zaagl.Modules.Resources.Contracts.IResourceRegistry),
+                             typeof(Zaagl.Modules.Resources.Application.OwnerResources), typeof(Zaagl.Modules.Files.Contracts.IStoredObjectSummaries),
+                             typeof(Zaagl.Modules.Resources.Contracts.IContentQuota), typeof(Zaagl.Modules.Billing.Contracts.IContentPlanProvider),
+                             typeof(Zaagl.Modules.Files.Contracts.IUploadStats),
                          })
                     services.AddPlaceholder(type);
             },
@@ -86,6 +112,8 @@ public sealed class ApiScopeTests(RealApiFactory real) : IAsyncLifetime, IClassF
                 app.MapLinks();
                 app.MapAnalytics();
                 app.MapArchive();
+                app.MapSnippets();
+                app.MapResources();
             });
         _client = _host.GetTestClient();
     }
@@ -97,7 +125,7 @@ public sealed class ApiScopeTests(RealApiFactory real) : IAsyncLifetime, IClassF
     private sealed record EndpointInfo(string Key, string Method, string Pattern, bool Anonymous, IReadOnlyList<string> Policies)
     {
         public string? Scope => Policies.FirstOrDefault(p => p.StartsWith("scope:", StringComparison.Ordinal))?["scope:".Length..];
-        public bool HasDecision => Policies.Any(p => p is Interactive or Admin || p.StartsWith("scope:", StringComparison.Ordinal));
+        public bool HasDecision => Policies.Any(p => p is Interactive or Admin or "AnyJwt" || p.StartsWith("scope:", StringComparison.Ordinal));
     }
 
     private static string Normalize(string pattern) =>
@@ -231,9 +259,10 @@ public sealed class ApiScopeTests(RealApiFactory real) : IAsyncLifetime, IClassF
     }
 
     // The handler ran: either a placeholder service threw (599) or the handler answered on its own before using
-    // one (the CSV importer rejects this test file with 400; slug-available without a slug answers 200). Never 401/403.
+    // one (the CSV importer rejects this test file with 400; slug-available without a slug answers 200; POST /api/snippets/raw wants
+    // text/plain and answers 415 to the JSON body this test sends, after authorization). Never 401/403.
     private static bool PassedAuthorization(HttpResponseMessage response) =>
-        (int)response.StatusCode is ApiTestHost.ReachedHandler or StatusCodes.Status400BadRequest or (>= 200 and < 300);
+        (int)response.StatusCode is ApiTestHost.ReachedHandler or StatusCodes.Status400BadRequest or StatusCodes.Status415UnsupportedMediaType or (>= 200 and < 300);
 
     [Fact]
     public async Task A_links_read_key_cannot_create_a_link_even_though_guests_may()
@@ -269,7 +298,7 @@ public sealed class ApiScopeTests(RealApiFactory real) : IAsyncLifetime, IClassF
 
     private async Task<HttpResponseMessage> SendAsync(string method, string pattern, string? principal)
     {
-        var path = Regex.Replace(pattern, @"\{[^}]+\}", _ => Guid.NewGuid().ToString());
+        var path = Regex.Replace(pattern.Replace("{n:int}", "1"), @"\{[^}]+\}", _ => Guid.NewGuid().ToString());
         var request = new HttpRequestMessage(new HttpMethod(method), path);
         if (principal is not null) request.Headers.Add(ApiTestHost.PrincipalHeader, principal);
         if (path.EndsWith("/bulk", StringComparison.Ordinal))

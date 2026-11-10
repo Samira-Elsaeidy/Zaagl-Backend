@@ -4,7 +4,7 @@
 |---|---|
 | Owner | zaagl-architect (ARC-001) |
 | Status | **Contract freeze reached 2026-11-09** (ARC-001, PD-51). Every contract C1–C12 is stubbed in a `Contracts` folder or, for the host/API contracts C3 and C9, specified in this document, `design/ARC-008-usercontent-delivery.md` and `design/openapi-phase1.yaml`. Stubs build per module with 0 errors. One frozen change is applied by BE-007, not by the stub: `DestinationUrl` becomes nullable on `LinkSnapshot`/`LinkDto`/`AdminLinkDto` (flipping it earlier only adds nullable warnings in files the backend is editing). Changes after the freeze follow the rule below. |
-| Design notes | `design/ARC-002` link target, `ARC-004` access gate, `ARC-005` plans, `ARC-006` lifecycle and quota, `ARC-008` delivery, `ARC-012` jobs (PD-25 APPROVED), `ARC-014` native auth, `openapi-phase1.yaml` (ARC-016); CSP: `adr/0023-app-csp-strategy.md` (APPROVED, PD-53) |
+| Design notes | `design/ARC-002` link target, `ARC-004` access gate, `ARC-005` plans, `ARC-006` lifecycle and quota, `ARC-008` delivery, `ARC-012` jobs (PD-25 APPROVED), `ARC-014` native auth, `openapi-phase1.yaml` (ARC-016); CSP: `adr/0023-app-csp-strategy.md` (APPROVED, PD-53); images, files and burn (2026-11-10): `ARC-009` upload pipeline, `ARC-011` media fidelity, `ARC-019` burn, expiry and quota, `BUILD-ORDER-E1.2-E1.3.md` (slices S1 to S3) |
 | Normative behaviour | [docs/spec/zaagl-phase1-addendum.md](../spec/zaagl-phase1-addendum.md) ("addendum", v1.4, APPROVED as the Phase 1 rulebook, PD-34) |
 | Decisions | [DECISIONS.md](DECISIONS.md) approvals of 2026-11-09 (PD-14 as updated, PD-15, PD-25, PD-28, PD-34, PD-36 to PD-49, PD-51, PD-53 to PD-57; PD-52
   deferred); one ADR each in [adr/](adr/) |
@@ -30,6 +30,15 @@
 | F-1 | 2026-11-09 | C5 | New `IPlanChangeListener` in `Billing.Contracts` (`src/Modules/Billing/Contracts/BillingContracts.cs:41-51`). Details in C5 notes. | Billing (owner); Identity (`ApiKeyPlanChangeListener`) | Architect-reviewed (Head final review A1); deviation from spec §8.2 pending Q1 of `reviews/stage1-final.md` |
 | F-2 | 2026-11-09 | C1 / C4 | The link key is minted by the Links issuer itself, not through Access's `ILinkKeys`; the hashing format is fixed in C4 notes ("Link key format"). Description change only, no signature change. | Links (issuer), Access (verifier) | Recorded (Head final review A3) |
 | F-3 | 2026-11-09 | C1 | Idempotent replay of `CreateContentLinkAsync` returns `LinkKey = null` (built behaviour); the earlier "rotate on replay" default is withdrawn; the product rule is OPEN (ARC-002 Q1). | Links; Resources, FE, CLI, Desktop | OPEN for the user (Head final review B4) |
+| F-4 | 2026-11-10 | C2 | `Resources.Contracts.IContentQuota` gains `ReserveForResourceAsync(resourceId, bytes)` and `CommitToResourceAsync(reservationId, actualBytes)` (a new snippet version of an existing resource; commit is idempotent per reservation). Source-compatible addition. Text and flow: ARC-010 §5, §11. | Resources (owner); Snippets | Proposed by ARC-010 (architect); backend applies it with BE-008 |
+| F-5 | 2026-11-10 | Snippet view types | `SnippetVersionDto` gains trailing optional `Language` and `RenderMode` (defaults null, `Code`). Source-compatible. | Snippets (owner); Api, FE, CLI | Proposed by ARC-010 |
+| F-6 | 2026-11-10 | Snippet view types | `ISnippetReader` gains `GetSummariesAsync(resourceIds)` (owner list rows) and `GetTotalBytesAsync(resourceId)` (quota reconciliation); new `SnippetSummaryDto(Version, Language, RenderMode, LineCount)`. Source-compatible. | Snippets (owner); Api, Resources reconciliation | Proposed by ARC-010 |
+| F-7 | 2026-11-10 | C2, C1, errors | Applied by BE-008, all source-compatible. `DeliveryDecision` gains trailing optional `Derivative` (the hop needs `v<n>`); `ResourceDescriptor` gains trailing optional `Processing` (`ProcessingStatus`, so the public and owner routes can recompute the state from the authoritative link state); `ResourceStateCalculator` moves from `Resources.Application` to `Resources.Contracts` (pure, other modules need it); `RejectedReasons.CreateFailed` (internal, a create that failed after register; never visible, the resource has no link); `ErrorCodes.VersionLimit` (`version-limit`, 409). `IDownloadGrants` is implemented for purposes `Raw` and `Owner` only (Download, Inline, Preview and the burn claim stay BE-017/018). `ILinkSnapshots` (F-4 of Stage 2) is implemented by `LinkResolver`. | Resources, Links, Snippets | Backend (BE-008) |
+| F-8 | 2026-11-10 | C9.1, C1, guests | Applied by BE-009, BE-010, BE-026, all source-compatible. New wire types `SnippetDiffDto { from, to, lines: [{left, right}], stats: {added, removed, changed} }` with sides `{no, text, type}` (`type`: unchanged, inserted, deleted, modified, imaginary; an `imaginary` filler has `no: null`, `text: ""`) in `Snippets.Contracts`. `Links.Contracts.IContentLinkCommands` is now implemented (`LinkService`, all five methods, each writes its C10 outbox row where one exists: `Deleted`, `Renewed`) and registered in DI. `GuestOptions` gains `ContentPerHour` (30) and `ContentPerDay` (60) (config `Guests:ContentPerHour`, `Guests:ContentPerDay`); counters in `links.guest_quota` under the `content:` prefix, so they are separate from the link counters of spec §7.12. `SnippetOptions` gains `MaxDiffLines` (20,000) and `DiffTimeoutSeconds` (2). `/raw` also accepts UTF-16 (see C9.1). | Snippets, Links, Api; FE (diff UI), CLI | Built |
+| F-9 | 2026-11-10 | C2 (upload quota hand-off) | `RegisterResourceCommand` gains trailing optional `Guid? AdoptReservationId = null`. An upload reserves its declared length at tus create (addendum §10.3); at `/complete` Resources **adopts** that reservation (verifies state reserved, same owner, `bytes = DeclaredSizeBytes`, sets its `resource_id`) instead of reserving again. Today `RegisterAsync` always reserves (`src/Modules/Resources/Application/ResourceRegistry.cs:68-73`), which would count an upload twice. Unchanged for snippets. Text: ARC-009 §6 step 4, §15. | Resources (owner); Files | Proposed by ARC-009 (architect). **Applied in code (E1.2 S1, 2026-11-10):** `ResourceContracts.cs` `RegisterResourceCommand.AdoptReservationId`, `ContentQuota.AdoptReservationAsync`, `ResourceRegistry.RegisterAsync`. |
+| F-10 | 2026-11-10 | C2, C12 | New `RejectionEvidence(byte[]? Sha256, string? ObjectKey)`; `IResourceRegistry.MarkRejectedAsync(resourceId, reason, RejectionEvidence? evidence = null)`. Resources forwards it to `ILinkTakedown` (C12) for `infected` and `blocked-hash`, so the abuse evidence row carries the hash and object key although Files cannot call Links for it. Text: ARC-009 §7 step 6b. | Resources (owner); Files, Links (abuse) | Proposed by ARC-009. **Applied in code (E1.2 S1):** `RejectionEvidence` and the overload `MarkRejectedAsync(resourceId, reason, evidence, ct)` (the 3-argument form stays so existing callers compile); the forward to `ILinkTakedown` is wired but `ILinkTakedown` has no implementation yet, so nothing is forwarded until Links provides one. |
+| F-11 | 2026-11-10 | C8 | New `IUploadStats { Task<int> CountOpenAsync(Guid userId, CancellationToken ct) }` in `Files.Contracts`: sessions `Open` or `Complete`, for `openUploads` of `GET /api/me/storage`. | Files (owner); Api | Proposed by ARC-009. **Applied in code (E1.2 S1):** `IUploadStats` in `FileContracts.cs`, implemented by `StoredObjects`. |
+| F-12 | 2026-11-10 | C9, C2 | New route `POST /api/resources/{id}/inline` (owner check, purpose `Inline`, 15 minutes; refused for burn files and non-allowlisted types). `GET /api/resources` list and `/{id}` detail fields completed in OpenAPI (`filename`, `mime`, `thumbnailUrl`, `scan`, `burnClaimedAt`). `IDownloadGrants` is to implement purposes `Download`, `Inline`, `Preview` and the burn claim (today refused with `validation`, `src/Modules/Resources/Application/DownloadGrants.cs:58-59`, `:94`). New column `resources.resources.download_count` (migration `AddDownloadCount`) backing `ResourceDescriptor.DownloadCount` (`ResourceContracts.cs:98`; no column today, `ResourceRows.cs:25-50`). Text: ARC-019 §10. | Resources (owner); Api, FE | Proposed by ARC-019 (architect). **Applied in code (E1.2 S1, partly):** the route, Inline/Download/Owner tickets and the hop for stored objects; the burn claim, `download_count` column and Preview stay S2/S3 (the download count is still computed from `download_grants`). |
 
 ```
 Links  <-  Resources  <-  Snippets
@@ -87,7 +96,7 @@ Notes
 - Columns `target_kind smallint default 0`, `resource_id uuid null`, check `(target_kind = 0) = (resource_id IS NULL)`;
   `destination_url`/`target_host` nullable for content kinds. Expand-only migration; indexes `CONCURRENTLY`.
 - Stubbed (trailing optional parameters, source-compatible): `LinkSnapshot` gains `TargetKind`, `ResourceId`,
-  `LinkKeyHash`; `LinkDto` gains `TargetKind`, `ResourceId`. Applied by BE-007 (frozen here): `DestinationUrl` nullable
+  `LinkKeyHash`; `LinkDto` gains `TargetKind`, `ResourceId`, `ShortUrl` (= `ShortLinks:BaseUrl`/slug, no fragment; null only on an idempotent replay stored before the field existed; returned by link create/list/get/update). Applied by BE-007 (frozen here): `DestinationUrl` nullable
   on `LinkSnapshot`, `LinkDto`, `AdminLinkDto` (plus `AdminLinkDto.TargetHost`; `AdminLinkDto` gains kind and resource
   id); export rows get a nullable `TargetUrl` and a `Kind`; cache key `link:v2:{slugKey}`; `ResolveKind.Content`
   returns the viewer URL. Full site list: `design/ARC-002-link-target-model.md`.
@@ -183,6 +192,7 @@ Notes
 - The viewer descriptor is composed in the Api layer from `ResourceDescriptor` plus the kind module's view DTO
   (`SnippetViewDto`, `MediaDto`, file fields), because Resources must not reference the kind modules.
 - Resources implements `ILinkLifecycleHandler` (C10).
+- Upload hand-off and burn file contract (2026-11-10): an upload reserves its declared bytes at tus create and the resource adopts that reservation at `/complete` (F-9, `design/ARC-009-upload-pipeline.md` §6); a rejected scan passes evidence to Resources (F-10); `download_count` has its own column and counts the first use of a non-owner `Download` grant (F-12, `design/ARC-019-ephemeral-files-burn-expiry-quota.md` §10). The burn claim SQL stays only in ARC-006 §5; ARC-019 §5 adds the check order of the authorize hop (object stat and Range check before the claim; refusals consume nothing) and the same-ticket parallel rule (a loser holding the claiming grant is a continuation, not `410`).
 
 ## C3 · Hosts and URL scheme
 
@@ -432,6 +442,8 @@ byte is served until the scan is clean (`ready`). `CustomSlug`: allowed for gues
 and `Password`: Starter only (PD-54), otherwise `402 plan_required`.
 
 Notes: tus on `api.zaa.gl/api/uploads` (OPTIONS, POST create, HEAD, PATCH, DELETE) + `POST /api/uploads/{id}/complete`
+
+Pipeline details (2026-11-10, `design/ARC-009-upload-pipeline.md`): the session id is a UUIDv7 that is also the storage object id and keeps its value across `temp → objects → quarantine` (rename only, shard from the id hash, `StorageKeys.cs:12-34`); the tus store is ours (custom `ITusStore` over `files.upload_sessions`, or a hand-written implementation of the five verbs: the wire above is the contract, not the library); `kind` is fixed at `/complete` from a 64 KB sniff because the link kind cannot change; hashing, ClamAV (INSTREAM, fail-closed) and promote run in the Worker task `scan`; slice 1 accepts `kind=media` only with PNG, JPEG, GIF, WebP for accounts; `kind=file`, guests, `/uploads/simple`, burn arrive in slice 2 (`design/BUILD-ORDER-E1.2-E1.3.md`). `/uploads/simple` must stream with `MultipartReader`, never `IFormFile`.
 (Idempotency-Key required). Extensions: creation, termination, expiration, checksum. `Upload-Length` mandatory; plan
 size and quota checked at create before any byte. Kestrel's global body limit stays small; only tus PATCH and
 `/uploads/simple` raise it to `MaxChunkBytes`. Session ownership = capability id + principal match. Guests: CAPTCHA at
@@ -445,18 +457,26 @@ key, G = guest (`Captcha-Token`), P = public (gate evaluated, `X-Zaagl-Link-Key`
 
 | Method and route | Auth | Result |
 |---|---|---|
-| `POST /api/snippets` | J, K(snippets:write), G | `201 SnippetCreatedDto` (with `linkKey` once) |
-| `POST /api/snippets/raw` (CLI pipe, streamed) | J, K(snippets:write) | `201`; `Accept: text/plain` → URL incl. `#k=` + `\n` |
-| `GET/PUT/DELETE /api/snippets/{id}`, versions, diff | owner | versions immutable; `409 version-conflict` |
+| `POST /api/snippets` | J, K(snippets:write), G | `201 SnippetCreatedDto` (with `linkKey` once); `Idempotency-Key` required |
+| `POST /api/snippets/raw` (CLI pipe, streamed; no guest path) | J, K(snippets:write) | `201`; `Accept: text/plain` → URL incl. `#k=` + `\n` |
+| `GET /api/snippets/{id}` | owner, K(resources:read) | `200 OwnerSnippetDto` (`current` and `rawUrl` only when ready) |
+| `PUT /api/snippets/{id}` | owner, K(snippets:write) | `200 SnippetVersionDto` (new immutable version); `409 version-conflict` / `version-limit` |
+| `DELETE /api/snippets/{id}` | owner, K(snippets:write) | `204` (same as `DELETE /api/resources/{id}`) |
+| `GET /api/snippets/{id}/versions`, `/versions/{n}` | owner, K(resources:read) | version list (metadata, at most 100) / one version with text |
+| `GET /api/snippets/{id}/diff?from=&to=&ignoreWhitespace=` | owner, K(resources:read) | `200 SnippetDiffDto`; `413 diff-too-large` |
 | `POST /api/uploads` … `/complete` (C8) | J, K(files:write), G | `202 CompleteUploadResponse` |
 | `POST /api/uploads/simple` (one request, body ≤ 90,000,000 bytes) | J, K(files:write), G | `202 CompleteUploadResponse` |
-| `GET /api/resources`, `/api/resources/{id}`, `/status` | J, K(resources:read) | owner list/detail/processing status |
+| `GET /api/resources`, `/api/resources/{id}`, `/status` | J, K(resources:read) | owner list (keyset, newest first)/detail (`scan`, `rejectedReason`, file or media block)/processing status; S1 |
 | `PATCH/DELETE /api/resources/{id}` | owner (not guests); key needs `snippets:write` (snippets) or `files:write` (files, media) | `400 expiry-beyond-plan`, `409 burn-already-claimed` |
 | `POST /api/resources/{id}/download` | owner; key needs `resources:read` | owner ticket (never burns) |
+| `POST /api/resources/{id}/inline` | owner; key needs `resources:read` | owner inline ticket for an allowlisted original (never burn files); S1 (F-12) |
 | `GET /api/public/content/{code}` | P | descriptor; never a download ticket; `Cache-Control: private, no-store` |
 | `POST /api/public/content/{code}/unlock` | P, `unlock` limit | `{grant, expiresAt}` |
 | `POST /api/public/content/{code}/download` | P | `{url: usercontent.zaa.gl/d/<ticket>, expiresAt}` (120 s) |
-| `GET/HEAD usercontent.zaa.gl/d/{ticket}` | ticket | bytes via X-Accel; addendum §4.4 headers |
+| `GET/HEAD usercontent.zaa.gl/d/{ticket}` | ticket | bytes via X-Accel (files, media); **snippet text answered by the hop itself** (C9.1); addendum §4.4 headers |
+| `POST /api/auth/device/code`, `POST /api/auth/device/token` | anonymous | RFC 8628 (C9.2) |
+| `GET /api/auth/device/activation`, `POST /api/auth/device/activate` | J (web session only) | device approval (C9.2) |
+| `GET /api/me/sessions`, `DELETE /api/me/sessions/{id}` | J (web session only) | device sessions (C9.2; routes PROPOSED) |
 | `GET /api/me/storage` | J, K(resources:read) | limits, used, reserved, quota |
 | `POST /api/reports` | anyone + CAPTCHA | spec §7.15 |
 
@@ -472,7 +492,7 @@ on 2026-11-09 (BE-002); codes marked **no** are added by the backend with the ro
 | 403 | `insufficient-scope`, `quota-exceeded`, `ticket-invalid` | yes |
 | 404 | `not_found` | yes |
 | 409 | `conflict`, `upload-offset-mismatch`, `upload-incomplete`, `already-finalized`, `processing`, `burn-already-claimed`, `content-link` | yes |
-| 409 | `version-conflict` | **no** |
+| 409 | `version-conflict`, `version-limit` | **no** |
 | 410 | `expired`, `burned`, `upload-expired` | yes |
 | 410 | `deleted`, `disabled`, `taken-down` (API routes, ARC-004 §3); `gone` (`usercontent.zaa.gl/d/` only, ARC-008 §4.5) | **no** |
 | 411 | `length-required` | **no** |
@@ -492,7 +512,7 @@ session) come from BE-002 and are now part of the catalogue.
 
 Guest limits (PD-14 as updated 2026-11-09): 30 per hour and 60 per rolling 24 h per IP partition (IPv4 address, IPv6
 /64), snippets and uploads counted together, hard limits in locked hourly buckets; /56 and /48 proportional (to
-confirm); enforceable only once BE-030 is deployed.
+confirm); enforceable only once BE-030 is deployed. Built (BE-026) for snippets as `Guests:ContentPerHour` / `ContentPerDay` on the /64 (IPv4 address) partition only; the proportional /56 and /48 ceilings are not built. Counted after the plan checks and refunded when the creation then fails; an idempotent replay does not count again. Uploads must use `GuestContentQuota` (Links.Application) with the same prefix.
 
 Credentials on guest-capable routes (PD-36, ADR-0013, addendum §19): a route marked G is a guest only when the request
 carries **no** credential. Any credential that fails (wrong, revoked, expired, superseded, key of a plan without
@@ -504,6 +524,79 @@ test asserting `401` and that no guest counter moved.
 
 Owner routes (PD-40, ADR-0017, addendum §18): "owner" in this table means the owner only. Any other principal, admin
 included, gets `404`. Admin access to other users' links and content is only through `/api/admin/*`.
+
+### C9.1 · Snippet endpoints (frozen for BE, FE and CLI; wire detail in `design/openapi-phase1.yaml`, rules in ARC-010)
+
+Create (`POST /api/snippets`, JSON `SnippetCreateRequest`; and `POST /api/snippets/raw`, `text/plain` body, query
+`lang,title,renderMode,ansi,expiresAt,public,customSlug`, no password):
+- Result `201 SnippetCreatedDto { resourceId, code, shortUrl, linkKey|null, version, sizeBytes, lineCount, expiresAt, isGuest }`.
+  Share URL = `shortUrl` + (`linkKey` ? `#k=` + `linkKey` : ""). `linkKey` is returned once; on an idempotent replay it is
+  `null` (built behaviour; the product rule is OPEN, ARC-002 Q1, change F-3).
+- Defaults: keyed link; `public: true` is the owner's explicit choice; a guest sending `public: true` gets `400 validation`
+  (addendum §5.1.3 to confirm). `renderMode` default `code`. `language` null means the viewer auto-detects.
+- Size cap is on UTF-8 bytes: guest 262,144, Free 524,288, Starter 2,097,152 (`413 snippet-too-large`). Password:
+  Starter only (`402 plan_required`). Expiry default and maximum = plan `RetentionDays` (`400 expiry-beyond-plan`).
+- Order of refusals: failing credential `401` (PD-36) → guest CAPTCHA `401` → `400` → idempotency (`422` / `409`) →
+  `413`/`402`/`400 expiry` → guest counters `429 quota` → `403 quota-exceeded` → `409` alias.
+- `Idempotency-Key` is required on the JSON route and optional on `/raw` and on `PUT`.
+- `/raw`: wrong type, a charset other than UTF-8 or UTF-16 (`utf-16`, `utf-16le`, `utf-16be`; a UTF-16 BOM selects UTF-16 and is dropped), invalid text, an odd UTF-16 length or U+0000 → `415`; the plan cap applies to the decoded UTF-8 size (`413`), the body read stops at 2 x cap + 2 bytes (the UTF-16 allowance);
+  `ansi=strip` (default) applies only to `renderMode=terminal`.
+- Text is stored byte-for-byte (no trim, no line-ending, BOM or Unicode changes). `lineCount` is computed by the server.
+
+Versions (`PUT /api/snippets/{id}`, `SnippetUpdateRequest { content, language, renderMode, baseVersion }`):
+- Each save appends version `current + 1`; versions are immutable; at most 100. `baseVersion` is the optimistic lock
+  (`409 version-conflict`); the 101st version is `409 version-limit`; nothing is dropped automatically.
+- A save identical to the current version (same text, language and render mode) writes nothing and returns the current
+  `SnippetVersionDto` with `200`. Edits never change the link, key, expiry or short URL; visitors see the new version at once.
+- State must be `ready`, else `410 expired|deleted|disabled|taken-down` or `409 processing`. Title is changed with
+  `PATCH /api/resources/{id}`, not here. Every stored version counts toward the owner's quota.
+- `GET /api/snippets/{id}/versions` returns metadata newest first; `/versions/{n}` returns `SnippetViewDto` with an
+  `ETag` and is immutable. Diff: `from != to`, either order, line diff, `413 diff-too-large` above 20,000 combined lines
+  or 2 s; `Cache-Control: private, max-age=3600`.
+- Any non-owner, admins included, gets `404` (PD-40). Guests have no read, edit, delete, list, version or diff route.
+
+Public read (`GET /api/public/content/{code}`, header `X-Zaagl-Link-Key`, optional `X-Zaagl-Grant`; the browser uses
+`/bff/api/public/content/{code}`):
+- Gate order is C4 (state → key → password → resource state). Missing or wrong key on a keyed link is byte-identical to an
+  unknown code (`404 not_found`). Password needed → `401 password-required`, then `POST .../unlock`.
+- `200 ContentDescriptor` with `kind: snippet`. `state: ready`: `snippet` = `SnippetViewDto` of the CURRENT version only
+  (`versions: [current]`), `rawUrl`, `sizeBytes`, `burnAfterDownload: false`, no inline/preview URL. `state: processing`:
+  no `snippet`, no `rawUrl`; retry (viewer 1 s, at most 5 times). Rejected → `422 content-rejected`.
+- `Cache-Control: private, no-store`, `X-Robots-Tag: noindex`. No analytics event until PD-10. Content-read rate limit:
+  OPEN (ARC-013); technical default 120 per minute per IP and code.
+- The viewer outcome table (status → page text → CLI exit code) is ARC-003 §4.2.
+
+Raw (`rawUrl` = `https://usercontent.zaa.gl/d/<ticket>`, purpose `raw` for visitors, `owner` for the owner, derivative
+`v<n>`, 15 minutes):
+- The delivery hop answers itself from PostgreSQL (no X-Accel-Redirect): `200 text/plain; charset=utf-8`,
+  `Content-Disposition: attachment; filename="<code>.txt"`, `Content-Length`, `ETag: "<hex sha256>"`, `Accept-Ranges: bytes`;
+  no cookie, no CORS; Nginx adds the addendum §4.4 headers. Only `ready` serves (else `410 gone` / `403 ticket-invalid`).
+  A stale ticket: refetch the descriptor once and retry once. HEAD: same headers, no body.
+- Whether "View raw" may open as text in the tab instead of downloading is OPEN (ARC-010 Q1).
+
+Markdown (PD-09, BLOCKED): the API returns text only and has no `renderedHtml` field. If PD-09 chooses server rendering
+a nullable `renderedHtml` is added to `SnippetViewDto` (additive). Frontend and CLI must not depend on either outcome.
+
+### C9.2 · Device-flow endpoints (BE-024; frozen for BE, FE `/activate` and CLI; detail in ARC-014 §2 and the OpenAPI draft)
+
+All device-flow wire fields are RFC 8628 snake_case; the token errors use the RFC 6749 body, not problem+json.
+- `POST /api/auth/device/code` (anonymous, JSON or form) `{client_id: zaagl-cli|zaagl-desktop, device_name ≤64, os ≤32}` →
+  `200 {device_code, user_code "XXXX-XXXX", verification_uri, verification_uri_complete, expires_in: 600, interval: 5}`.
+  `verification_uri` is `DeviceAuth:VerificationUri`, never built from a request header. Errors: `400 invalid_client |
+  invalid_request` (OAuth body), `429` (`device-code` limit).
+- `POST /api/auth/device/token` (anonymous) `{grant_type: "urn:ietf:params:oauth:grant-type:device_code", device_code,
+  client_id}` → `200` existing `AuthResponse` camelCase + `sessionId`, or `400 {error}` with `authorization_pending`
+  (keep polling), `slow_down` (interval + 5 s), `access_denied`, `expired_token`, `invalid_grant`, `invalid_client`,
+  `unsupported_grant_type`; `429` (`device-token` limit). `Cache-Control: no-store`.
+- `GET /api/auth/device/activation?userCode=` and `POST /api/auth/device/activate {userCode, approve}` (web session JWT only,
+  through the BFF with CSRF; not an API key, not a device token). Unknown, expired, used or denied code → `404`;
+  `204` on success; `429` on lockout. Approval is never automatic.
+- Device tokens: claims `client_id`, `amr=device`, `sid`; never the Admin role; refused by the Interactive policy; hold all six
+  non-admin scopes; a refresh of a device family stays a device token. Server-derived `CreatedVia`: `zaagl-cli` → Cli,
+  `zaagl-desktop` → Desktop.
+- Sessions: `GET /api/me/sessions` → `DeviceSessionDto[]`, `DELETE /api/me/sessions/{id}` → `204`. Route names PROPOSED
+  (ARC-014 Q4); build them, they are not product behaviour beyond PD-07 "listed and revocable".
+- OPEN (not decided here): device session lifetime and absolute cap (ARC-014 Q1, PD-33); headless token storage (Q2).
 
 ## C10 · Link lifecycle events
 
@@ -558,7 +651,7 @@ values and errors), `DeviceCodeRequest/Response`, `DeviceTokenRequest/Error`, `D
     hub stops accepting `access_token` in the query string (`Program.cs:118-123`) once the ticket ships.
   - Implemented by the backend in Stage 1 (Identity, not part of these stubs): `POST /api/auth/external/exchange` and
     `POST /api/auth/hub-ticket` (`src/Zaagl.Api/Endpoints/IdentityEndpoints.cs:171,183`).
-- Proposed, not approved: device session list/revoke at `GET/DELETE /api/me/sessions*` (Interactive policy).
+- Device session list/revoke at `GET/DELETE /api/me/sessions*` (Interactive policy): route names PROPOSED, contract in C9.2.
 - Owner content management (`PATCH/DELETE /api/resources/{id}`) needs the kind's write scope (`snippets:write` or
   `files:write`); owner download and `GET /api/me/storage` need `resources:read`. A separate `resources:write` scope is
   OPEN (ARC-014 Q3) and is not in `TokenScopes`.
@@ -611,3 +704,48 @@ diff scope PROPOSED (PD-17).
 | API-key revocation after Billing's commit instead of in the same transaction (spec §8.2) | C5 | **OPEN** (user, `reviews/stage1-final.md` Q1; change F-1) |
 | Content in the main link library; PD-08 monthly cap | C1 | to confirm / PD-08 PROPOSED |
 | `resources:write` scope; device session routes | C9, C11 | OPEN (ARC-014 Q3, Q4) |
+| Media allowlist beyond PNG, JPEG, GIF, WebP; executables; encrypted archives; re-kinding "media" to file | C8, C9 | **OPEN (PD-16)**; interim ARC-009 §6 step 3, §9 |
+| EXIF/GPS: untouched only, opt-in strip, strip by default | C9 (future `stripLocation`) | **OPEN (PD-13)**; interim untouched, no wire field; options in ARC-011 §4 |
+| SVG handling; video transcoding and duration; PDF preview | C9 | PD-18, PD-30, PD-31 PROPOSED; interim not accepted as media / no preview (ARC-011 §5, §7, §11) |
+| Burn: CAPTCHA on the mint POST; owner email on burn; takedown storage release; copy for an interrupted download after the grace | C9, C10 | **OPEN** (ARC-019 §15); interim none, none, keep counting, documented loss |
+| Retried `/complete` returns no key for a keyed link | C1, C8 | **OPEN** (ARC-002 Q1, F-3); the uploader stores the first response |
+| Do derivatives count toward the storage quota | C2 | interim no (ARC-011 §10); to confirm |
+| Where Markdown is rendered (browser vs server) | C9.1 | **BLOCKED on PD-09** (product owner) |
+| Visitors seeing older versions and diffs of a shared snippet | C9.1 | OPEN (ARC-003 Q2; interim latest only) |
+| Public (keyless) snippets: indexable by search engines? | C9.1 | OPEN (ARC-003 Q3; interim noindex everywhere) |
+| "View raw" opening as text in the tab instead of a download | C9.1 | OPEN (ARC-010 Q1, needs addendum §4.4 change) |
+| 100-version limit behaviour; deleting a single version; do old versions count toward quota | C9.1 | OPEN (ARC-010 Q2-Q4; interim refuse, no delete, count) |
+| Burn after view for snippets | C9.1 | OPEN (PD-05 note, ARC-010 Q6; not built) |
+| Content-read and content-write rate-limit values | C9.1 | OPEN (ARC-013) |
+| Device session lifetime cap; headless token storage | C9.2 | OPEN (PD-33, ARC-014 Q1, Q2) |
+
+## Addendum 2026-11-10 (CLI gap closure)
+
+- `GET /api/auth/whoami` (policy `AnyJwt`: session JWT or device token, API key -> 401) returns `{id, email, displayName, role, emailConfirmed}`; `role` is null for device tokens (ARC-014 3.1). `/api/auth/me` still refuses device tokens (403).
+- `LinkDto.shortUrl` added (see C1 above).
+- `refresh_raced` is already `409 Conflict` (`ApiResults.cs:30`, spec 7.4).
+- `GET /api/resources` listing does not exist yet: `ResourcesEndpoints.MapResources` is an empty stub; per-kind listings (`/api/snippets`, files) already serve the CLI. The unified owner list is specified in `design/openapi-phase1.yaml` (`listResources`, slice S1) and built in slice 1 of `design/BUILD-ORDER-E1.2-E1.3.md`.
+
+## Addendum 2026-11-10 (images, files and burn: E1.2, E1.3)
+
+Design notes `design/ARC-009-upload-pipeline.md`, `design/ARC-011-media-fidelity.md`, `design/ARC-019-ephemeral-files-burn-expiry-quota.md`, build order `design/BUILD-ORDER-E1.2-E1.3.md`, wire `design/openapi-phase1.yaml` v0.3.0 (operations carry `x-zaagl-slice`). No frozen contract changes; additions F-9 to F-12 are in the change log.
+
+- **Error codes used by the pipeline (no new codes):** `400 upload-length-required`, `413 file-too-large` (also offset plus body above the declared length), `413 chunk-too-large`, `403 quota-exceeded`, `507 insufficient-storage` (not yet in `ErrorCodes`), `409 upload-offset-mismatch`, `409 upload-incomplete`, `409 already-finalized`, `410 upload-expired`, `422 content-rejected` (`type-not-allowed` at `/complete` as well as at scan time), `503 busy` (not yet in `ErrorCodes`; a burn claim that hits the lock timeout consumes nothing), `503 guest_creation_paused` (slice 1: an upload create with no credential, because guests arrive in slice 2), `410 burned`.
+- **Slices:** S1 plain images (PNG, JPEG, GIF, WebP), accounts only, ClamAV, image viewer; S2 files, guests, simple upload, burn, lifecycle jobs, quotas; S3 derivatives, SVG, video, PDF, EXIF option. `kind=file` and `burnAfterDownload: true` answer `400 validation` until S2.
+- **Rules that bind several consumers:** the browser never touches a ticket URL except one navigation; the BFF rewrites the tus `Location` to `/bff/api/uploads/{id}` and streams chunks; the uploader stores the first `/complete` response (the key is not returned on a replay); `Content:MaxResponseBytes` still bounds every response from `usercontent.zaa.gl`; `Scan:Provider=Fake` is refused outside Development.
+- **Owner questions raised:** see the open items table (PD-13, PD-16, PD-18, PD-30, PD-31, burn CAPTCHA, owner email on burn, takedown storage release, replay key, derivatives and quota).
+
+## S2 additions (files, burn, lifecycle, guests; 2026-11-10, ARC-019)
+
+Wire changes, all additive unless stated (the S2 backend slice):
+
+- `POST /api/uploads`: `Upload-Metadata` key `burn` (`1`/`true`) is refused at create (`402 plan_required` without the capability, `400 validation` unless `kind=file`). Guests may create without a credential (CAPTCHA `guest-upload`, PD-14 counters, `429 quota`), and their session routes are tied to the guest principal. `kind=file` is enabled (`Uploads:Kinds=media,file`, `Uploads:GuestsEnabled=true`, `Uploads:BlockExecutablesFor=guest,free`).
+- `POST /api/uploads/simple` (new): `multipart/form-data`, parts `kind`, optional `metadata` (JSON, CompleteUploadRequest), then `file` last; `Content-Length` and `Idempotency-Key` required; streamed with `MultipartReader`; `202 CompleteUploadResponse`. The reservation is taken from `Content-Length` (an upper bound) and swapped for the real size.
+- `/complete` and `PATCH /api/resources/{id}`: `burnAfterDownload` accepted for files (Starter only, `402`; media `400`; after a claim `409 burn-already-claimed`). **Behaviour change:** a declared `media` upload that is not an allowed image is now re-kinded to `file` (was `422`) when `kind=file` is enabled.
+- `GET /api/public/content/{code}` answers for `kind=file`: `file { detectedMime, sizeBytes, sha256: null, singleResponseLimitBytes }`, never a URL; `POST .../download` mints for files and burn files (`410 burned` after the claim).
+- Delivery hop: a Download ticket is claimed or counted only after the object, size and Range checks; `503 busy` with `Retry-After: 1` when the claim lock times out; `410 burned` for every ticket but the claiming one. `resources.download_count` is a durable column.
+- `GET /api/resources` items now carry `rejectedReason` and `burnClaimedAt`. **Behaviour change:** an infected or blocked-hash file now also takes its link down (C12, spec 7.15), so its computed state is `disabled` (public `410 taken-down`), with `rejectedReason: infected`/`blocked-hash` explaining it.
+- `GET /api/me/storage` adds `capabilities { burnAfterDownload, passwordOnContent }`.
+- `GET /api/links` adds `kind` (`url|snippet|image|file`, with the existing `targetKind` and `resourceId`) to each link and accepts `?kind=` (`url` is the default so Phase 0 clients see no change; `snippet|image|file|all`).
+- The `zaa.gl/{code}` redirect of a file goes to `/f/{code}`, burned or not (the viewer shows the state).
+- Internals: `IDownloadGrants.ConsumeAsync`, `IResourceBytes` (Resources to Files), `ILinkTakedown` implemented in Links (also registered in the worker), the C10 outbox drain job (Api), `ResourceLifecycle` and `ResourceMaintenanceJob` (worker: burn finaliser, purge and guest expiry, held bytes, orphans, grants, tombstones, quota reconciliation 03:00 UTC). Interim defaults used, nothing decided: no burn CAPTCHA, no owner email on burn, takedown keeps counting quota, files above one response part need Range.

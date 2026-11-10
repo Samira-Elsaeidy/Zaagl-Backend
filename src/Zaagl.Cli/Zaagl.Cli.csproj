@@ -19,6 +19,8 @@
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
     <IsPackable>false</IsPackable>
+    <!-- Directory.Build.props pins BannedApiAnalyzers 3.11.0; NuGet resolves 4.14.0 and NU1603 would fail the build. -->
+    <WarningsNotAsErrors>$(WarningsNotAsErrors);NU1603</WarningsNotAsErrors>
 
     <PublishAot>true</PublishAot>
     <IsAotCompatible>true</IsAotCompatible>

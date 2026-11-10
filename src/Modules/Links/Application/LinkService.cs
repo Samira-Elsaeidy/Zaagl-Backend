@@ -567,9 +567,17 @@ public sealed partial class LinkService(
         var pageSize = Math.Clamp(query.PageSize, 1, 100);
 
         // Deleted links are owner-invisible per spec §4.3's state table ("Visible to owner: no").
-        // ARC-002 §6 row 5: URL links only until the "one library" question (ARC-002 Q2) is answered, so
-        // GET /api/links is unchanged by content links.
-        var q = db.Links.AsNoTracking().Where(l => l.OwnerId == userId && l.DeletedAt == null && l.TargetKind == LinkTargetKind.Url);
+        // ARC-002 §6 row 5: URL links only by default (ARC-002 Q2), so GET /api/links is unchanged for Phase 0 clients; the additive
+        // ?kind= asks for snippet, image, file or all.
+        var q = db.Links.AsNoTracking().Where(l => l.OwnerId == userId && l.DeletedAt == null);
+        switch (query.Kind?.ToLowerInvariant())
+        {
+            case "all": break;
+            case "snippet": q = q.Where(l => l.TargetKind == LinkTargetKind.Snippet); break;
+            case "image": q = q.Where(l => l.TargetKind == LinkTargetKind.Media); break;
+            case "file": q = q.Where(l => l.TargetKind == LinkTargetKind.File); break;
+            default: q = q.Where(l => l.TargetKind == LinkTargetKind.Url); break;
+        }
         if (!string.IsNullOrWhiteSpace(query.Search))
         {
             var pattern = $"%{EscapeLike(query.Search.Trim())}%";
@@ -991,7 +999,7 @@ public sealed partial class LinkService(
         return SlugRules.IsReserved(slug) ? null : slug;
     }
 
-    public static LinkDto ToDto(Link l) => new(
+    public LinkDto ToDto(Link l) => new(
         l.Id,
         l.Slug,
         l.DestinationUrl,
@@ -1014,7 +1022,9 @@ public sealed partial class LinkService(
         l.UpdatedAt,
         l.OwnerId is null,
         l.TargetKind,
-        l.ResourceId);
+        l.ResourceId,
+        $"{options.Value.BaseUrl.TrimEnd('/')}/{l.Slug}",
+        l.TargetKind switch { LinkTargetKind.Snippet => "snippet", LinkTargetKind.Media => "image", LinkTargetKind.File => "file", _ => "url" });
 
     private static string? Clean(string? value) => string.IsNullOrWhiteSpace(value) ? null : value.Trim();
 

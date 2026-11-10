@@ -60,6 +60,9 @@ namespace Zaagl.Modules.Resources.Infrastructure.Migrations
                     b.HasKey("Id")
                         .HasName("pk_download_grants");
 
+                    b.HasIndex("FirstUseBy")
+                        .HasDatabaseName("ix_download_grants_first_use_by");
+
                     b.HasIndex("ResourceId")
                         .HasDatabaseName("ix_download_grants_resource_id");
 
@@ -209,6 +212,12 @@ namespace Zaagl.Modules.Resources.Infrastructure.Migrations
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("deleted_at");
 
+                    b.Property<long>("DownloadCount")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bigint")
+                        .HasDefaultValue(0L)
+                        .HasColumnName("download_count");
+
                     b.Property<byte[]>("GuestCreatorKey")
                         .HasColumnType("bytea")
                         .HasColumnName("guest_creator_key");
@@ -274,6 +283,10 @@ namespace Zaagl.Modules.Resources.Infrastructure.Migrations
                     b.HasKey("Id")
                         .HasName("pk_resources");
 
+                    b.HasIndex("BurnClaimedAt")
+                        .HasDatabaseName("ix_resources_burn_claimed")
+                        .HasFilter("burn_claimed_at IS NOT NULL AND bytes_state = 1");
+
                     b.HasIndex("CreatedAt")
                         .HasDatabaseName("ix_resources_unbound_created")
                         .HasFilter("link_id IS NULL");
@@ -281,6 +294,10 @@ namespace Zaagl.Modules.Resources.Infrastructure.Migrations
                     b.HasIndex("LinkId")
                         .IsUnique()
                         .HasDatabaseName("ix_resources_link_id");
+
+                    b.HasIndex("LinkPurgeAfter")
+                        .HasDatabaseName("ix_resources_purge_due")
+                        .HasFilter("bytes_state IN (0, 1)");
 
                     b.HasIndex("PublicId")
                         .IsUnique()

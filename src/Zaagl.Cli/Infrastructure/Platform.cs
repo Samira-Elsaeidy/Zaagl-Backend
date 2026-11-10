@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Runtime.InteropServices;
+using Zaagl.Cli.Config;
 
 namespace Zaagl.Cli.Infrastructure;
 

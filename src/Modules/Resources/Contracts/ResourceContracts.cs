@@ -31,6 +31,9 @@ public static class RejectedReasons
     public const string TooLarge = "too-large";
     public const string BlockedHash = "blocked-hash";
     public const string ScanUnavailable = "scan-unavailable";
+    /// <summary>Stage 2 (BE-008): a create flow failed after the resource was registered (for example an alias
+    /// conflict). The resource never gets a link, so it stays unreachable; the reservation is released.</summary>
+    public const string CreateFailed = "create-failed";
 }
 
 /// <summary>
@@ -65,6 +68,9 @@ public enum CreatedVia : short
 
 /// <param name="DeclaredSizeBytes">Upload-Length or snippet byte size; reserved against the quota.</param>
 /// <param name="ExpiresAt">Already clamped to the plan's retention.</param>
+/// <param name="AdoptReservationId">F-9 (ARC-009 §6 step 4): an upload reserves its declared bytes at tus create; when set,
+/// <c>RegisterAsync</c> does not reserve again but verifies that reservation (state reserved, same owner,
+/// <c>bytes = DeclaredSizeBytes</c>, not yet bound to a resource) and sets its <c>resource_id</c>. Null: unchanged behaviour.</param>
 public sealed record RegisterResourceCommand(
     ResourceKind Kind,
     ContentOwner Owner,
@@ -72,7 +78,8 @@ public sealed record RegisterResourceCommand(
     DateTime ExpiresAt,
     string? Title,
     bool BurnAfterDownload,
-    CreatedVia CreatedVia);
+    CreatedVia CreatedVia,
+    Guid? AdoptReservationId = null);
 
 /// <param name="PublicId">Opaque 128-bit id (base64url, 22 chars), never derived from the code. Used in
 /// delivery tickets, never in user-visible share URLs.</param>
@@ -93,7 +100,8 @@ public sealed record ResourceDescriptor(
     bool BurnAfterDownload,
     DateTime? BurnClaimedAt,
     long DownloadCount,
-    DateTime CreatedAt);
+    DateTime CreatedAt,
+    ProcessingStatus Processing = ProcessingStatus.Pending);
 
 /// <summary>
 /// C2: the envelope every content kind shares. Order for every share (ARCHITECTURE.md §3):
@@ -114,10 +122,18 @@ public interface IResourceRegistry
     /// <param name="reason">One of <see cref="RejectedReasons"/>.</param>
     Task<Result<bool>> MarkRejectedAsync(Guid resourceId, string reason, CancellationToken cancellationToken);
 
+    /// <summary>F-10: as above, with the evidence Files passes for <c>infected</c> and <c>blocked-hash</c> (hash and
+    /// quarantine key). Resources applies T8 (bytes quarantined, legal hold, quota released) and forwards the evidence
+    /// to the takedown (C12) when one is available. Kept as an overload so existing callers stay source-compatible.</summary>
+    Task<Result<bool>> MarkRejectedAsync(Guid resourceId, string reason, RejectionEvidence? evidence, CancellationToken cancellationToken);
+
     Task<ResourceDescriptor?> GetAsync(Guid resourceId, CancellationToken cancellationToken);
 
     Task<ResourceDescriptor?> GetByLinkAsync(Guid linkId, CancellationToken cancellationToken);
 }
+
+/// <summary>F-10: evidence Files passes with an <c>infected</c> or <c>blocked-hash</c> rejection (Files cannot call Links).</summary>
+public sealed record RejectionEvidence(byte[]? Sha256, string? ObjectKey);
 
 public sealed record QuotaReservation(Guid ReservationId, ContentOwner Owner, long Bytes);
 
@@ -142,6 +158,14 @@ public interface IContentQuota
     Task ReleaseUsedAsync(Guid resourceId, CancellationToken cancellationToken);
 
     Task<StorageUsage> GetUsageAsync(Guid userId, CancellationToken cancellationToken);
+
+    /// <summary>F-4 (contracts.md): reserve bytes for a new snippet version of an existing resource (the owner is read
+    /// from the resource row). Guests have no ledger and get a synthetic reservation.</summary>
+    Task<Result<QuotaReservation>> ReserveForResourceAsync(Guid resourceId, long bytes, CancellationToken cancellationToken);
+
+    /// <summary>F-4: settles a reservation taken with <see cref="ReserveForResourceAsync"/>: reserved becomes used and the
+    /// resource's usage row grows by <paramref name="actualBytes"/>. Idempotent per reservation.</summary>
+    Task<Result<bool>> CommitToResourceAsync(Guid reservationId, long actualBytes, CancellationToken cancellationToken);
 }
 
 /// <summary>Implemented by Snippets, Files and Media; Resources calls it when a resource's data must go.</summary>
@@ -203,9 +227,33 @@ public enum DeliveryOutcome
     Processing,
     /// <summary>422 <c>content-rejected</c>.</summary>
     Rejected,
+    /// <summary>503 <c>busy</c> with <c>Retry-After: 1</c>: the claim could not take its lock in 3 s; nothing was consumed (ARC-019 section 5).</summary>
+    Busy,
 }
 
-public sealed record DeliveryDecision(DeliveryOutcome Outcome, Guid? ResourceId, DeliveryPurpose? Purpose, DeliveryDisposition? Disposition);
+/// <summary>What the hop must record once the object, size and Range checks have passed (ARC-019 section 5: a refused request
+/// consumes nothing, so the record is a second step, <see cref="IDownloadGrants.ConsumeAsync"/>).</summary>
+public enum DeliveryConsume : short
+{
+    /// <summary>Nothing to record (HEAD, or a purpose that <c>AuthorizeAsync</c> already counted).</summary>
+    None = 0,
+    /// <summary>First GET of a non-burn Download ticket: <c>first_used_at</c>, <c>request_count = 1</c>, <c>download_count + 1</c>.</summary>
+    FirstUse = 1,
+    /// <summary>A later GET of a used non-burn Download ticket (reuse window).</summary>
+    Continue = 2,
+    /// <summary>The burn claim: first GET of a Download ticket on a burn file.</summary>
+    BurnClaim = 3,
+    /// <summary>A later GET of the claiming grant inside its grace.</summary>
+    BurnContinue = 4,
+}
+
+/// <param name="Derivative">The ticket's derivative (for snippets <c>v&lt;n&gt;</c>), echoed so the hop knows which
+/// version to serve. Added in Stage 2 (source-compatible, trailing optional).</param>
+/// <param name="Consume">S2: what <see cref="IDownloadGrants.ConsumeAsync"/> must still record; None unless an allowed Download.</param>
+/// <param name="GrantId">The grant of the ticket (set together with <paramref name="Consume"/>).</param>
+public sealed record DeliveryDecision(
+    DeliveryOutcome Outcome, Guid? ResourceId, DeliveryPurpose? Purpose, DeliveryDisposition? Disposition, string? Derivative = null,
+    DeliveryConsume Consume = DeliveryConsume.None, Guid? GrantId = null);
 
 /// <summary>
 /// Download grants live in the resources schema with the burn claim, so the claim and the grant are one
@@ -223,4 +271,26 @@ public interface IDownloadGrants
     /// (Burn:GraceMinutes, Burn:MaxRequests). HEAD never claims and never counts.
     /// </summary>
     Task<DeliveryDecision> AuthorizeAsync(string ticket, bool isHead, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// S2 (ARC-019 section 5 step 7): called by the hop after the object, size and Range checks passed, for a decision whose
+    /// <see cref="DeliveryDecision.Consume"/> is not None. A burn claim is the two statements of ARC-006 section 5 in one transaction
+    /// with <c>lock_timeout 3s</c>: exactly one request wins; the same grant meeting itself is a continuation; any other loser is
+    /// <see cref="DeliveryOutcome.Burned"/>. A lock timeout is <see cref="DeliveryOutcome.Busy"/> and consumes nothing.
+    /// </summary>
+    Task<DeliveryDecision> ConsumeAsync(DeliveryDecision decision, CancellationToken cancellationToken);
+}
+
+/// <summary>
+/// Resources asks Files to act on bytes without referencing it (Files references Resources, not the other way round). Implemented
+/// by Files; every method is idempotent. Used by the burn finaliser, the purge and guest-expiry sweeps, the orphan sweep and the
+/// C10 handler (ARC-006 T11, T13, T16, T18, T19).
+/// </summary>
+public interface IResourceBytes
+{
+    /// <summary>Queues the <c>delete-bytes</c> task for the resource's object (no object: nothing to do).</summary>
+    Task QueueDeletionAsync(Guid resourceId, string reason, CancellationToken cancellationToken);
+
+    /// <summary>Moves the object to quarantine; the legal hold itself is the resource row's <c>legal_hold_until</c>.</summary>
+    Task QuarantineAsync(Guid resourceId, DateTime legalHoldUntil, CancellationToken cancellationToken);
 }

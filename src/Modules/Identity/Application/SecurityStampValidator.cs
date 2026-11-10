@@ -24,3 +24,21 @@ public sealed class SecurityStampValidator(IServiceScopeFactory scopes, IMemoryC
         return string.Equals(currentStr, tokenStamp, StringComparison.Ordinal);
     }
 }
+
+/// <summary>ARC-014 §2.4: the <c>sid</c> claim of a device access token names its device session; once the session
+/// is revoked (DELETE /api/me/sessions/{id}, logout-everywhere, refresh reuse) the token stops working within the
+/// same 60 s bound as the security stamp, instead of at its 15-minute expiry.</summary>
+public sealed class DeviceSessionValidator(IServiceScopeFactory scopes, IMemoryCache cache)
+{
+    public static string CacheKey(Guid sessionId) => $"dsess:{sessionId}";
+
+    public async Task<bool> IsActiveAsync(Guid sessionId, CancellationToken ct)
+    {
+        if (cache.TryGetValue(CacheKey(sessionId), out bool cached)) return cached;
+        using var scope = scopes.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<IdentityDbContext>();
+        var active = await db.DeviceSessions.AnyAsync(s => s.FamilyId == sessionId && s.RevokedAt == null, ct);
+        cache.Set(CacheKey(sessionId), active, TimeSpan.FromSeconds(60));
+        return active;
+    }
+}

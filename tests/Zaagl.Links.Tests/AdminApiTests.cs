@@ -14,7 +14,7 @@ namespace Zaagl.Links.Tests;
 /// PurgeJobTests/AbuseControlsTests). The HTTP layer (AdministrationEndpoints) is exercised live, not here.</summary>
 public sealed class AdminApiTests : IDisposable
 {
-    private const string ConnectionString = "Host=localhost;Port=5433;Database=zaagl;Username=zaagl;Password=zaagl_dev";
+    private static readonly string ConnectionString = Environment.GetEnvironmentVariable("ZAAGL_TEST_PG") ?? "Host=localhost;Port=5433;Database=zaagl;Username=zaagl;Password=zaagl_dev";
     private readonly ServiceProvider _services;
     private readonly LinksDbContext _db;
 
@@ -31,8 +31,13 @@ public sealed class AdminApiTests : IDisposable
         _db = _services.GetRequiredService<LinksDbContext>();
     }
 
+    /// <summary>The freeze tests add operator freezes (one of them active for 29 days) to the shared database; left
+    /// there they make every later custom-alias creation in other suites fail with an alias-freeze refusal.</summary>
+    private static readonly string[] FreezeReasons = ["active", "expired", "future", "ended early"];
+
     public void Dispose()
     {
+        _db.AliasFreezes.Where(f => f.Source == "operator" && FreezeReasons.Contains(f.Reason)).ExecuteDelete();
         _db.Dispose();
         _services.Dispose();
     }

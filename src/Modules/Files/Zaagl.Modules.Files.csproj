@@ -2,6 +2,9 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\Zaagl.SharedKernel\Zaagl.SharedKernel.csproj" />
+    <ProjectReference Include="..\Resources\Zaagl.Modules.Resources.csproj" />
+    <ProjectReference Include="..\Links\Zaagl.Modules.Links.csproj" />
+    <ProjectReference Include="..\Billing\Zaagl.Modules.Billing.csproj" />
   </ItemGroup>
 
   <PropertyGroup>

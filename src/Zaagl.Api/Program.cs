@@ -20,6 +20,7 @@ using Zaagl.Modules.Identity.Application;
 using Zaagl.Modules.Links;
 using Zaagl.Modules.Resolution;
 using Zaagl.Modules.Resources;
+using Zaagl.Modules.Snippets;
 
 var builder = WebApplication.CreateBuilder(args);
 var config = builder.Configuration;
@@ -96,9 +97,16 @@ builder.Services.AddRateLimiter(o =>
         });
 
     o.AddPolicy("auth", c => Fixed($"auth:{Ip(c)}", rateLimits.AuthPerMinute, TimeSpan.FromMinutes(1)));
+    // BE-024 / ARC-014 §2: device flow. Activation is partitioned by the signed-in user (the wrong-code lockout is in DeviceFlowService).
+    o.AddPolicy("device-code", c => Fixed($"dcode:{Ip(c)}", rateLimits.DeviceCodePerMinute, TimeSpan.FromMinutes(1)));
+    o.AddPolicy("device-token", c => Fixed($"dtoken:{Ip(c)}", rateLimits.DeviceTokenPerMinute, TimeSpan.FromMinutes(1)));
+    o.AddPolicy("device-activate", c => Fixed($"dact:{c.User.FindFirst("sub")?.Value ?? Ip(c)}", rateLimits.DeviceActivatePerMinute, TimeSpan.FromMinutes(1)));
     o.AddPolicy("link-write", c => Fixed($"link:{c.User.FindFirst("sub")?.Value ?? Ip(c)}", rateLimits.LinkWritePerMinute, TimeSpan.FromMinutes(1)));
     // Password guessing: tight limit per visitor and link.
-    o.AddPolicy("unlock", c => Fixed($"unlock:{Ip(c)}:{c.Request.RouteValues["slug"]}", rateLimits.UnlockPerMinute, TimeSpan.FromMinutes(1)));
+    o.AddPolicy("unlock", c => Fixed($"unlock:{Ip(c)}:{c.Request.RouteValues["slug"] ?? c.Request.RouteValues["code"]}", rateLimits.UnlockPerMinute, TimeSpan.FromMinutes(1)));
+    // ARC-003 §4.1 (ARC-013 values OPEN, technical defaults): the content API partitions by IP and code.
+    o.AddPolicy("content-read", c => Fixed($"cread:{Ip(c)}:{c.Request.RouteValues["code"]}", rateLimits.ContentReadPerMinute, TimeSpan.FromMinutes(1)));
+    o.AddPolicy("content-write", c => Fixed($"cwrite:{c.User.FindFirst("sub")?.Value ?? Ip(c)}", rateLimits.ContentWritePerMinute, TimeSpan.FromMinutes(1)));
 });
 
 // ---- Authentication -------------------------------------------------------
@@ -148,7 +156,15 @@ var authentication = builder.Services.AddAuthentication(o =>
                 }
                 var validator = ctx.HttpContext.RequestServices.GetRequiredService<Zaagl.Modules.Identity.Application.SecurityStampValidator>();
                 if (!await validator.IsCurrentAsync(userId, stamp, ctx.HttpContext.RequestAborted))
+                {
                     ctx.Fail("This token has been superseded by a more recent sign-in or security event.");
+                    return;
+                }
+                // ARC-014 §2.4: a device token whose session was revoked stops working (60 s cache bound).
+                if (Guid.TryParse(ctx.Principal?.FindFirstValue(Zaagl.Modules.Identity.Contracts.NativeClientClaims.SessionId), out var sid)
+                    && !await ctx.HttpContext.RequestServices.GetRequiredService<Zaagl.Modules.Identity.Application.DeviceSessionValidator>()
+                        .IsActiveAsync(sid, ctx.HttpContext.RequestAborted))
+                    ctx.Fail("This device session has been revoked.");
             },
         };
     })
@@ -196,6 +212,10 @@ builder.Services.AddAuthorizationBuilder()
         .AddAuthenticationSchemes(JwtBearerDefaults.AuthenticationScheme)
         .RequireAuthenticatedUser()
         .RequireAssertion(ctx => !NativeClientPolicy.IsNativeToken(ctx.User)))
+    // ARC-014 §3.1: any valid JWT, session or native (device) token, but never an API key. Used by /api/auth/whoami only.
+    .AddPolicy("AnyJwt", p => p
+        .AddAuthenticationSchemes(JwtBearerDefaults.AuthenticationScheme)
+        .RequireAuthenticatedUser())
     // Spec §7.4: Admin role + TOTP (a normal session JWT only exists for an Admin after TOTP passed at
     // login - see IdentityService.LoginAsync) + the caller's IP inside Admin:AllowedNetworks. No admin
     // business endpoints exist yet (phase 5 builds them); this policy is ready for them.
@@ -222,7 +242,10 @@ builder.Services
     .AddAnalyticsModule(config)
     .AddResolutionModule(config)
     .AddFilesModule(config)
-    .AddResourcesModule(config); // BE-006: resources schema, registry and quota (no endpoints yet)
+    .AddFilesUploads() // BE-011/BE-012: tus sessions, /complete (the scan task itself runs in the worker)
+    .AddResourcesModule(config, builder.Environment.IsProduction()) // BE-006/BE-008: resources schema, registry, quota, raw/owner tickets
+    .AddSnippetsModule(config); // BE-008: snippets schema, immutable versions, create/edit/read
+builder.Services.AddScoped<ObjectDelivery>(); // ARC-008 hop for stored objects
 builder.Services.AddSingleton<ILiveClickPublisher, SignalRLiveClickPublisher>();
 
 // ---- Pipeline -------------------------------------------------------------
@@ -283,6 +306,7 @@ app.MapGet("/health/issuer", (Zaagl.SharedKernel.Coordination.CreationGate gate)
 app.MapHub<AnalyticsHub>("/hubs/analytics");
 
 app.MapIdentity();
+app.MapDeviceFlow();
 app.MapOrganizations();
 app.MapLinks();
 app.MapAccess();
@@ -291,6 +315,11 @@ app.MapArchive();
 app.MapBilling();
 app.MapNotifications();
 app.MapAdministration();
+app.MapSnippets();
+app.MapFiles();     // BE-011/BE-012: tus uploads and /complete
+app.MapResources(); // F-12: owner library, status, patch, delete, owner tickets, /api/me/storage
+app.MapPublicContent();
+app.MapDelivery();
 // Resolution owns the catch-all /{slug} route, so it is mapped last.
 app.MapResolution();
 

@@ -238,6 +238,38 @@ public static class AuthzOracle
         ["POST /api/webhooks/email"] = new(Access.Anyone, Execute: false, Note: "signature-gated; TODO: unsigned -> 401 test"),
         ["POST /api/billing/webhook"] = new(Access.Anyone, Execute: false, Note: "Stripe signature-gated; TODO"),
 
+        // ---- Phase 1 snippets (BE-008). Executed in SnippetsApiTests with the user-content host configured.
+        ["POST /api/snippets/"] = new(Access.ScopedOrGuest, "snippets:write", Execute: false, Note: "BE-008: guest, owner, key scope and failed-credential rows in SnippetsApiTests"),
+        ["GET /api/snippets/{id:guid}"] = new(Access.Scoped, "resources:read", Resource.OwnerLink, Execute: false, Note: "BE-008: owner, other user (404) and scope in SnippetsApiTests"),
+        ["PUT /api/snippets/{id:guid}"] = new(Access.Scoped, "snippets:write", Resource.OwnerLink, Execute: false, Note: "BE-008: owner, other user (404) and scope in SnippetsApiTests"),
+        ["GET /api/snippets/{id:guid}/versions"] = new(Access.Scoped, "resources:read", Resource.OwnerLink, Execute: false, Note: "BE-008: SnippetsApiTests"),
+        ["GET /api/snippets/{id:guid}/versions/{n:int}"] = new(Access.Scoped, "resources:read", Resource.OwnerLink, Execute: false, Note: "BE-008: SnippetsApiTests"),
+        ["POST /api/snippets/raw"] = new(Access.Scoped, "snippets:write", Execute: false, Note: "BE-010: no guest path; scope, 401 and 415 rows in SnippetsPolishTests"),
+        ["DELETE /api/snippets/{id:guid}"] = new(Access.Scoped, "snippets:write", Resource.OwnerLink, Execute: false, Note: "BE-008 delete: owner, other user (404), scope in SnippetsPolishTests"),
+        ["GET /api/snippets/{id:guid}/diff"] = new(Access.Scoped, "resources:read", Resource.OwnerLink, Execute: false, Note: "BE-009: owner, other user (404), 401 in SnippetsPolishTests"),
+        ["GET /api/public/content/{code}"] = new(Access.Anyone, AllowedMayBe404: true, Execute: false, Note: "BE-008: gate rows in SnippetsApiTests"),
+        ["POST /api/public/content/{code}/unlock"] = new(Access.Anyone, Execute: false, Note: "BE-008: SnippetsApiTests"),
+        ["GET /internal/delivery/{ticket}"] = new(Access.Anyone, Execute: false, Note: "BE-008: user-content host only; ticket-gated; SnippetsApiTests"),
+
+        // ---- Phase 1 E1.2 S1 (BE-011, BE-012, BE-017): executed in FilesApiTests (owner, other user 404, scope, failed credential).
+        ["OPTIONS /api/uploads/"] = new(Access.Anyone, Execute: false, Note: "tus discovery; FilesApiTests"),
+        ["POST /api/uploads/"] = new(Access.ScopedOrGuest, "files:write", Execute: false, Note: "S1: accounts only (no credential 503); FilesApiTests"),
+        ["HEAD /api/uploads/{id:guid}"] = new(Access.ScopedOrGuest, "files:write", Execute: false, Note: "creator-only session; FilesApiTests"),
+        ["PATCH /api/uploads/{id:guid}"] = new(Access.ScopedOrGuest, "files:write", Execute: false, Note: "creator-only session; FilesApiTests"),
+        ["DELETE /api/uploads/{id:guid}"] = new(Access.ScopedOrGuest, "files:write", Execute: false, Note: "creator-only session; FilesApiTests"),
+        ["POST /api/uploads/{id:guid}/complete"] = new(Access.ScopedOrGuest, "files:write", Execute: false, Note: "creator-only session; FilesApiTests"),
+        ["POST /api/uploads/simple"] = new(Access.ScopedOrGuest, "files:write", Execute: false, Note: "one-request upload, same rules as tus plus complete; FilesS2Tests"),
+        ["GET /api/resources/"] = new(Access.Scoped, "resources:read", Execute: false, Note: "owner library; FilesApiTests"),
+        ["GET /api/resources/{id:guid}"] = new(Access.Scoped, "resources:read", Resource.OwnerLink, Execute: false, Note: "owner, other user (404); FilesApiTests"),
+        ["PATCH /api/resources/{id:guid}"] = new(Access.Scoped, "files:write", Resource.OwnerLink, Execute: false, Note: "owner, other user (404), scope; FilesApiTests"),
+        ["DELETE /api/resources/{id:guid}"] = new(Access.Scoped, "files:write", Resource.OwnerLink, Execute: false, Note: "owner, other user (404), scope; FilesApiTests"),
+        ["GET /api/resources/{id:guid}/status"] = new(Access.Scoped, "resources:read", Resource.OwnerLink, Execute: false, Note: "FilesApiTests"),
+        ["POST /api/resources/{id:guid}/inline"] = new(Access.Scoped, "resources:read", Resource.OwnerLink, Execute: false, Note: "FilesApiTests"),
+        ["POST /api/resources/{id:guid}/download"] = new(Access.Scoped, "resources:read", Resource.OwnerLink, Execute: false, Note: "FilesApiTests"),
+        ["GET /api/me/storage"] = new(Access.Scoped, "resources:read", Execute: false, Note: "FilesApiTests"),
+        ["POST /api/public/content/{code}/download"] = new(Access.Anyone, Execute: false, Note: "visitor download button, gate-checked; FilesApiTests"),
+        ["HEAD /internal/delivery/{ticket}"] = new(Access.Anyone, Execute: false, Note: "BE-008: SnippetsApiTests"),
+
         // ---- Auth (§7.4: POST /auth/* anyone, logout-everywhere authenticated)
         ["POST /api/auth/register"] = new(Access.Anyone, Execute: false, Note: "executed in AuthRoutesTests"),
         ["POST /api/auth/resend-confirmation"] = new(Access.Anyone, Execute: false, Note: "executed in AuthRoutesTests"),
@@ -251,10 +283,18 @@ public static class AuthzOracle
         ["POST /api/auth/totp/enroll"] = new(Access.JwtOnly, Execute: false, Note: "AZ-01: executed in AuthRoutesTests (enrol-only token accepted)"),
         ["POST /api/auth/totp/confirm"] = new(Access.JwtOnly, Execute: false, Note: "AZ-01: executed in AuthRoutesTests (enrol-only token accepted)"),
         ["GET /api/auth/me"] = new(Access.JwtOnly, Note: "R1"),
+        ["GET /api/auth/whoami"] = new(Access.JwtOnly, Note: "ARC-014 3.1: also accepts device tokens (DeviceFlowApiTests)"),
         ["GET /api/auth/external/{provider}"] = new(Access.Anyone, Execute: false, Note: "TODO"),
         ["GET /api/auth/external/callback"] = new(Access.Anyone, Execute: false, Note: "PD-41: executed in Pd41TokenExposureTests (fake External scheme)"),
         ["POST /api/auth/external/exchange"] = new(Access.Anyone, Execute: false, Note: "PD-41: executed in Pd41TokenExposureTests (needs a callback code)"),
         ["POST /api/auth/hub-ticket"] = new(Access.JwtOnly, Note: "PD-41: JWT session only; also Pd41TokenExposureTests"),
+        // BE-024 device flow: executed in DeviceFlowApiTests.
+        ["POST /api/auth/device/code"] = new(Access.Anyone, Execute: false, Note: "BE-024: executed in DeviceFlowApiTests"),
+        ["POST /api/auth/device/token"] = new(Access.Anyone, Execute: false, Note: "BE-024: executed in DeviceFlowApiTests"),
+        ["GET /api/auth/device/activation"] = new(Access.JwtOnly, Execute: false, Note: "BE-024: executed in DeviceFlowApiTests (a device token gets 403)"),
+        ["POST /api/auth/device/activate"] = new(Access.JwtOnly, Execute: false, Note: "BE-024: executed in DeviceFlowApiTests"),
+        ["GET /api/me/sessions/"] = new(Access.JwtOnly, Execute: false, Note: "BE-024: executed in DeviceFlowApiTests"),
+        ["DELETE /api/me/sessions/{id:guid}"] = new(Access.JwtOnly, Execute: false, Note: "BE-024: executed in DeviceFlowApiTests"),
 
         // ---- Links (§7.4 rows)
         ["POST /api/links/"] = new(Access.ScopedOrGuest, "links:write", Body: NewLink),

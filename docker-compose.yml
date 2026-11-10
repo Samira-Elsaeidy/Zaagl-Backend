@@ -50,6 +50,7 @@ services:
       ConnectionStrings__Postgres: "Host=postgres;Port=5432;Database=zaagl;Username=zaagl;Password=zaagl_dev"
       ConnectionStrings__Valkey: "valkey:6379,abortConnect=false"
       Jwt__Key: "dev-only-signing-key-change-me-0123456789abcdef"
+      ASPNETCORE_ENVIRONMENT: "Development" # Production requires Access:GrantKeys; dev uses an ephemeral key
     depends_on:
       postgres:
         condition: service_healthy
@@ -95,13 +96,34 @@ services:
       ConnectionStrings__Postgres: "Host=postgres;Port=5432;Database=zaagl;Username=zaagl;Password=zaagl_dev"
       ConnectionStrings__Valkey: "valkey:6379,abortConnect=false"
       Jwt__Key: "dev-only-signing-key-change-me-0123456789abcdef"
-      ShortLinks__ScrambleKey: "dev-only-scramble-key-change-me-0123456789abcdef"
+      # DEV KEY NOTE: this value MUST match the key fingerprint already stored in the coordinator DB
+      # (coordinator `key_fingerprint`; checked on every lease). A mismatch makes /health/issuer report
+      # KeyMismatch and POST /api/links return 503 (docs/TRACEABILITY.md). The live dev DB currently does NOT
+      # match this value; it was deliberately left unchanged. Fix by setting the key that produced the stored
+      # fingerprint (never by editing the DB), or by recreating the dev DB on purpose. Override without editing
+      # this file: ZAAGL_SCRAMBLE_KEY=... docker compose up -d api
+      ShortLinks__ScrambleKey: "${ZAAGL_SCRAMBLE_KEY:-dev-only-scramble-key-change-me-0123456789abcdef}"
       GUEST_KEY: "dev-only-guest-key-change-me-0123456789abcdef"
       Coordinator__BaseUrl: "http://coordinator:8080"
       Coordinator__Token: "dev-coordinator-token"
       ASPNETCORE_ENVIRONMENT: "Development"
       # Same filesystem as the worker (Files module, one volume so temp -> objects is an atomic rename).
       Storage__Root: "/srv/zaagl/storage"
+      # E1.2/E1.3 dev (OPS-009/OPS-012). NOTE: the backend options classes for these keys are not in the
+      # tree yet (only Storage:Root/InternalPathPrefix exist); names follow DEVOPS_PLAN section 2.4 and must be
+      # confirmed by backend (BE-012/BE-014). Unbound keys are ignored by ASP.NET configuration.
+      ClamAv__Host: "clamav"
+      ClamAv__Port: "3310"
+      ClamAv__FailClosed: "true" # clamd down/timeout/error => file stays unscanned, never served (S-02)
+      ClamAv__ScanByPath: "true" # clamd mounts storage read-only at the same path
+      Storage__Admission__MinFreeBytes: "${ZAAGL_MIN_FREE_BYTES:-1073741824}"  # 1 GiB floor in dev; prod uses percent
+      Storage__Admission__SafetyPercent: "5"                                    # DEVOPS_PLAN 2.4(1)
+      Storage__Admission__SoftClosePercent: "80"                                # new sessions capped at 100 MB
+      Storage__Admission__RefuseNewPercent: "90"                                # refuse all new file sessions (507)
+      Storage__Admission__RetryAfterSeconds: "300"
+      Storage__TempMaxAgeHours: "24"                                            # tus partial janitor, 2.4(3)
+      # Dev delivery: usercontent.localhost resolves to 127.0.0.1 in browsers; the API itself answers /d/<ticket>
+      # (Hosts:RewriteDeliveryPath=true in appsettings.Development.json), so no Nginx is run in dev.
     ports:
       - "5084:8080" # spec: edge-network-only, port not published in production; published here for dev access
     volumes:
@@ -134,6 +156,12 @@ services:
       Storage__Root: "/srv/zaagl/storage"
       Worker__LivenessFile: "/tmp/zaagl-worker-alive"
       DOTNET_ENVIRONMENT: "Development"
+      # Same ClamAV / admission keys as the api (see the comment there; key names pending backend confirmation).
+      ClamAv__Host: "clamav"
+      ClamAv__Port: "3310"
+      ClamAv__FailClosed: "true"
+      ClamAv__ScanByPath: "true"
+      Storage__TempMaxAgeHours: "24"
     volumes:
       - storage:/srv/zaagl/storage
     depends_on:
@@ -153,6 +181,35 @@ services:
       timeout: 3s
       retries: 3
       start_period: 30s
+
+  # OPS-009 (dev minimum): clamd on the backend network only, TCP 3310, NO published port. Scans by path, so
+  # it mounts the `storage` volume READ-ONLY at the same path as api/worker. Signatures live in its own new
+  # volume `clamav-db` (survives restarts, so the ~300 MB download happens once).
+  # Slow-download escape hatch: CLAMAV_NO_FRESHCLAMD=true skips the freshclam updater daemon. clamd still needs
+  # a signature DB to start; with an empty `clamav-db` the entrypoint downloads once regardless. With
+  # fail-closed scanning, an unready clamd means uploads stay unscanned (that is the intended behaviour).
+  # Start period is long because first boot downloads signatures [EST 1-5 min; not measured, no Docker here].
+  # Permissions: clamd runs as user `clamav`; objects are 0640 zaagl:zaagl (10001). If scans get "Permission
+  # denied" in dev, add `group_add: ["10001"]` and make files group-readable (prod design: DEVOPS_PLAN 2.2).
+  clamav:
+    image: clamav/clamav:1.4
+    container_name: zaagl-clamav
+    environment:
+      CLAMAV_NO_FRESHCLAMD: "${CLAMAV_NO_FRESHCLAMD:-false}"
+      CLAMAV_NO_MILTERD: "true"
+    volumes:
+      - clamav-db:/var/lib/clamav
+      - storage:/srv/zaagl/storage:ro
+    networks:
+      - backend
+    restart: unless-stopped
+    mem_limit: 3g # signature DB is loaded into RAM [EST ~1.5-2 GB]
+    healthcheck:
+      test: ["CMD-SHELL", "clamdcheck.sh"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 300s
 
   # Spec §3: catches outgoing email in development (dev only - never started in a production compose).
   mailpit:
@@ -174,3 +231,4 @@ volumes:
   postgres-data:
   coordstate:
   storage:
+  clamav-db:

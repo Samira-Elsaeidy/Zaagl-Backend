@@ -12,8 +12,16 @@ public sealed class RateLimitOptions
     public const string Section = "RateLimits";
 
     public int AuthPerMinute { get; set; } = 10;
+    /// <summary>ARC-014 §2 device flow (technical defaults): code issue per IP, token polls per IP, activation per user.</summary>
+    public int DeviceCodePerMinute { get; set; } = 10;
+    public int DeviceTokenPerMinute { get; set; } = 30;
+    public int DeviceActivatePerMinute { get; set; } = 10;
     public int LinkWritePerMinute { get; set; } = 60;
     public int UnlockPerMinute { get; set; } = 10;
+    /// <summary>ARC-003 §4.1: descriptor reads per IP and code (ARC-013 OPEN, technical default 120).</summary>
+    public int ContentReadPerMinute { get; set; } = 120;
+    /// <summary>Content create/edit per principal (ARC-013 OPEN, technical default 60).</summary>
+    public int ContentWritePerMinute { get; set; } = 60;
 }
 
 /// <summary>Spec §7.3 redirect limits (BE-031), per minute. Defaults are the spec's numbers.</summary>

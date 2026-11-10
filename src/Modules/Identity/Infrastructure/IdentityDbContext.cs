@@ -18,6 +18,9 @@ public sealed class IdentityDbContext(DbContextOptions<IdentityDbContext> option
     public DbSet<EmailOutboxItem> EmailOutboxItems => Set<EmailOutboxItem>();
     public DbSet<EmailSuppression> EmailSuppressions => Set<EmailSuppression>();
     public DbSet<OneTimeCode> OneTimeCodes => Set<OneTimeCode>();
+    public DbSet<DeviceAuthorization> DeviceAuthorizations => Set<DeviceAuthorization>();
+    public DbSet<DeviceSession> DeviceSessions => Set<DeviceSession>();
+    public DbSet<DeviceActivationFailure> DeviceActivationFailures => Set<DeviceActivationFailure>();
 
     protected override void OnModelCreating(ModelBuilder b)
     {
@@ -120,6 +123,38 @@ public sealed class IdentityDbContext(DbContextOptions<IdentityDbContext> option
             e.Property(x => x.CodeHash).HasMaxLength(64);
             e.Property(x => x.Purpose).HasMaxLength(20).IsRequired();
             e.HasIndex(x => x.ExpiresAt);
+        });
+
+        b.Entity<DeviceAuthorization>(e =>
+        {
+            e.ToTable("device_authorizations");
+            e.HasKey(x => x.Id);
+            e.Property(x => x.DeviceCodeHash).HasColumnType("bytea");
+            e.Property(x => x.UserCodeHash).HasColumnType("bytea");
+            e.Property(x => x.ClientId).HasMaxLength(32).IsRequired();
+            e.Property(x => x.DeviceName).HasMaxLength(64);
+            e.Property(x => x.Os).HasMaxLength(32);
+            e.HasIndex(x => x.DeviceCodeHash).IsUnique();
+            e.HasIndex(x => x.UserCodeHash).IsUnique();
+            e.HasIndex(x => x.ExpiresAt);
+        });
+
+        b.Entity<DeviceSession>(e =>
+        {
+            e.ToTable("device_sessions");
+            e.HasKey(x => x.FamilyId);
+            e.Property(x => x.FamilyId).ValueGeneratedNever();
+            e.Property(x => x.ClientId).HasMaxLength(32).IsRequired();
+            e.Property(x => x.DeviceName).HasMaxLength(64);
+            e.Property(x => x.Os).HasMaxLength(32);
+            e.HasIndex(x => x.UserId);
+        });
+
+        b.Entity<DeviceActivationFailure>(e =>
+        {
+            e.ToTable("device_activation_failures");
+            e.HasKey(x => x.Id);
+            e.HasIndex(x => new { x.UserId, x.CreatedAt });
         });
     }
 }

@@ -22,4 +22,9 @@
     <ProjectReference Include="..\..\src\Modules\Files\Zaagl.Modules.Files.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <!-- One source for the fake clamd: the unit tests here and the API integration tests both drive the real ClamdScanner against it. -->
+    <Compile Include="..\Zaagl.Api.Tests\Harness\FakeClamdServer.cs" Link="FakeClamdServer.cs" />
+  </ItemGroup>
+
 </Project>

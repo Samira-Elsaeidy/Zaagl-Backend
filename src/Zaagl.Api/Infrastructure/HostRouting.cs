@@ -16,6 +16,10 @@ public sealed class HostRoutingOptions
     /// <c>/d/&lt;ticket&gt;</c> to the API's internal authorize hop <c>/internal/delivery/&lt;ticket&gt;</c> with this Host.
     /// Empty = this process serves no user-content host (development). Delivery endpoints arrive with BE-017/018.</summary>
     public string UserContent { get; set; } = "";
+
+    /// <summary>Development only (no Nginx in front): also serve <c>/d/&lt;ticket&gt;</c> on the user-content host, which Nginx
+    /// rewrites to the authorize hop <c>/internal/delivery/&lt;ticket&gt;</c> in production (ARC-008 §4.1).</summary>
+    public bool RewriteDeliveryPath { get; set; }
 }
 
 /// <summary>Which of the public hosts a request belongs to (decides the header policy).</summary>
@@ -102,7 +106,8 @@ public static class HostRoutingDecision
     public static bool IsAllowed(string requestHost, PathString path, HostRoutingOptions options)
     {
         if (IsUserContentHost(requestHost, options))
-            return path.StartsWithSegments(DeliveryPrefix, StringComparison.OrdinalIgnoreCase);
+            return path.StartsWithSegments(DeliveryPrefix, StringComparison.OrdinalIgnoreCase)
+                || (options.RewriteDeliveryPath && path.StartsWithSegments("/d", StringComparison.OrdinalIgnoreCase));
         // The authorize hop is never served on the public API or short host (ARC-008 §4.1 defence in depth).
         if (path.StartsWithSegments(DeliveryPrefix, StringComparison.OrdinalIgnoreCase))
             return false;

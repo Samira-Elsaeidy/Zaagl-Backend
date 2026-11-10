@@ -33,6 +33,10 @@ public static class IdentityModule
         services.AddScoped<Zaagl.Modules.Billing.Contracts.IPlanChangeListener, ApiKeyPlanChangeListener>();
         services.TryAddSingleton(TimeProvider.System);
         services.AddScoped<OneTimeCodeService>(); // PD-41: social sign-in exchange codes and hub tickets
+        // BE-024 / ARC-014: device authorization (CLI, desktop) and device sessions.
+        services.Configure<DeviceAuthOptions>(configuration.GetSection(DeviceAuthOptions.Section));
+        services.AddScoped<DeviceFlowService>();
+        services.AddSingleton<DeviceSessionValidator>();
 
         // Spec §7.10: real SMTP when configured, else a console-logging dev fallback - same shape as
         // WebRiskChecker's "no API key -> skip" and ShortLinks:ScrambleKey's dev-only random fallback.

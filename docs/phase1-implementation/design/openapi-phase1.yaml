@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Zaagl Phase 1 content API (draft)
-  version: 0.2.0-draft
+  version: 0.3.0-draft
   description: |
     DRAFT for ARC-016. Written by hand from the Phase 1 contract pack (docs/phase1-implementation/contracts.md C1-C12),
     the approved rulebook docs/spec/zaagl-phase1-addendum.md and the contract stubs in src/Modules/*/Contracts. It is
@@ -20,6 +20,11 @@ info:
     - `x-zaagl-scopes` lists the scope an API key needs; JWT and device sessions hold every non-admin scope.
     - `x-zaagl-status` marks parts that are OPEN, PROPOSED (treated as OPEN) or TO_CONFIRM; implementations must not
       invent behaviour for them (addendum MUST NOT #20).
+    - `x-zaagl-slice` (0.3.0) marks the build slice of an operation or field for E1.2/E1.3 (design/BUILD-ORDER-E1.2-E1.3.md):
+      `S1` plain images with ClamAV and the image viewer, `S2` files, burn, lifecycle, guests, `S3` derivatives, SVG,
+      video, PDF. Unmarked operations belong to the snippet or device-flow work already built. A field or behaviour marked
+      with a later slice is accepted by the schema but answered as documented for the earlier slice (for example
+      `burnAfterDownload: true` is `400 validation` in S1).
     - Every write transaction uses `SET LOCAL lock_timeout = '3s'`; a lock timeout answers `503 busy` with
       `Retry-After: 1` (spec §7.0).
 
@@ -87,7 +92,7 @@ paths:
             schema: { $ref: '#/components/schemas/SnippetCreateRequest' }
       responses:
         '201':
-          description: Created. Share URL = shortUrl + (linkKey ? "#k=" + linkKey : "").
+          description: 'Created. Share URL = shortUrl plus, when linkKey is present, #k= and the linkKey.'
           content:
             application/json:
               schema: { $ref: '#/components/schemas/SnippetCreatedDto' }
@@ -107,9 +112,9 @@ paths:
       operationId: createSnippetRaw
       summary: CLI pipe. Create a snippet from a streamed text/plain body (no guest path).
       description: |
-        ARC-010 §4.4. `Content-Type: text/plain` with `charset=utf-8` or no charset; anything else → 415.
-        A Content-Length above the plan cap → 413 before reading; otherwise the body is read through a counting stream
-        that stops at cap + 1 bytes (413). Invalid UTF-8 or U+0000 → 415 (binary input). `ansi=strip` (default) removes
+        ARC-010 §4.4. `Content-Type: text/plain` with `charset=utf-8` or no charset; any other type or charset → 415 (except UTF-16 below).
+        The charset may also be utf-16, utf-16le or utf-16be (a UTF-16 BOM FF FE or FE FF selects UTF-16 whatever the header says; the BOM is dropped); the stored text is always UTF-8. A Content-Length above 2 x the plan cap (the UTF-16 allowance) → 413 before reading; otherwise the body is read through a counting stream
+        that stops one byte past that limit (413); the plan cap itself applies to the decoded UTF-8 size (413 snippet-too-large). Invalid UTF-8 or U+0000 → 415 (binary input). `ansi=strip` (default) removes
         ECMA-48 escape sequences when `renderMode=terminal`; the cap applies to the received body.
         No password parameter (secrets never in a query string): use the JSON route or PATCH /api/resources/{id}.
         With `Accept: text/plain` the response body is only the share URL including `#k=<key>` for keyed snippets,
@@ -157,9 +162,9 @@ paths:
       operationId: getOwnSnippet
       summary: Owner view of a snippet (current version, all version numbers, resource fields).
       description: |
-        Resource fields in any state except purgeable (404). `snippet` and `rawUrl` only while the state is `ready`
+        Resource fields in any state except purgeable (404). `current` (the current SnippetViewDto) and `rawUrl` only while the state is `ready`
         (addendum §9.2: bytes are unreachable once expired, deleted or disabled); otherwise both are null and the
-        owner sees the state. `rawUrl` is a ticket with purpose `owner`, derivative `v<n>` (15 min).
+        owner sees the state. `current.versions` lists every version number (ascending). `rawUrl` is a ticket with purpose `owner`, derivative `v<n>` (15 min).
       x-zaagl-auth: [owner, "K(resources:read)"]
       x-zaagl-scopes: [resources:read]
       responses:
@@ -293,6 +298,7 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/SnippetDiffDto' }
+        '304': { description: 'Not modified (If-None-Match matched the ETag).' }
         '400': { $ref: '#/components/responses/Validation' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
@@ -322,12 +328,25 @@ paths:
       operationId: createUpload
       summary: Create an upload session. Size, plan and quota checks run before any byte is accepted.
       description: |
-        `Upload-Length` is mandatory (deferred length is refused). `Upload-Metadata` keys: `filename`, `filetype`,
-        `kind` (`file` or `media`), all untrusted display data. Disk admission failure answers `507` with
-        `Retry-After`. Guests: CAPTCHA (`guest-upload` action) and the PD-14 counters; an upload counts at session
-        create.
+        `Upload-Length` is mandatory and at least 1 (deferred length and zero length are refused). `Upload-Metadata` keys: `filename`, `filetype`,
+        `kind` (`file` or `media`), all untrusted display data; `kind` must be enabled (`Uploads:Kinds`: S1 `media` only,
+        S2 `media,file`, else `400 validation`). Disk admission failure answers `507` with `Retry-After`. Guests:
+        CAPTCHA (`guest-upload` action) and the PD-14 counters; an upload counts at session create. In S1 a request with
+        no credential answers `503 guest_creation_paused`. The quota is reserved here (declared length) and adopted by
+        the resource at `/complete` (ARC-009 §5, §6). The `Location` the API returns is `/api/uploads/{id}`; the web app
+        reaches it through the BFF as `/bff/api/uploads/{id}` (the BFF rewrites it, ARC-009 §4.1).
+        S2 additions: `burn` (`1` or `true`) in `Upload-Metadata` announces burn after downloading and is checked here, before any byte:
+        `402 plan_required` without the `BurnAfterDownload` capability (Free and guests), `400 validation` unless `kind=file`; `/complete`
+        checks again. A guest create needs no session cookie (x-zaagl-auth none): it is tied to the guest principal (derived from the
+        network partition), so HEAD, PATCH, DELETE and `/complete` of that session answer `404` for anybody else. Guest counter
+        exhaustion (30 per hour, 60 per 24 h, shared with snippets) answers `429` with code `quota`, and a failed create is refunded. A
+        declared `media` upload whose bytes are not an allowed image becomes `kind=file` at `/complete` (re-kinding). Executables
+        (PE, ELF, Mach-O, shebang, .lnk, or a blocklisted display-name extension) answer `422 content-rejected` with
+        `reason: type-not-allowed` for guests and Free (`Uploads:BlockExecutablesFor`), encrypted ZIP and RAR archives for everyone.
+        Guest `/complete`: `public: true` is `400` (addendum 5.1.3 to confirm), burn and password are `402`.
       x-zaagl-auth: [J, "K(files:write)", G]
       x-zaagl-scopes: [files:write]
+      x-zaagl-slice: { accounts: S1, guests: S2, kindFile: S2 }
       x-zaagl-rate-limit: upload-session (per principal); guest counters as POST /api/snippets
       security:
         - sessionJwt: []
@@ -422,11 +441,25 @@ paths:
         Answers `202` with `state: processing`. The link may be shared at once (PD-28 APPROVED); no bytes are served
         before the resource is `ready` (addendum §2.4). `customSlug` is allowed for every caller, guests included
         (PD-57). `burnAfterDownload` and `password` need the Starter plan (PD-54), else `402 plan_required`.
+
+        Order (ARC-009 §6): principal and session (404 for another principal) -> session status (open: `409
+        upload-incomplete`; aborted or expired: `410 upload-expired`; finalized: idempotent replay) -> body validation
+        -> **the first 64 KB are sniffed and the kind is fixed here** (the link kind cannot change later): declared
+        `file` stays a file; declared `media` with an allowlisted type is media; declared `media` with any other type is
+        `422 content-rejected` (`type-not-allowed`) in S1 and is re-kinded to a file from S2 (interim PD-16, OPEN) ->
+        Register (adopting the reservation of the session) -> link -> scan task. Hashing and scanning happen in the
+        worker afterwards; the answer does not wait for them.
+
+        `burnAfterDownload: true`: S1 `400 validation`; S2 files only (a media upload with burn is `400 validation`,
+        burn applies to files, ARC-019 §1). On an idempotent replay `linkKey` is null (built behaviour, ARC-002 Q1 OPEN),
+        so clients show the full link from the first response and store it.
       x-zaagl-auth: [creator]
       x-zaagl-scopes: [files:write]
       x-zaagl-rate-limit: content-write
+      x-zaagl-slice: S1
       x-zaagl-status:
         guestPublicChoice: TO_CONFIRM (may a guest set public at creation)
+        mediaTypeAllowlist: 'OPEN (PD-16); S1 PNG, JPEG, GIF, WebP'
       security: [{ sessionJwt: [] }, { apiKey: [] }, {}]
       parameters:
         - $ref: '#/components/parameters/IdempotencyKeyRequired'
@@ -446,7 +479,7 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         '409': { $ref: '#/components/responses/UploadIncompleteOrConflict' }
         '410': { $ref: '#/components/responses/UploadExpired' }
-        '422': { $ref: '#/components/responses/IdempotencyMismatch' }
+        '422': { $ref: '#/components/responses/IdempotencyMismatchOrContentRejected' }
         '503': { $ref: '#/components/responses/Busy' }
 
   /api/uploads/simple:
@@ -454,8 +487,14 @@ paths:
       tags: [Uploads]
       operationId: simpleUpload
       summary: Single-request upload for small files (screenshots, CLI). Same rules as tus, body at most 90,000,000 bytes.
+      description: |
+        Slice S2. Create, size, quota, sniff, register, link and scan task happen as for tus plus `/complete`, in one
+        request. The server MUST stream the multipart body to the temp area with `MultipartReader`; `IFormFile` and
+        `ReadFormAsync` buffer the body and are forbidden (DATABASE_AND_STORAGE R4). The reservation is taken from the
+        `Content-Length` before reading (`411 length-required` without it); the `metadata` part is read first.
       x-zaagl-auth: [J, "K(files:write)", G]
       x-zaagl-scopes: [files:write]
+      x-zaagl-slice: S2
       x-zaagl-rate-limit: upload-session; guest counters as POST /api/snippets
       security:
         - sessionJwt: []
@@ -500,8 +539,14 @@ paths:
       tags: [Resources]
       operationId: listResources
       summary: The caller's content library (keyset pagination, newest first).
+      description: |
+        Owner only; every kind, every state except purgeable. Ordered by `createdAt` descending then `id` descending
+        (index `(owner_id, created_at DESC)`); the cursor is opaque. `thumbnailUrl` is null until S3 (no per-row ticket
+        is minted in S1, so a page costs no grant rows). The link key is never returned here (only at creation).
+        Guests have no library. Items are cheap: no kind-specific query beyond the summary blocks.
       x-zaagl-auth: [J, "K(resources:read)"]
       x-zaagl-scopes: [resources:read]
+      x-zaagl-slice: S1
       parameters:
         - { name: kind, in: query, schema: { $ref: '#/components/schemas/ContentKind' } }
         - { name: state, in: query, schema: { $ref: '#/components/schemas/ResourceState' } }
@@ -530,8 +575,10 @@ paths:
     get:
       tags: [Resources]
       operationId: getResource
+      summary: Owner detail of any resource (state, processing, rejection reason, scan, file or media block).
       x-zaagl-auth: [owner, "K(resources:read)"]
       x-zaagl-scopes: [resources:read]
+      x-zaagl-slice: S1
       responses:
         '200':
           description: Detail.
@@ -549,11 +596,13 @@ paths:
         - `public: true` removes the key hash (the old `#k=` URL keeps working without needing the key);
           `public: false` on a public link issues a new key, returned once in `linkKey`; the keyless URL stops working.
         - `password` / `clearPassword`: capability `PasswordOnContent` (Starter only, PD-54).
-        - `burnAfterDownload`: capability `BurnAfterDownload` (Starter only, PD-54); cannot change after a claim
-          (`409 burn-already-claimed`).
+        - `burnAfterDownload`: capability `BurnAfterDownload` (Starter only, PD-54); files only; cannot change after a
+          claim (`409 burn-already-claimed`). S1: any value `true` is `400 validation`.
+        - Renewal of a **burned** resource: `409 burn-already-claimed`; of a deleted one: `409 conflict`.
         - API key scope: the kind's write scope, `snippets:write` for snippets, `files:write` for files and media.
       x-zaagl-auth: [owner, "K(snippets:write | files:write by kind)"]
       x-zaagl-scopes: [snippets:write, files:write]
+      x-zaagl-slice: { title_expiresAt_public: S1, password_burn: S2 }
       x-zaagl-status: { scope: 'Interim rule (contracts.md C9). A separate resources:write scope is OPEN (ARC-014 Q3).' }
       requestBody:
         required: true
@@ -589,9 +638,14 @@ paths:
     get:
       tags: [Resources]
       operationId: getResourceStatus
-      summary: Processing status for desktop and CLI polling.
+      summary: Processing status for the uploader, desktop and CLI polling.
+      description: |
+        Poll after `/complete`: every 1 s for the first 10 s, then every 3 s, honouring `Retry-After`; stop at `ready`
+        or `rejected`. `rejectedReason: scan-unavailable` is a distinct "scanning failed, please upload again" outcome,
+        never the malware text (addendum §7.1.3).
       x-zaagl-auth: [owner, "K(resources:read)"]
       x-zaagl-scopes: [resources:read]
+      x-zaagl-slice: S1
       responses:
         '200':
           description: Status.
@@ -602,15 +656,48 @@ paths:
               schema: { $ref: '#/components/schemas/ResourceStatusDto' }
         '404': { $ref: '#/components/responses/NotFound' }
 
+  /api/resources/{id}/inline:
+    parameters:
+      - $ref: '#/components/parameters/ResourceIdPath'
+    post:
+      tags: [Resources]
+      operationId: mintOwnerInlineTicket
+      summary: Owner inline view ticket for the original (purpose inline, 15 minutes). Never consumes burn.
+      description: |
+        Lets the owner pages (`/files`, detail) show an allowlisted raster original in `<img>` without going through
+        the public gate. Owner check instead of the gate; the ticket is bound to this resource and purpose `inline`.
+        Refused for burn files (`409 conflict`: burn files have no inline or preview, addendum §8.1.3), for types that
+        are not on `Content:InlineMimeAllowlist` (`409 conflict`) and for resources that are not `ready` (`409
+        processing`, `410`, `422`). Change F-12.
+      x-zaagl-auth: [owner]
+      x-zaagl-scopes: [resources:read]
+      x-zaagl-slice: S1
+      responses:
+        '200':
+          description: Ticket URL.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DownloadTicketResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Processing' }
+        '410': { $ref: '#/components/responses/Gone' }
+        '422': { $ref: '#/components/responses/ContentRejected' }
+
   /api/resources/{id}/download:
     parameters:
       - $ref: '#/components/parameters/ResourceIdPath'
     post:
       tags: [Resources]
       operationId: mintOwnerTicket
-      summary: Owner download ticket (purpose owner). Never consumes burn.
+      summary: Owner download ticket (purpose owner, attachment). Never consumes burn.
+      description: |
+        Available for every `ready` resource, burn files included **before** a claim (a claimed burn file is
+        `410 burned` for the owner too: the bytes are being or have been deleted). Owner tickets never touch the burn
+        columns and never increment `downloadCount`.
       x-zaagl-auth: [owner]
       x-zaagl-scopes: [resources:read]
+      x-zaagl-slice: S1
       responses:
         '200':
           description: Ticket URL.
@@ -626,7 +713,7 @@ paths:
     get:
       tags: [Account]
       operationId: getStorage
-      summary: Plan limits, used, reserved and quota.
+      summary: Plan limits, used, reserved and quota, and the plan capabilities (S2: `capabilities`).
       x-zaagl-auth: [J, "K(resources:read)"]
       x-zaagl-scopes: [resources:read]
       responses:
@@ -651,9 +738,34 @@ paths:
         Gate order (addendum §5.2): link and resource state, then the link key (missing or wrong key on a keyed link
         answers exactly like an unknown code, 404, same timing class), then the password (valid grant or
         `401 password-required`). Inline, preview and raw ticket URLs appear only when the state is `ready` and the
-        resource is not a burn file. Recording a `view` event: definition PROPOSED (PD-10).
+        resource is not a burn file. Recording a `view` event: definition PROPOSED (PD-10): until approved no event is
+        written by this route.
+
+        Snippet descriptor note (ARC-003 §4.1, ARC-010 §7). For `kind: snippet`:
+        - `state: ready` carries `snippet` (SnippetViewDto of the CURRENT version only, `versions: [current]`; older
+          versions and diffs for visitors are OPEN, ARC-003 Q2), `rawUrl` (a purpose `raw` ticket for that version, 15
+          minutes) and `sizeBytes`; `inlineUrl`, `previewUrl`, `media`, `file`, `mime`, `filename` are null;
+          `burnAfterDownload` is always false (burn for snippets is not built, PD-05 note).
+        - `state: processing` (a snippet is pending only for milliseconds between link issue and mark-ready) has
+          `snippet: null` and `rawUrl: null`; the viewer retries after 1 s, at most 5 times; the CLI exits 75 after its retries.
+        - `snippet.content` is plain data. Clients render it inertly and never as markup (ARC-010 §6). No `renderedHtml`
+          field exists until PD-09 is decided (see SnippetRenderMode).
+        - A call without link key and grant (the SSR crawler-meta call) consumes nothing and writes no event; it answers
+          `200` only for public, password-free, ready content.
+        - Stale `rawUrl`: a `403 ticket-invalid` from usercontent means refetch this descriptor once and retry once.
+
+        Media and file descriptors (ARC-011 §9, ARC-019 §11):
+        - `kind: media`, `state: ready`: `inlineUrl` is an `inline` ticket for the **original** (never a derivative at
+          100%), `media.mediaType`/`detectedMime`; in S1 every other `media` field is null (the viewer reads the natural
+          size from the browser). `previewUrl` is null until S3.
+        - `kind: file`: `file` block, `filename`, `mime`, `sizeBytes`, `burnAfterDownload`; **no** `inlineUrl`,
+          `previewUrl` or download URL ever; state `burned` after a claim.
+        - `state: processing`: no URLs; `state: rejected` is `422 content-rejected`; a visitor sees a neutral
+          message, the reason is owner-only.
+        - Burn files never carry inline, preview or raw tickets (addendum §8.1.3).
       security: [{}]
       x-zaagl-auth: [P]
+      x-zaagl-slice: { media: S1, file: S2 }
       x-zaagl-rate-limit: OPEN (ARC-013 content read policy)
       x-zaagl-status: { viewCounting: PROPOSED (PD-10), maxViews: 'OPEN (not in C4 until PD-10)' }
       responses:
@@ -668,6 +780,7 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         '410': { $ref: '#/components/responses/Gone' }
         '422': { $ref: '#/components/responses/ContentRejected' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
 
   /api/public/content/{code}/unlock:
     parameters:
@@ -709,8 +822,16 @@ paths:
       description: |
         Only a POST mints a download ticket (preview bots never POST). For a burn file, the first GET of the ticket
         claims the burn (PD-05); minting does not. A password-protected burn file needs a valid grant.
+
+        Burn contract (ARC-019): minting consumes nothing and reads no User-Agent; several tickets may be minted before
+        a claim, only the first GET of any of them wins, every other first GET is `410 burned`. After a claim this route
+        answers `410 burned` (the claiming client keeps using its own ticket). Clients MUST hand the returned URL to the
+        browser once (one navigation) and never request it themselves, prefetch it or probe it with HEAD; after an
+        interruption they reuse the same URL (never mint again) within the 30-minute, 16-request grace.
+        Non-burn files: same route, the ticket is attachment, `Range` capable (S1: images; S2: all files).
       security: [{}]
       x-zaagl-auth: [P]
+      x-zaagl-slice: { download: S1, burnClaim: S2 }
       x-zaagl-rate-limit: download-grant (per IP partition and code)
       x-zaagl-status:
         captchaOnBurn: OPEN
@@ -742,9 +863,25 @@ paths:
       description: |
         Credentials (Authorization, cookies) are ignored; access is only by ticket. A burn download ticket's first GET
         claims the burn atomically; the winning grant may serve further Range requests for 30 minutes, at most 16
-        requests in total. A request for an object larger than Content:MaxResponseBytes must carry one byte range of at most that size;
+        requests in total. Check order for a burn ticket (ARC-019 §5): ticket and grant, resource state, object present
+        and of the expected size, size and Range rule (`416`), ticket expiry (replaced by the grace for the claiming
+        grant), then the claim. Every refusal before the claim consumes nothing; a lock timeout (`503 busy`) rolls the
+        claim back. Two parallel requests of the same ticket are both served (the loser is a continuation); a request
+        of any other grant after the claim is `410 burned`. `HEAD` never claims and never counts. Slice: images S1, burn
+        claim S2. A request for an object larger than Content:MaxResponseBytes must carry one byte range of at most that size;
         otherwise `416 range-required` (no partial body is sent unasked).
         Every response, errors included, carries the addendum §4.4 headers.
+
+        Snippet delivery note (ARC-010 §7, ARC-008 §4.3). For a ticket on a snippet (purpose `raw` or `owner`,
+        derivative `v<n>`) the delivery hop does NOT use X-Accel-Redirect: it reads version n from PostgreSQL and
+        answers itself, with the UTF-8 bytes exactly as stored (no trimming, no line-ending or BOM change).
+        - `200` with `Content-Type: text/plain; charset=utf-8` for every language and render mode (Markdown and HTML included).
+        - `Content-Disposition: attachment; filename="<code>.txt"; filename*=UTF-8''<code>.txt` (addendum §4.4; opening it
+          as text in the tab is OPEN, ARC-010 Q1).
+        - `Content-Length`, `ETag: "<hex sha256>"`, `Accept-Ranges: bytes` (single range; `206` works). A snippet is at most
+          2,097,152 bytes, so `416 range-required` never applies to it.
+        - No cookie, no CORS header. Nginx adds nosniff, the sandbox CSP, no-store, no-referrer, CORP and X-Robots-Tag.
+        - Only state `ready` serves; otherwise 410 gone (or 403 ticket-invalid for a stale or forged ticket). No analytics event until PD-10.
       security: [{}]
       x-zaagl-auth: [T]
       x-zaagl-rate-limit: OPEN (ARC-013, Nginx limit_conn / limit_rate)
@@ -799,6 +936,12 @@ paths:
       tags: [Device authorization]
       operationId: deviceCode
       summary: Start a device authorization (CLI and desktop, every account plan).
+      description: |
+        RFC 8628 §3.1 (ARC-014 §2.1). JSON or form body. `device_code` is 32 random bytes (base64url, stored only hashed);
+        `user_code` is 8 consonants shown `XXXX-XXXX`; `expires_in` (600) and `interval` (5) come from configuration.
+        `verification_uri` comes from `DeviceAuth:VerificationUri` (staging differs), never from a request header;
+        `verification_uri_complete` = it + `?code=XXXX-XXXX`. The client shows the URI and code, opens the browser, then
+        polls POST /api/auth/device/token no faster than `interval`.
       security: [{}]
       x-zaagl-auth: [anonymous]
       x-zaagl-rate-limit: device-code (per IP partition; ARC-014 §2.1)
@@ -822,6 +965,7 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/OAuthError' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
 
   /api/auth/device/token:
     post:
@@ -852,10 +996,11 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/DeviceAuthResponse' }
         '400':
-          description: RFC 8628 §3.5 error.
+          description: 'RFC 8628 §3.5 error (also unsupported_grant_type, invalid_client).'
           content:
             application/json:
               schema: { $ref: '#/components/schemas/OAuthError' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
 
   /api/auth/device/activation:
     get:
@@ -876,12 +1021,17 @@ paths:
               schema: { $ref: '#/components/schemas/DeviceActivationInfo' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
 
   /api/auth/device/activate:
     post:
       tags: [Device authorization]
       operationId: activateDevice
       summary: Approve or deny a user code (session JWT only; not an API key, not a device token).
+      description: |
+        ARC-014 §2.2. Called by the BFF for app.zaa.gl/activate with the web session JWT and the BFF CSRF check. Unknown,
+        expired, used or denied code: 404 (no distinction). One winner (conditional update). 10 wrong codes in 10
+        minutes lock the user out for 15 minutes (429). Approval is never automatic on page load.
       x-zaagl-auth: [J]
       x-zaagl-rate-limit: device-activate (per user and per IP partition; ARC-014 §2.2)
       x-zaagl-status: { routeName: 'PROPOSED (BE-024)' }
@@ -895,7 +1045,29 @@ paths:
         '204': { description: Recorded. User codes are single-use. }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
-        '410': { $ref: '#/components/responses/Gone' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /api/auth/whoami:
+    get:
+      tags: [Device authorization]
+      summary: Identity probe (ARC-014 3.1); accepts a session JWT or a device token, never an API key
+      description: Unlike GET /api/auth/me (Interactive, 403 for device tokens). `role` is always null for a device token.
+      security: [{ sessionJwt: [] }]
+      responses:
+        '200':
+          description: The signed-in user.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [id, email, displayName, role, emailConfirmed]
+                properties:
+                  id: { type: string, format: uuid }
+                  email: { type: string }
+                  displayName: { type: string }
+                  role: { type: string, nullable: true }
+                  emailConfirmed: { type: boolean }
+        '401': { $ref: '#/components/responses/Unauthorized' }
 
   /api/me/sessions:
     get:
@@ -920,6 +1092,7 @@ paths:
       tags: [Device authorization]
       operationId: revokeDeviceSession
       summary: Revoke one device session (its refresh-token family).
+      description: "Web session only; POST /api/auth/logout-everywhere also revokes device families. Unknown or not the caller's: 404."
       x-zaagl-auth: [J]
       x-zaagl-status: { routeName: 'PROPOSED (BE-024)' }
       security: [{ sessionJwt: [] }]
@@ -1058,7 +1231,7 @@ components:
       type: object
       required: [error]
       properties:
-        error: { type: string, enum: [authorization_pending, slow_down, access_denied, expired_token, invalid_grant, invalid_client, invalid_request] }
+        error: { type: string, enum: [authorization_pending, slow_down, access_denied, expired_token, invalid_grant, invalid_client, invalid_request, unsupported_grant_type] }
         error_description: { type: string }
 
     ContentKind:
@@ -1095,7 +1268,7 @@ components:
         renderMode: { $ref: '#/components/schemas/SnippetRenderMode' }
         title: { type: [string, 'null'], maxLength: 200 }
         expiresAt: { type: [string, 'null'], format: date-time, description: 'Default and maximum now + plan RetentionDays (guest/Free 7, Starter 30); later gives 400 expiry-beyond-plan.' }
-        password: { type: [string, 'null'], minLength: 1, maxLength: 256, description: 'Starter only (PasswordOnContent, PD-54), else 402 plan_required.' }
+        password: { type: [string, 'null'], minLength: 4, maxLength: 128, description: 'Starter only (PasswordOnContent, PD-54), else 402 plan_required.' }
         customSlug: { type: [string, 'null'], minLength: 4, maxLength: 64, description: 'Alias; allowed for everyone, guests included (PD-57). Phase 0 alias rules apply.' }
         public: { type: boolean, default: false, description: 'false mints a link key (PD-01). Guests: true → 400 validation until confirmed.', x-zaagl-status: 'TO_CONFIRM for guests (addendum §5.1.3)' }
     SnippetCreatedDto:
@@ -1133,6 +1306,7 @@ components:
         renderMode: { $ref: '#/components/schemas/SnippetRenderMode' }
     SnippetViewDto:
       type: object
+      x-zaagl-status: { markdownRenderer: 'OPEN (PD-09, blocked on the product owner). The API returns text only; the frontend may build client rendering behind renderMode=markdown without that committing the decision.' }
       required: [renderMode, version, versions, content, sizeBytes, lineCount, expiresAt]
       properties:
         title: { type: [string, 'null'] }
@@ -1140,7 +1314,7 @@ components:
         renderMode: { $ref: '#/components/schemas/SnippetRenderMode' }
         version: { type: integer }
         versions: { type: array, items: { type: integer }, description: 'Owner routes: all version numbers, ascending. Public descriptor: only the current version (ARC-003 Q2 OPEN).' }
-        content: { type: string, description: 'Plain data, exactly as stored; clients render it inertly (ARC-010 §6).' }
+        content: { type: string, description: 'Plain data, exactly as stored; clients render it inertly (ARC-010 §6). There is no renderedHtml field: it is added (nullable, additive) only if PD-09 chooses server-side Markdown.' }
         sizeBytes: { type: integer }
         lineCount: { type: integer }
         expiresAt: { type: string, format: date-time }
@@ -1199,6 +1373,11 @@ components:
         url: { type: [string, 'null'], description: 'Preview ticket URL; never for burn files.' }
     MediaDto:
       type: object
+      description: |
+        S1 (plain images): `mediaType`, `detectedMime`, `browserPlayable: true` and an empty `derivatives`; every other
+        field is null because the probe and derivatives arrive in S3 (ARC-011 §3.1). `width` and `height` are the
+        displayed size (after EXIF orientation).
+      required: [mediaType, detectedMime, browserPlayable, derivatives]
       properties:
         mediaType: { $ref: '#/components/schemas/MediaType' }
         detectedMime: { type: string }
@@ -1209,8 +1388,11 @@ components:
         hasAlpha: { type: [boolean, 'null'] }
         colorSpace: { type: [string, 'null'] }
         iccProfileName: { type: [string, 'null'] }
+        orientation: { type: [integer, 'null'], minimum: 1, maximum: 8, description: 'Original EXIF orientation value (S3).' }
         browserPlayable: { type: boolean }
+        hasLocationData: { type: [boolean, 'null'], description: 'Owner routes only, never in a public descriptor; null until PD-13 is decided and the probe exists.', x-zaagl-status: 'OPEN (PD-13)' }
         derivatives: { type: array, items: { $ref: '#/components/schemas/MediaDerivativeDto' } }
+      x-zaagl-slice: { core: S1, probe_and_derivatives: S3 }
       x-zaagl-status: 'EXIF/GPS policy OPEN (PD-13); allowlist OPEN (PD-16); SVG PROPOSED (PD-18); transcoding PROPOSED (PD-30)'
 
     ContentDescriptor:
@@ -1234,10 +1416,12 @@ components:
         media: { oneOf: [{ $ref: '#/components/schemas/MediaDto' }, { type: 'null' }] }
         file:
           type: [object, 'null']
+          description: "Present for `kind: file` (S2). No URL of any kind."
           properties:
             detectedMime: { type: string }
             sizeBytes: { type: integer }
             sha256: { type: [string, 'null'], description: 'Hex. Whether to expose it publicly is OPEN.' }
+            singleResponseLimitBytes: { type: [integer, 'null'], description: 'Content:MaxResponseBytes (to confirm, proposed 90,000,000). A file larger than this needs Range parts; how the browser assembles them is OPEN (ARC-008 Q1). Null when unknown.', x-zaagl-status: 'OPEN (ARC-008)' }
 
     UnlockRequest:
       type: object
@@ -1268,12 +1452,17 @@ components:
         shortUrl: { type: string, format: uri, description: Without the fragment; the key is never returned again. }
         state: { $ref: '#/components/schemas/ResourceState' }
         processingStatus: { $ref: '#/components/schemas/ProcessingStatus' }
+        filename: { type: [string, 'null'], description: 'Sanitised display name (files and media), never a path.' }
+        mime: { type: [string, 'null'], description: 'Detected type (files and media).' }
+        thumbnailUrl: { type: [string, 'null'], description: 'Preview ticket URL for a thumb-320 derivative. Null until S3 and always null for burn files.', x-zaagl-slice: S3 }
         sizeBytes: { type: integer }
         expiresAt: { type: string, format: date-time }
         purgeAfter: { type: [string, 'null'], format: date-time }
         burnAfterDownload: { type: boolean }
         isPublic: { type: boolean }
-        downloadCount: { type: integer, description: 'From the durable grant table only (single source of truth; no analytics events until PD-10).' }
+        downloadCount: { type: integer, description: 'S2: the durable column resources.download_count (first uses of non-owner Download grants; the burn claim counts as one). Grant cleanup never loses it.' }
+        rejectedReason: { oneOf: [{ $ref: '#/components/schemas/RejectedReason' }, { type: 'null' }], description: 'S2, additive: also in the list summary. For an infected file the computed state is `disabled` (the link was taken down, spec 7.15) and this says why.' }
+        burnClaimedAt: { type: [string, 'null'], format: date-time, description: 'S2, additive: set by the burn claim; also in the list summary.' }
         createdAt: { type: string, format: date-time }
     ResourceDetail:
       allOf:
@@ -1282,23 +1471,36 @@ components:
           properties:
             rejectedReason: { oneOf: [{ $ref: '#/components/schemas/RejectedReason' }, { type: 'null' }] }
             hasPassword: { type: boolean }
-            burnClaimedAt: { type: [string, 'null'], format: date-time }
+            burnClaimedAt: { type: [string, 'null'], format: date-time, description: 'Set by the burn claim (S2). After it the resource is `burned`.' }
             linkKey: { type: [string, 'null'], description: Only in the PATCH response that issued a new key. }
+            scan:
+              oneOf:
+                - { $ref: '#/components/schemas/ScanDto' }
+                - { type: 'null' }
+              description: Files and media only.
             snippet: { oneOf: [{ $ref: '#/components/schemas/SnippetVersionDto' }, { type: 'null' }] }
             media: { oneOf: [{ $ref: '#/components/schemas/MediaDto' }, { type: 'null' }] }
             file:
               type: [object, 'null']
+              description: 'Files and media. `sha256` is of the stored bytes (set by the scan task; null while processing).'
               properties:
                 filename: { type: string }
                 detectedMime: { type: string }
-                sha256: { type: string }
+                sha256: { type: [string, 'null'] }
+    ScanDto:
+      type: object
+      description: Owner-only scan outcome. The signature name is never shown to visitors.
+      required: [status]
+      properties:
+        status: { type: string, enum: [pending, clean, infected, error] }
+        scannedAt: { type: [string, 'null'], format: date-time }
     ResourcePatchRequest:
       type: object
       properties:
         title: { type: [string, 'null'], maxLength: 200 }
         expiresAt: { type: [string, 'null'], format: date-time }
         public: { type: [boolean, 'null'] }
-        password: { type: [string, 'null'] }
+        password: { type: [string, 'null'], minLength: 4, maxLength: 128, description: 'The service enforces 4-128 characters (LinkService.CreateContentLinkAsync, SnippetService).' }
         clearPassword: { type: boolean, default: false }
         burnAfterDownload: { type: [boolean, 'null'] }
     ResourceStatusDto:
@@ -1324,6 +1526,12 @@ components:
         reservedBytes: { type: integer }
         quotaBytes: { type: [integer, 'null'], description: 'Free 250 MB, Starter 5 GB (PD-54; 1 MB = 1,048,576 bytes); null for guests.' }
         openUploads: { type: integer }
+        capabilities:
+          type: object
+          description: 'S2, additive: what the plan may do, so the uploader hides burn and password before the user tries.'
+          properties:
+            burnAfterDownload: { type: boolean }
+            passwordOnContent: { type: boolean }
 
     CompleteUploadRequest:
       type: object
@@ -1331,7 +1539,7 @@ components:
         title: { type: [string, 'null'], maxLength: 200 }
         expiresAt: { type: [string, 'null'], format: date-time }
         burnAfterDownload: { type: boolean, default: false, description: 'Files only; Starter only (BurnAfterDownload, PD-54).' }
-        password: { type: [string, 'null'], description: 'Starter only (PasswordOnContent, PD-54).' }
+        password: { type: [string, 'null'], minLength: 4, maxLength: 128, description: 'Starter only (PasswordOnContent, PD-54). 4-128 characters.' }
         customSlug: { type: [string, 'null'], description: 'Alias; allowed for everyone, guests included (PD-57).' }
         public: { type: boolean, default: false, x-zaagl-status: 'TO_CONFIRM for guests' }
     CompleteUploadResponse:
@@ -1458,6 +1666,11 @@ components:
     VersionConflict:
       description: 409 version-conflict
       content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } }
+    VersionConflictOrLimitOrProcessing:
+      description: '409 version-conflict (baseVersion is not the current version) | version-limit (100 versions reached; nothing is dropped) | processing (resource not ready) | conflict (idempotency key in progress, with Retry-After).'
+      headers:
+        Retry-After: { $ref: '#/components/headers/RetryAfter' }
+      content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } }
     UploadOffsetMismatch:
       description: 409 upload-offset-mismatch
       content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } }
@@ -1508,6 +1721,9 @@ components:
       content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } }
     ContentRejected:
       description: 422 content-rejected (infected, blocked-hash, type-not-allowed, scan-unavailable)
+      content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } }
+    IdempotencyMismatchOrContentRejected:
+      description: '422 idempotency-mismatch | content-rejected (type-not-allowed at /complete: the sniffed type is not allowed for the declared kind or not allowed at all).'
       content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } }
     TooManyRequests:
       description: 429 too_many_requests (rate limit)

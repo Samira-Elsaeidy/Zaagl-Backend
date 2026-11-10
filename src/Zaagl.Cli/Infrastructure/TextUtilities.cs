@@ -118,7 +118,7 @@ public static class InputDecoder
     /// byte; UTF-8 text never contains zero bytes unless it contains NUL characters.</summary>
     internal static int GuessUtf16(ReadOnlySpan<byte> bytes)
     {
-        var sample = bytes[..Math.Min(bytes.Length, 4096) & ~1];
+        var sample = bytes[..(Math.Min(bytes.Length, 4096) & ~1)];
         var pairs = sample.Length / 2;
         if (pairs < 2) return 0;
 

@@ -1,0 +1,178 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Zaagl Phase 1 Status</title>
+<style>
+  :root {
+    --bg: #ffffff; --fg: #1b1f24; --muted: #5b6573; --card: #f5f7fa; --line: #dde2e8;
+    --done: #1a7f4b; --done-bg: #e3f4ea;
+    --prog: #9a6700; --prog-bg: #fff3cd;
+    --todo: #b42318; --todo-bg: #fde7e4;
+    --note: #3b5bdb; --note-bg: #e7edff;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #121417; --fg: #e8eaed; --muted: #9aa4b2; --card: #1b1f24; --line: #2c333b;
+      --done: #5fd39a; --done-bg: #14301f;
+      --prog: #f0c24b; --prog-bg: #3a2e0b;
+      --todo: #ff8f84; --todo-bg: #3d1713;
+      --note: #8fa8ff; --note-bg: #1c2540;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--fg); font: 16px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  main { max-width: 920px; margin: 0 auto; padding: 24px 16px 64px; }
+  h1 { font-size: 1.7rem; margin: 0 0 4px; }
+  h2 { font-size: 1.2rem; margin: 32px 0 8px; }
+  .sub { color: var(--muted); margin: 0 0 20px; }
+  .banner { background: var(--note-bg); color: var(--fg); border-left: 4px solid var(--note); padding: 12px 14px; border-radius: 6px; margin-bottom: 20px; }
+  .legend { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 8px; }
+  .tag { display: inline-block; padding: 2px 10px; border-radius: 999px; font-size: .82rem; font-weight: 600; white-space: nowrap; }
+  .done { background: var(--done-bg); color: var(--done); }
+  .prog { background: var(--prog-bg); color: var(--prog); }
+  .todo { background: var(--todo-bg); color: var(--todo); }
+  .block { background: var(--note-bg); color: var(--note); }
+  .table-wrap { overflow-x: auto; border: 1px solid var(--line); border-radius: 8px; }
+  table { border-collapse: collapse; width: 100%; background: var(--card); }
+  th, td { text-align: left; padding: 9px 12px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th { font-size: .8rem; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); }
+  tr:last-child td { border-bottom: 0; }
+  td.s { width: 1%; white-space: nowrap; }
+  .note { color: var(--muted); font-size: .9rem; }
+  ul { margin: 6px 0 0; padding-left: 20px; }
+  footer { margin-top: 36px; color: var(--muted); font-size: .85rem; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Zaagl Phase 1 Status</h1>
+  <p class="sub">Updated 2026-11-10</p>
+
+  <div class="banner">
+    <strong>How to read this.</strong> “Built” means the code exists and its own tests pass, but it is
+    <strong>uncommitted</strong> and has <strong>not run end to end on the real stack</strong>.
+    The 503 “KeyMismatch” error (creating any link or snippet) blocks that.
+  </div>
+
+  <div class="legend">
+    <span class="tag done">Built / done</span>
+    <span class="tag prog">In progress</span>
+    <span class="tag todo">Not done</span>
+    <span class="tag block">Needs your decision</span>
+  </div>
+
+  <h2>Phase 0: link shortener (live, committed)</h2>
+  <div class="table-wrap"><table>
+    <tr><th>Sub-feature</th><th>Status</th></tr>
+    <tr><td>Sign-in and registration, link library, create and edit, analytics, settings, public pages</td><td class="s"><span class="tag done">Done</span></td></tr>
+    <tr><td>Forgot-password and reset-password pages (added today)</td><td class="s"><span class="tag done">Built, not committed</span></td></tr>
+  </table></div>
+
+  <h2>E1.1 Code and text snippets</h2>
+  <div class="table-wrap"><table>
+    <tr><th>Sub-feature</th><th>Status</th></tr>
+    <tr><td>Snippets backend: create, versions, public read, raw</td><td class="s"><span class="tag done">Built</span></td></tr>
+    <tr><td>Editor and <code>/paste/new</code></td><td class="s"><span class="tag done">Built</span></td></tr>
+    <tr><td>Viewer <code>/p/[slug]</code> with password and expired states</td><td class="s"><span class="tag done">Built</span></td></tr>
+    <tr><td>Markdown (rendered in the browser)</td><td class="s"><span class="tag done">Built</span></td></tr>
+    <tr><td>Versions list and diff for the owner</td><td class="s"><span class="tag done">Built</span></td></tr>
+    <tr><td>Arabic and RTL</td><td class="s"><span class="tag done">Built, needs native review</span></td></tr>
+    <tr><td>CLI: <code>login</code>, <code>logout</code>, <code>whoami</code>, <code>link</code>, <code>paste</code>, <code>ls</code>, <code>config</code></td><td class="s"><span class="tag done">Built, fake-server tests only</span></td></tr>
+    <tr><td>Device login (<code>/activate</code> and its backend)</td><td class="s"><span class="tag done">Built</span></td></tr>
+    <tr><td>Guest limits: 30 per hour, 60 per day</td><td class="s"><span class="tag done">Built (backend)</span></td></tr>
+    <tr><td>Guest snippet creation on the web</td><td class="s"><span class="tag todo">Not done</span> <span class="note">CAPTCHA not wired</span></td></tr>
+    <tr><td>Visitors seeing older versions</td><td class="s"><span class="tag block">Your decision</span></td></tr>
+    <tr><td>CLI Windows AOT build</td><td class="s"><span class="tag todo">Not done</span> <span class="note">needs C++ tools</span></td></tr>
+    <tr><td>CLI Linux credential store, macOS check</td><td class="s"><span class="tag todo">Not done</span></td></tr>
+    <tr><td>CLI build job in CI</td><td class="s"><span class="tag todo">Not done</span></td></tr>
+  </table></div>
+
+  <h2>E1.2 Images and media</h2>
+  <div class="table-wrap"><table>
+    <tr><th>Sub-feature</th><th>Status</th></tr>
+    <tr><td>tus resumable uploads</td><td class="s"><span class="tag done">Built</span></td></tr>
+    <tr><td>Virus scan (ClamAV, fail-closed) and quarantine</td><td class="s"><span class="tag done">Built</span> <span class="note">ClamAV never ran a real scan</span></td></tr>
+    <tr><td>Image viewer with background switcher and loupe</td><td class="s"><span class="tag done">Built</span></td></tr>
+    <tr><td><code>/files</code> library and uploader</td><td class="s"><span class="tag done">Built</span> <span class="note">no thumbnails</span></td></tr>
+    <tr><td>PNG, JPEG, GIF, WebP</td><td class="s"><span class="tag done">Built</span></td></tr>
+    <tr><td>Thumbnails and metadata</td><td class="s"><span class="tag todo">Not done</span></td></tr>
+    <tr><td>SVG, video, PDF preview</td><td class="s"><span class="tag block">Your decisions</span></td></tr>
+    <tr><td>EXIF and GPS option</td><td class="s"><span class="tag block">Your decision</span></td></tr>
+  </table></div>
+
+  <h2>E1.3 Ephemeral file transfer</h2>
+  <div class="table-wrap"><table>
+    <tr><th>Sub-feature</th><th>Status</th></tr>
+    <tr><td>Design for burn, expiry, quota</td><td class="s"><span class="tag done">Done (docs)</span></td></tr>
+    <tr><td>Frontend: download page <code>/f/[slug]</code>, owner page, guest upload, uploader for any file, quota meter</td><td class="s"><span class="tag done">Built</span></td></tr>
+    <tr><td>File uploads (non-image) on the backend</td><td class="s"><span class="tag prog">In progress</span></td></tr>
+    <tr><td>Burn after download (claim wired into delivery)</td><td class="s"><span class="tag prog">In progress</span></td></tr>
+    <tr><td>Expiry and purge</td><td class="s"><span class="tag prog">In progress</span></td></tr>
+    <tr><td>Quotas and cleanup</td><td class="s"><span class="tag prog">In progress</span></td></tr>
+    <tr><td>Guest uploads</td><td class="s"><span class="tag prog">In progress</span></td></tr>
+    <tr><td>Takedown for infected files</td><td class="s"><span class="tag prog">In progress</span></td></tr>
+  </table></div>
+
+  <h2>E1.4 Desktop tray app</h2>
+  <div class="table-wrap"><table>
+    <tr><th>Sub-feature</th><th>Status</th></tr>
+    <tr><td>Everything: tray, shortcut, clipboard, upload, signing</td><td class="s"><span class="tag todo">Not started</span> <span class="note">no Rust here, no certificates</span></td></tr>
+  </table></div>
+
+  <h2>Phase 2: Accelerators (not started)</h2>
+  <p class="note">From the PRD. The PRD says no phase starts until the previous one passes its exit gate.</p>
+  <div class="table-wrap"><table>
+    <tr><th>Feature and sub-feature</th><th>Status</th></tr>
+    <tr><td><strong>E2.1 Developer power tools</strong>: webhook and payload catcher (<code>zaa.gl/hook/…</code>)</td><td class="s"><span class="tag todo">Not started</span></td></tr>
+    <tr><td>E2.1 Zero-knowledge <code>.env</code> secret vault (client-side encrypted, one view)</td><td class="s"><span class="tag todo">Not started</span></td></tr>
+    <tr><td>E2.1 Bug capsules (screen clip with console errors and network logs)</td><td class="s"><span class="tag todo">Not started</span></td></tr>
+    <tr><td><strong>E2.2 Artist and designer tools</strong>: interactive before/after visual diff slider</td><td class="s"><span class="tag todo">Not started</span></td></tr>
+    <tr><td>E2.2 Colour palette, dimensions and pinned comments on shared artwork</td><td class="s"><span class="tag todo">Not started</span></td></tr>
+    <tr><td>E2.2 Browser sandboxes for 3D (.glb), Lottie and audio</td><td class="s"><span class="tag todo">Not started</span></td></tr>
+    <tr><td>E2.2 Watermark and client approval gate</td><td class="s"><span class="tag todo">Not started</span></td></tr>
+    <tr><td><strong>E2.3 Team productivity</strong>: “Reverse Pigeon” drop-off portals (<code>zaa.gl/drop/…</code>)</td><td class="s"><span class="tag todo">Not started</span></td></tr>
+    <tr><td>E2.3 Smart PII redaction on screenshots</td><td class="s"><span class="tag todo">Not started</span></td></tr>
+    <tr><td>E2.3 Voice-over micro-briefs</td><td class="s"><span class="tag todo">Not started</span></td></tr>
+    <tr><td>E2.3 Instant clipboard transformers (JSON or CSV to a readable table link)</td><td class="s"><span class="tag todo">Not started</span></td></tr>
+  </table></div>
+
+  <h2>Phase 3: Enterprise and AI (not started)</h2>
+  <div class="table-wrap"><table>
+    <tr><th>Feature and sub-feature</th><th>Status</th></tr>
+    <tr><td><strong>E3.1 Bilingual AI assistant</strong>: AI executive summary on shared documents, snippets and notes</td><td class="s"><span class="tag todo">Not started</span></td></tr>
+    <tr><td>E3.1 Arabic ↔ English translation toggle</td><td class="s"><span class="tag todo">Not started</span></td></tr>
+    <tr><td><strong>E3.2 Local P2P “Flock Sync”</strong>: beam clipboard items and folders between Mac, Windows, iPhone and Android over local Wi-Fi</td><td class="s"><span class="tag todo">Not started</span></td></tr>
+    <tr><td><strong>E3.3 Enterprise governance “The Loft”</strong>: shared team workspaces and roles (Admin, Editor, Viewer)</td><td class="s"><span class="tag todo">Not started</span></td></tr>
+    <tr><td>E3.3 Single sign-on</td><td class="s"><span class="tag todo">Not started</span></td></tr>
+    <tr><td>E3.3 Compliance audit logs</td><td class="s"><span class="tag todo">Not started</span></td></tr>
+    <tr><td>E3.3 Custom corporate domains (<code>go.company.com</code>)</td><td class="s"><span class="tag todo">Not started</span></td></tr>
+    <tr><td>E3.3 Connect your own AWS or Google Cloud storage</td><td class="s"><span class="tag todo">Not started</span></td></tr>
+  </table></div>
+
+  <h2>Phase 1 wrap-up stages (not started)</h2>
+  <div class="table-wrap"><table>
+    <tr><th>Stage</th><th>Status</th></tr>
+    <tr><td>Stage 6: final independent QA, pen-test, accessibility, traceability, mutation testing</td><td class="s"><span class="tag todo">Not started</span> <span class="note">paused</span></td></tr>
+    <tr><td>Stage 7: production setup, backups and restore drill, monitoring, staging, load tests</td><td class="s"><span class="tag todo">Not started</span> <span class="note">paused</span></td></tr>
+  </table></div>
+
+  <h2>Paused until the features are done</h2>
+  <ul>
+    <li>Final QA and pen-test.</li>
+    <li>Production setup, backups, monitoring.</li>
+    <li>Extras not needed for a working feature.</li>
+  </ul>
+
+  <h2>Blocking everything</h2>
+  <ul>
+    <li><strong>The key mismatch:</strong> creating any link or snippet returns 503. It needs your decision: supply the original key, reset the allocator, or wipe the database.</li>
+    <li><strong>Nothing is committed.</strong> All of today's work is uncommitted in both repos.</li>
+    <li><strong>Backend:</strong> running again with the S1 code and part of S2, while the S2 backend agent finishes the rest.</li>
+  </ul>
+
+  <footer>Source: this session's agent reports. Test counts are the agents' own, except the full backend run I re-ran after Feature 1.</footer>
+</main>
+</body>
+</html>

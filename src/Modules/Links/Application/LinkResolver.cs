@@ -6,7 +6,7 @@ using Zaagl.Modules.Links.Infrastructure;
 namespace Zaagl.Modules.Links.Application;
 
 /// <summary>Read side used by the redirect path. Snapshots are cached; the click counter is not.</summary>
-public sealed class LinkResolver(LinksDbContext db, RedirectsDataSource redirects, HybridCache cache) : ILinkResolver, ILinkDirectory
+public sealed class LinkResolver(LinksDbContext db, RedirectsDataSource redirects, HybridCache cache) : ILinkResolver, ILinkDirectory, ILinkSnapshots
 {
     private static readonly HybridCacheEntryOptions SnapshotOptions = new()
     {
@@ -55,7 +55,14 @@ public sealed class LinkResolver(LinksDbContext db, RedirectsDataSource redirect
     // Spec §7.0: the redirect hot path never touches the "main" EF pool - it reads from a small,
     // fast-timeout pool of its own (RedirectsDataSource), via raw SQL, so a slow creation transaction can
     // never queue behind (or starve) a redirect lookup.
-    private async ValueTask<LinkSnapshot?> LoadAsync(string slugKey, CancellationToken ct)
+    private ValueTask<LinkSnapshot?> LoadAsync(string slugKey, CancellationToken ct) => LoadCoreAsync("l.slug_key = $1", slugKey, ct);
+
+    /// <summary>F-4 (C1): by link id, uncached on purpose (read from the redirect pool), so the delivery hop and owner
+    /// routes see a takedown or delete immediately.</summary>
+    public async Task<LinkSnapshot?> GetSnapshotByIdAsync(Guid linkId, CancellationToken cancellationToken) =>
+        await LoadCoreAsync("l.id = $1", linkId, cancellationToken);
+
+    private async ValueTask<LinkSnapshot?> LoadCoreAsync(string where, object key, CancellationToken ct)
     {
         await using var conn = await redirects.Value.OpenConnectionAsync(ct);
 
@@ -73,7 +80,7 @@ public sealed class LinkResolver(LinksDbContext db, RedirectsDataSource redirect
 
         await using (var cmd = conn.CreateCommand())
         {
-            cmd.CommandText = """
+            cmd.CommandText = $"""
                 SELECT l.id, l.owner_id, l.slug, l.destination_url, l.is_active, l.public_stats,
                        l.og_title, l.og_description, l.og_image_url,
                        l.purge_after, l.deleted_at, l.disabled_at, l.disabled_kind,
@@ -81,9 +88,9 @@ public sealed class LinkResolver(LinksDbContext db, RedirectsDataSource redirect
                        l.target_kind, l.resource_id, p.link_key_hash
                 FROM links.links l
                 LEFT JOIN links.access_policies p ON p.link_id = l.id
-                WHERE l.slug_key = $1
+                WHERE {where}
                 """;
-            cmd.Parameters.AddWithValue(slugKey);
+            cmd.Parameters.AddWithValue(key);
             await using var reader = await cmd.ExecuteReaderAsync(ct);
             if (!await reader.ReadAsync(ct)) return null;
 

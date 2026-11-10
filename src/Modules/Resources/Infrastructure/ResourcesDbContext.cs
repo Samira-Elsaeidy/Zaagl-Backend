@@ -39,7 +39,12 @@ public sealed class ResourcesDbContext(DbContextOptions<ResourcesDbContext> opti
             e.Property(x => x.CreatedVia).HasConversion<short>();
             e.Property(x => x.Title).HasMaxLength(200);
             e.Property(x => x.RejectedReason).HasMaxLength(50);
+            e.Property(x => x.DownloadCount).HasDefaultValue(0L);
             e.HasIndex(x => x.LinkId).IsUnique();
+            // Burn finaliser (ARC-019 section 7): claimed and still holding bytes.
+            e.HasIndex(x => x.BurnClaimedAt).HasFilter("burn_claimed_at IS NOT NULL AND bytes_state = 1").HasDatabaseName("ix_resources_burn_claimed");
+            // Purge and guest-expiry sweep (ARC-019 section 8).
+            e.HasIndex(x => x.LinkPurgeAfter).HasFilter("bytes_state IN (0, 1)").HasDatabaseName("ix_resources_purge_due");
             e.HasIndex(x => new { x.OwnerId, x.CreatedAt }).IsDescending(false, true)
                 .HasFilter("owner_id IS NOT NULL").HasDatabaseName("ix_resources_owner_created");
             // Orphan sweeper (ARC-006 T19): resources never bound to a link.
@@ -85,6 +90,7 @@ public sealed class ResourcesDbContext(DbContextOptions<ResourcesDbContext> opti
             e.Property(x => x.Id).ValueGeneratedNever();
             e.Property(x => x.Purpose).HasConversion<short>();
             e.HasIndex(x => x.ResourceId);
+            e.HasIndex(x => x.FirstUseBy).HasDatabaseName("ix_download_grants_first_use_by"); // S-4: grant cleanup
             e.HasOne<ResourceRow>().WithMany().HasForeignKey(x => x.ResourceId).OnDelete(DeleteBehavior.Restrict);
         });
     }

@@ -12,7 +12,7 @@ namespace Zaagl.Links.Tests;
 /// <summary>Spec §7.15. Real local dev Postgres, same convention as PurgeJobTests/GuestCreationTests.</summary>
 public sealed class AbuseControlsTests : IDisposable
 {
-    private const string ConnectionString = "Host=localhost;Port=5433;Database=zaagl;Username=zaagl;Password=zaagl_dev";
+    private static readonly string ConnectionString = Environment.GetEnvironmentVariable("ZAAGL_TEST_PG") ?? "Host=localhost;Port=5433;Database=zaagl;Username=zaagl;Password=zaagl_dev";
     private readonly ServiceProvider _services;
     private readonly LinksDbContext _db;
 

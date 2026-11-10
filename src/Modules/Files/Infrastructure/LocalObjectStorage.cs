@@ -39,6 +39,10 @@ public sealed class LocalObjectStorage : IObjectStorage
 
     public string Root => _root;
 
+    /// <summary>The filesystem path of a validated key (never of request data). Used by the Files internals that need a file
+    /// handle: the tus temp file and the scan by path.</summary>
+    public string ResolvePath(string storageKey) => PathFor(storageKey);
+
     public async Task<PutResult> PutAsync(StorageArea area, Stream content, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(content);
@@ -142,6 +146,7 @@ public sealed class LocalObjectStorage : IObjectStorage
         TryDelete(path + PartialSuffix);
         try
         {
+            ClearReadOnly(path);
             File.Delete(path); // missing file: no exception
         }
         catch (DirectoryNotFoundException)
@@ -186,6 +191,18 @@ public sealed class LocalObjectStorage : IObjectStorage
         if (!full.StartsWith(_root + Path.DirectorySeparatorChar, StringComparison.Ordinal))
             throw new InvalidStorageKeyException();
         return full;
+    }
+
+    /// <summary>A completed upload is made read-only (ARC-009 4.3); a delete must clear that first (Windows refuses otherwise).</summary>
+    private static void ClearReadOnly(string path)
+    {
+        try
+        {
+            var attributes = File.GetAttributes(path);
+            if ((attributes & FileAttributes.ReadOnly) != 0) File.SetAttributes(path, attributes & ~FileAttributes.ReadOnly);
+        }
+        catch (FileNotFoundException) { }
+        catch (DirectoryNotFoundException) { }
     }
 
     private static void TryDelete(string path)

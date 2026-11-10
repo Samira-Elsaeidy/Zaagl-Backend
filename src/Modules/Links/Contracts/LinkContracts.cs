@@ -43,7 +43,9 @@ public sealed record ListLinksQuery(
     string? Tag = null,
     string? Status = null,
     int Page = 1,
-    int PageSize = 25);
+    int PageSize = 25,
+    /// <summary>S2 (additive): <c>url</c> (the default, so Phase 0 clients see no change), <c>snippet</c>, <c>image</c>, <c>file</c> or <c>all</c>.</summary>
+    string? Kind = null);
 
 public sealed record FolderInput(string Name);
 
@@ -61,6 +63,8 @@ public sealed record PolicyDto(bool HasPassword, DateTime? ExpiresAt, int? MaxCl
 /// <param name="TargetKind">C1 (Phase 1): what the link points at. <see cref="LinkTargetKind.Url"/> for every
 /// Phase 0 link. <c>DestinationUrl</c> is null for content kinds (BE-007, design/ARC-002-link-target-model.md).</param>
 /// <param name="ResourceId">C1: the Resources row of a content link; null exactly when TargetKind is Url.</param>
+/// <param name="ShortUrl">ShortLinks:BaseUrl + "/" + Slug (no fragment); null only when replaying an idempotent
+/// response stored before this field existed.</param>
 public sealed record LinkDto(
     Guid Id,
     string Slug,
@@ -78,7 +82,10 @@ public sealed record LinkDto(
     DateTime UpdatedAt,
     bool IsGuest = false,
     LinkTargetKind TargetKind = LinkTargetKind.Url,
-    Guid? ResourceId = null);
+    Guid? ResourceId = null,
+    string? ShortUrl = null,
+    /// <summary>S2 (additive): <c>url</c>, <c>snippet</c>, <c>image</c> or <c>file</c>, from <see cref="TargetKind"/>.</summary>
+    string Kind = "url");
 
 public sealed record PagedResult<T>(IReadOnlyList<T> Items, int Total, int Page, int PageSize);
 

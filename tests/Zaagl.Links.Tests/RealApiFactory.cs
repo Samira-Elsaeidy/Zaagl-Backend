@@ -14,7 +14,7 @@ namespace Zaagl.Links.Tests;
 public sealed class RealApiFactory : WebApplicationFactory<Program>
 {
     public const string ApiHost = "api.zaa.test";
-    public const string ConnectionString = "Host=localhost;Port=5433;Database=zaagl;Username=zaagl;Password=zaagl_dev";
+    public static readonly string ConnectionString = Environment.GetEnvironmentVariable("ZAAGL_TEST_PG") ?? "Host=localhost;Port=5433;Database=zaagl;Username=zaagl;Password=zaagl_dev";
 
     protected override void ConfigureWebHost(IWebHostBuilder builder)
     {

@@ -263,6 +263,8 @@ public sealed class IdentityService(
             // Reused outside the benign race window, or the family is already revoked: treat as theft.
             await db.RefreshTokens.Where(t => t.FamilyId == existing.FamilyId && t.RevokedAt == null)
                 .ExecuteUpdateAsync(s => s.SetProperty(t => t.RevokedAt, now), ct);
+            await db.DeviceSessions.Where(d => d.FamilyId == existing.FamilyId && d.RevokedAt == null)
+                .ExecuteUpdateAsync(s => s.SetProperty(d => d.RevokedAt, now), ct);
             logger.LogWarning("SECURITY: refresh token reuse detected for family {FamilyId}, user {UserId} - family revoked.", existing.FamilyId, existing.UserId);
             return Error.Unauthorized("This refresh token has already been used. For your security, all sessions in this chain have been signed out.");
         }
@@ -271,12 +273,21 @@ public sealed class IdentityService(
         var user = await db.Users.FirstOrDefaultAsync(u => u.Id == used.UserId, ct);
         if (user is null || user.DisabledAt is not null || user.DeletedAt is not null) return Error.Unauthorized("Account unavailable.");
 
-        var (access, accessExpires) = tokens.IssueAccessToken(user);
+        // ARC-014 §2.4: a device family stays a device token (client_id, amr=device, sid, no role) and keeps the
+        // 30-day sliding lifetime; a revoked device session cannot refresh.
+        var device = await db.DeviceSessions.FirstOrDefaultAsync(d => d.FamilyId == used.FamilyId, ct);
+        if (device is { RevokedAt: not null }) return Error.Unauthorized("This session has been revoked.");
+
+        var (access, accessExpires) = device is null
+            ? tokens.IssueAccessToken(user)
+            : tokens.IssueDeviceAccessToken(user, device.ClientId, device.FamilyId);
         var (newRaw, newHash) = NewToken();
         var newExpires = DateTime.UtcNow.AddDays(30);
         db.RefreshTokens.Add(new RefreshToken { UserId = user.Id, FamilyId = used.FamilyId, TokenHash = newHash, ExpiresAt = newExpires });
+        if (device is not null) device.LastUsedAt = now;
         await db.SaveChangesAsync(ct);
-        return Result<AuthResponse>.Ok(new AuthResponse(access, accessExpires, newRaw, newExpires, ToDto(user)));
+        return Result<AuthResponse>.Ok(new AuthResponse(access, accessExpires, newRaw, newExpires,
+            device is null ? ToDto(user) : DeviceFlowService.DeviceUser(user)));
     }
 
     public async Task LogoutAsync(string rawToken, CancellationToken ct)
@@ -286,6 +297,8 @@ public sealed class IdentityService(
         if (token is null) return;
         await db.RefreshTokens.Where(t => t.FamilyId == token.FamilyId && t.RevokedAt == null)
             .ExecuteUpdateAsync(s => s.SetProperty(t => t.RevokedAt, DateTime.UtcNow), ct);
+        await db.DeviceSessions.Where(d => d.FamilyId == token.FamilyId && d.RevokedAt == null)
+            .ExecuteUpdateAsync(s => s.SetProperty(d => d.RevokedAt, DateTime.UtcNow), ct);
     }
 
     public async Task LogoutEverywhereAsync(Guid userId, CancellationToken ct)
@@ -295,9 +308,14 @@ public sealed class IdentityService(
             .ExecuteUpdateAsync(s => s.SetProperty(k => k.RevokedAt, DateTime.UtcNow), ct);
     }
 
-    private async Task RevokeAllRefreshTokensAsync(Guid userId, CancellationToken ct) =>
+    private async Task RevokeAllRefreshTokensAsync(Guid userId, CancellationToken ct)
+    {
         await db.RefreshTokens.Where(t => t.UserId == userId && t.RevokedAt == null)
             .ExecuteUpdateAsync(s => s.SetProperty(t => t.RevokedAt, DateTime.UtcNow), ct);
+        // Device sessions are refresh families too: logout-everywhere, password reset, disable and delete end them.
+        await db.DeviceSessions.Where(d => d.UserId == userId && d.RevokedAt == null)
+            .ExecuteUpdateAsync(s => s.SetProperty(d => d.RevokedAt, DateTime.UtcNow), ct);
+    }
 
     // ---- Login protection (spec §7.4) ---------------------------------------
 

@@ -27,7 +27,7 @@ public sealed class StartupCheckTests : IDisposable
 
     public StartupCheckTests()
     {
-        var connectionString = "Host=localhost;Port=5433;Database=zaagl;Username=zaagl;Password=zaagl_dev";
+        var connectionString = Environment.GetEnvironmentVariable("ZAAGL_TEST_PG") ?? "Host=localhost;Port=5433;Database=zaagl;Username=zaagl;Password=zaagl_dev";
         _dataSource = NpgsqlDataSource.Create(connectionString);
         _tempDir = Path.Combine(Path.GetTempPath(), "zaagl-coordinator-tests-" + Guid.NewGuid());
         Directory.CreateDirectory(_tempDir);
@@ -189,7 +189,7 @@ public sealed class StartupCheckTests : IDisposable
         new WebApplicationFactory<Program>().WithWebHostBuilder(builder =>
         {
             builder.UseEnvironment("Testing"); // required for a non-no-op IFailpoints (spec MUST-NOT #33)
-            builder.UseSetting("ConnectionStrings:Postgres", "Host=localhost;Port=5433;Database=zaagl;Username=zaagl;Password=zaagl_dev");
+            builder.UseSetting("ConnectionStrings:Postgres", Environment.GetEnvironmentVariable("ZAAGL_TEST_PG") ?? "Host=localhost;Port=5433;Database=zaagl;Username=zaagl;Password=zaagl_dev");
             builder.UseSetting("Coordinator:StateFilePath", hwmPath);
             builder.UseSetting("Allocator:Sink:LocalFileSystem:Directory", sinkDir);
             builder.ConfigureServices(services => services.AddSingleton(failpoints));

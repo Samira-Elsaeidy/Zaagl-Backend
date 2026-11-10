@@ -23,6 +23,10 @@ public sealed class GuestOptions
     public int LinksPerDayPer56 { get; set; } = 100;
     public int LinksPerDayPer48 { get; set; } = 300;
 
+    /// <summary>BE-026 (PD-14): snippets and uploads together, per IP partition.</summary>
+    public int ContentPerHour { get; set; } = 30;
+    public int ContentPerDay { get; set; } = 60;
+
     public int PerMinute { get; set; } = 5;
 
     /// <summary>In-memory, per-instance brake against distributed abuse (spec §7.12).</summary>
@@ -190,5 +194,51 @@ public sealed class GuestRateLimiter(TimeProvider time)
         var activePartitions = Math.Max(1, _perPartitionHourly.Keys.Count(k => k.Hour == hour));
         var fairShare = Math.Max(1, globalLimit / activePartitions);
         return partitionCount <= fairShare;
+    }
+}
+
+/// <summary>
+/// BE-026 (PD-14): the guest content counters, 30 per hour and 60 per rolling 24 h per IP partition, shared by
+/// snippets and uploads. They use their own prefix key (<see cref="Tag"/>), so they never mix with the link counters
+/// of spec §7.12, and the same hourly <c>links.guest_quota</c> buckets. The caller owns the transaction boundary:
+/// each call is its own short transaction, serialised per key by an advisory lock, so concurrent requests cannot
+/// overshoot either limit.
+/// </summary>
+public static class GuestContentQuota
+{
+    public const string Tag = "content:";
+
+    public static byte[] PrefixKey(byte[] guestKey, string partition) => GuestIdentity.DeriveKey(guestKey, Tag + partition);
+
+    /// <summary>True and counted when both windows have room; false and nothing counted otherwise.</summary>
+    public static async Task<bool> TryConsumeAsync(
+        LinksDbContext db, byte[] prefixKey, int perHour, int perDay, DateTime now, CancellationToken ct)
+    {
+        var hour = new DateTime(now.Year, now.Month, now.Day, now.Hour, 0, 0, DateTimeKind.Utc);
+        var since = now.AddHours(-24);
+        var lockKey = Convert.ToHexString(prefixKey);
+
+        await using var tx = await db.Database.BeginTransactionAsync(ct);
+        await db.Database.ExecuteSqlInterpolatedAsync($"SELECT pg_advisory_xact_lock(hashtextextended({lockKey}, 0))", ct);
+        await db.Database.ExecuteSqlInterpolatedAsync(
+            $"INSERT INTO links.guest_quota (prefix_key, hour, count) VALUES ({prefixKey}, {hour}, 0) ON CONFLICT (prefix_key, hour) DO NOTHING", ct);
+        var updated = await db.Database.ExecuteSqlInterpolatedAsync(
+            $"""
+             UPDATE links.guest_quota SET count = count + 1
+             WHERE prefix_key = {prefixKey} AND hour = {hour} AND count < {perHour}
+               AND (SELECT COALESCE(SUM(count), 0) FROM links.guest_quota WHERE prefix_key = {prefixKey} AND hour > {since}) < {perDay}
+             """, ct);
+        await tx.CommitAsync(ct);
+        return updated > 0;
+    }
+
+    /// <summary>Gives back one slot of the bucket that <see cref="TryConsumeAsync"/> counted in (a creation that
+    /// failed after admission must not cost the guest a slot).</summary>
+    public static async Task RefundAsync(LinksDbContext db, byte[] prefixKey, DateTime consumedAt)
+    {
+        var hour = new DateTime(consumedAt.Year, consumedAt.Month, consumedAt.Day, consumedAt.Hour, 0, 0, DateTimeKind.Utc);
+        await db.Database.ExecuteSqlInterpolatedAsync(
+            $"UPDATE links.guest_quota SET count = count - 1 WHERE prefix_key = {prefixKey} AND hour = {hour} AND count > 0",
+            CancellationToken.None);
     }
 }

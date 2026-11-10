@@ -1,7 +1,6 @@
 using Zaagl.Modules.Links.Contracts;
-using Zaagl.Modules.Resources.Contracts;
 
-namespace Zaagl.Modules.Resources.Application;
+namespace Zaagl.Modules.Resources.Contracts;
 
 /// <summary>
 /// ARC-006 §2 / addendum §2.4: total function, first match wins. The link state is authoritative (from

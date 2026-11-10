@@ -21,7 +21,7 @@ namespace Zaagl.Links.Tests;
 /// </summary>
 public sealed class OneTimeCodeTests : IClassFixture<RealApiFactory>, IDisposable
 {
-    private const string ConnectionString = RealApiFactory.ConnectionString;
+    private static readonly string ConnectionString = RealApiFactory.ConnectionString;
     private static readonly Lazy<bool> Migrated = new(() =>
     {
         using var db = NewDb();

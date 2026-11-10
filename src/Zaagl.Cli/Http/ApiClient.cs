@@ -186,7 +186,15 @@ public sealed class ApiClient
         {
             var body = await ReadLimitedAsync(response.Content, 64 * 1024, ct).ConfigureAwait(false);
             if (body.Length > 0 && body.TrimStart().StartsWith('{'))
+            {
                 problem = JsonSerializer.Deserialize(body, CliJson.Context.ProblemDto);
+                if (string.IsNullOrWhiteSpace(problem?.Code) && problem?.Type is null
+                    && JsonSerializer.Deserialize(body, CliJson.Context.OAuthErrorDto) is { Error: { Length: > 0 } oauth } oe)
+                {
+                    // RFC 6749 body of the device token endpoint (C9.2): authorization_pending, slow_down, ...
+                    problem = new ProblemDto(null, null, status, oauth, oe.ErrorDescription);
+                }
+            }
         }
         catch (Exception ex) when (ex is JsonException or HttpRequestException or IOException)
         {

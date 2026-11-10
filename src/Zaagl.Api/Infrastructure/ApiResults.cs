@@ -25,7 +25,7 @@ public static class ApiResults
         ErrorCodes.NotFound => StatusCodes.Status404NotFound,
         ErrorCodes.Conflict or ErrorCodes.UploadOffsetMismatch or ErrorCodes.UploadIncomplete or ErrorCodes.AlreadyFinalized
             or ErrorCodes.Processing or ErrorCodes.BurnAlreadyClaimed or ErrorCodes.NotActive
-            or ErrorCodes.ContentLink or ErrorCodes.VersionConflict => StatusCodes.Status409Conflict,
+            or ErrorCodes.ContentLink or ErrorCodes.VersionConflict or ErrorCodes.VersionLimit => StatusCodes.Status409Conflict,
         // Spec §7.4: a parallel refresh from the same session; the caller retries with its newer token.
         ErrorCodes.RefreshRaced => StatusCodes.Status409Conflict,
         ErrorCodes.Expired or ErrorCodes.UploadExpired or ErrorCodes.Burned or ErrorCodes.Deleted or ErrorCodes.Disabled

@@ -1,3 +1,5 @@
+using System.Text.Json.Serialization;
+
 namespace Zaagl.Modules.Identity.Contracts;
 
 // Phase 1 contract C11 (docs/phase1-implementation/contracts.md, ADR-0007, addendum §14,
@@ -74,26 +76,40 @@ public static class DeviceFlowWire
     public const string ExpiredToken = "expired_token";
     public const string InvalidGrant = "invalid_grant";
     public const string InvalidClient = "invalid_client";
+    public const string InvalidRequest = "invalid_request";
+    public const string UnsupportedGrantType = "unsupported_grant_type";
 }
 
 /// <summary><c>POST /api/auth/device/code</c> request (JSON). <paramref name="DeviceName"/> and
 /// <paramref name="Os"/> are untrusted display data for the device-session list.</summary>
-public sealed record DeviceCodeRequest(string ClientId, string? DeviceName, string? Os);
+public sealed record DeviceCodeRequest(
+    [property: JsonPropertyName("client_id")] string ClientId,
+    [property: JsonPropertyName("device_name")] string? DeviceName,
+    [property: JsonPropertyName("os")] string? Os);
 
 /// <summary><c>POST /api/auth/device/code</c> response, RFC 8628 §3.2 field names (snake_case on the wire).</summary>
 public sealed record DeviceCodeResponse(
-    string DeviceCode,
-    string UserCode,
-    string VerificationUri,
-    string VerificationUriComplete,
-    int ExpiresIn,
-    int Interval);
+    [property: JsonPropertyName("device_code")] string DeviceCode,
+    [property: JsonPropertyName("user_code")] string UserCode,
+    [property: JsonPropertyName("verification_uri")] string VerificationUri,
+    [property: JsonPropertyName("verification_uri_complete")] string VerificationUriComplete,
+    [property: JsonPropertyName("expires_in")] int ExpiresIn,
+    [property: JsonPropertyName("interval")] int Interval);
 
 /// <summary><c>POST /api/auth/device/token</c> request (JSON; form encoding also accepted per RFC 8628 §3.4).</summary>
-public sealed record DeviceTokenRequest(string GrantType, string DeviceCode, string ClientId);
+public sealed record DeviceTokenRequest(
+    [property: JsonPropertyName("grant_type")] string GrantType,
+    [property: JsonPropertyName("device_code")] string DeviceCode,
+    [property: JsonPropertyName("client_id")] string ClientId);
 
 /// <summary>Error body of the token endpoint (RFC 6749 §5.2 shape), one of the <see cref="DeviceFlowWire"/> codes.</summary>
-public sealed record DeviceTokenError(string Error, string? ErrorDescription);
+public sealed record DeviceTokenError(
+    [property: JsonPropertyName("error")] string Error,
+    [property: JsonPropertyName("error_description")] string? ErrorDescription);
+
+/// <summary>200 body of <c>POST /api/auth/device/token</c>: the <see cref="AuthResponse"/> fields plus the device session id (the <c>sid</c> claim).</summary>
+public sealed record DeviceAuthResponse(
+    string AccessToken, DateTime AccessTokenExpiresAt, string RefreshToken, DateTime RefreshTokenExpiresAt, UserDto User, Guid SessionId);
 
 /// <summary>What <c>app.zaa.gl/activate</c> shows before the signed-in user approves (BFF → API, session JWT).</summary>
 public sealed record DeviceActivationInfo(string UserCode, string ClientId, string? DeviceName, string? Os, DateTime RequestedAt, DateTime ExpiresAt);

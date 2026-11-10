@@ -19,7 +19,7 @@ public enum ReservationState : short
     Released = 2,
 }
 
-/// <summary><c>resources.resources</c> (ARC-006 §1). State is computed by <see cref="Application.ResourceStateCalculator"/>,
+/// <summary><c>resources.resources</c> (ARC-006 §1). State is computed by <see cref="Contracts.ResourceStateCalculator"/>,
 /// never stored; every change is a guarded conditional UPDATE.</summary>
 public sealed class ResourceRow
 {
@@ -39,6 +39,8 @@ public sealed class ResourceRow
     public bool BurnAfterDownload { get; set; }
     public DateTime? BurnClaimedAt { get; set; }
     public Guid? BurnGrantId { get; set; }
+    /// <summary>S-1 (ARC-019): durable count of first uses of non-owner Download grants (the burn claim counts as one). Grant cleanup must not lose it.</summary>
+    public long DownloadCount { get; set; }
     /// <summary>Owner delete mirrored from LinkDeleted (C10).</summary>
     public DateTime? DeletedAt { get; set; }
     /// <summary>Copies of the link's dates, kept current by the C10 handler; used by sweeps only, never for state.</summary>

@@ -27,6 +27,8 @@ public static class UploadProtocol
     public const string MetadataFileType = "filetype";
     /// <summary><c>file</c> or <c>media</c>.</summary>
     public const string MetadataKind = "kind";
+    /// <summary><c>1</c> or <c>true</c>: the uploader intends burn after downloading (refused at create without the capability, and for media).</summary>
+    public const string MetadataBurn = "burn";
 }
 
 public enum UploadSessionStatus : short
@@ -136,4 +138,31 @@ public interface IContentHashBlocklist
     /// Mass takedown and its evidence duties fall under PD-11 (OPEN, counsel); the legal process around this call is
     /// not decided by this contract.</summary>
     Task<Result<int>> AddAsync(byte[] sha256, string reason, CancellationToken cancellationToken);
+}
+
+// ---- F-11 (contracts.md): upload statistics ----
+
+/// <summary>F-11: sessions <c>Open</c> or <c>Complete</c> of one account, for <c>openUploads</c> of <c>GET /api/me/storage</c>.</summary>
+public interface IUploadStats
+{
+    Task<int> CountOpenAsync(Guid userId, CancellationToken cancellationToken);
+}
+
+// ---- S1 additions (BUILD-ORDER-E1.2-E1.3.md): owner and viewer reads of the stored object ----
+
+/// <summary>What the owner library and the viewer need to know about a stored object, without any storage key.</summary>
+/// <param name="Sha256">Hex of the stored bytes; null until the scan task has hashed them.</param>
+public sealed record StoredObjectSummary(
+    Guid ResourceId,
+    string DisplayName,
+    string? DetectedMime,
+    long SizeBytes,
+    string? Sha256,
+    ScanVerdict Scan,
+    DateTime? ScannedAt);
+
+/// <summary>Batch read for list pages; ids without an object are simply absent from the result.</summary>
+public interface IStoredObjectSummaries
+{
+    Task<IReadOnlyDictionary<Guid, StoredObjectSummary>> GetAsync(IReadOnlyCollection<Guid> resourceIds, CancellationToken cancellationToken);
 }

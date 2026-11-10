@@ -17,7 +17,8 @@ public static class BillingModule
             .UseNpgsql(connectionString, o => o.MigrationsHistoryTable("__ef_migrations", BillingDbContext.Schema))
             .UseSnakeCaseNamingConvention();
 
-    public static IServiceCollection AddBillingModule(this IServiceCollection services, IConfiguration configuration)
+    /// <param name="withJobs">False in the worker (ARC-012 §6), which needs only the plan provider, not the plan-change retry job.</param>
+    public static IServiceCollection AddBillingModule(this IServiceCollection services, IConfiguration configuration, bool withJobs = true)
     {
         var connection = configuration.GetConnectionString("Postgres")
             ?? throw new InvalidOperationException("ConnectionStrings:Postgres is not configured.");
@@ -41,7 +42,7 @@ public static class BillingModule
         services.AddScoped<BillingService>();
         // PD-58: plan-change delivery (API-key revocation) with a pending marker and a periodic retry.
         services.AddScoped<PlanChangeOutbox>();
-        services.AddHostedService<PlanChangeRetryJob>();
+        if (withJobs) services.AddHostedService<PlanChangeRetryJob>();
         services.AddSingleton<IModuleMigrator>(sp =>
             new ModuleMigrator<BillingDbContext>("billing", sp.GetRequiredService<IServiceScopeFactory>()));
         return services;

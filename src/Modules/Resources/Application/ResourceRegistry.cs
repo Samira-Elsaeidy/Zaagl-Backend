@@ -15,6 +15,10 @@ public sealed class ResourcesOptions
     /// <summary>Same value as the Links quarantine (spec §1.1, ShortLinks:QuarantineDays); used only to fill the
     /// <c>link_purge_after</c> copy at registration. The link row stays authoritative.</summary>
     public int QuarantineDays { get; set; } = 90;
+
+    /// <summary>T8 (ARC-009 §7 step 6b): how long infected or blocked bytes stay quarantined under a legal hold.
+    /// PD-11 is OPEN (counsel): this is configuration (<c>Abuse:EvidenceRetentionDays</c>), not a decided value.</summary>
+    public int EvidenceRetentionDays { get; set; } = 30;
 }
 
 /// <summary>
@@ -28,7 +32,8 @@ public sealed class ResourceRegistry(
     ResourcesDbContext db,
     ContentQuota quota,
     IOptions<ResourcesOptions> options,
-    TimeProvider time) : IResourceRegistry
+    TimeProvider time,
+    ILinkTakedown? takedown = null) : IResourceRegistry
 {
     public async Task<Result<ResourceRegistration>> RegisterAsync(RegisterResourceCommand command, CancellationToken cancellationToken)
     {
@@ -64,18 +69,26 @@ public sealed class ResourceRegistry(
 
         // T1: the row and the quota reservation commit together.
         await using var tx = await db.Database.BeginTransactionAsync(ct);
-        var reservation = await quota.ReserveForResourceAsync(owner, command.DeclaredSizeBytes, row.Id, ct);
+        // F-9: an upload already holds its reservation (taken at tus create); adopt it instead of reserving again.
+        var reservation = command.AdoptReservationId is { } adopt
+            ? (owner.IsGuest && adopt == Guid.Empty
+                ? Result<Guid>.Ok(Guid.Empty)
+                : await quota.AdoptReservationAsync(adopt, owner, command.DeclaredSizeBytes, row.Id, ct))
+            : MapReservation(await quota.ReserveForResourceAsync(owner, command.DeclaredSizeBytes, row.Id, ct));
         if (!reservation.IsSuccess)
         {
             await tx.RollbackAsync(ct);
             return reservation.Error!;
         }
-        row.ReservationId = reservation.Value!.ReservationId == Guid.Empty ? null : reservation.Value.ReservationId;
+        row.ReservationId = reservation.Value == Guid.Empty ? null : reservation.Value;
         db.Resources.Add(row);
         await db.SaveChangesAsync(ct);
         await tx.CommitAsync(ct);
         return Result<ResourceRegistration>.Ok(new(row.Id, row.PublicId));
     }
+
+    private static Result<Guid> MapReservation(Result<QuotaReservation> reserved) =>
+        reserved.IsSuccess ? Result<Guid>.Ok(reserved.Value!.ReservationId) : reserved.Error!;
 
     /// <summary>T2: set once; binding the same link again is a no-op, another link is refused.</summary>
     public async Task<Result<bool>> BindLinkAsync(Guid resourceId, Guid linkId, CancellationToken cancellationToken)
@@ -146,26 +159,45 @@ public sealed class ResourceRegistry(
 
     /// <summary>T7/T8/T9: Rejected with a reason; the reservation (or used bytes) is released. Moving bytes to
     /// quarantine and the takedown are Files/Links work (C12), triggered by the caller.</summary>
-    public async Task<Result<bool>> MarkRejectedAsync(Guid resourceId, string reason, CancellationToken cancellationToken)
+    public Task<Result<bool>> MarkRejectedAsync(Guid resourceId, string reason, CancellationToken cancellationToken) =>
+        MarkRejectedAsync(resourceId, reason, null, cancellationToken);
+
+    /// <summary>F-10, T8/T9: for <c>infected</c> and <c>blocked-hash</c> the bytes are marked quarantined with a legal hold
+    /// (<see cref="ResourcesOptions.EvidenceRetentionDays"/>) and, when a takedown (C12) is registered, the link is taken
+    /// down with the evidence. The takedown is best effort: the resource is already <c>rejected</c>, which no route serves.</summary>
+    public async Task<Result<bool>> MarkRejectedAsync(
+        Guid resourceId, string reason, RejectionEvidence? evidence, CancellationToken cancellationToken)
     {
         var ct = cancellationToken;
         if (reason is not (RejectedReasons.Infected or RejectedReasons.TypeNotAllowed or RejectedReasons.TooLarge
-            or RejectedReasons.BlockedHash or RejectedReasons.ScanUnavailable))
+            or RejectedReasons.BlockedHash or RejectedReasons.ScanUnavailable or RejectedReasons.CreateFailed))
             return Error.Validation("Unknown rejection reason.");
 
         var row = await db.Resources.AsNoTracking().FirstOrDefaultAsync(r => r.Id == resourceId, ct);
         if (row is null) return Error.NotFound("Resource not found.");
 
         var now = time.GetUtcNow().UtcDateTime;
+        var quarantine = reason is RejectedReasons.Infected or RejectedReasons.BlockedHash;
+        var holdUntil = now.AddDays(Math.Max(0, options.Value.EvidenceRetentionDays));
         var rows = await db.Resources.Where(r => r.Id == resourceId && r.ProcessingStatus != ProcessingStatus.Rejected)
             .ExecuteUpdateAsync(s => s
                 .SetProperty(r => r.ProcessingStatus, ProcessingStatus.Rejected)
                 .SetProperty(r => r.RejectedReason, reason)
+                .SetProperty(r => r.BytesState, r => quarantine ? BytesState.Quarantined : r.BytesState)
+                .SetProperty(r => r.LegalHoldUntil, r => quarantine ? holdUntil : r.LegalHoldUntil)
                 .SetProperty(r => r.UpdatedAt, now), ct);
         if (rows == 0) return Result<bool>.Ok(false);
 
         if (row.ReservationId is { } reservationId) await quota.ReleaseAsync(reservationId, ct);
         await quota.ReleaseUsedAsync(resourceId, ct); // T9 after Ready: used bytes are freed too (no-op otherwise)
+
+        if (quarantine && takedown is not null && row.LinkId is { } linkId)
+        {
+            await takedown.TakeDownContentAsync(new ContentTakedownRequest(
+                linkId, resourceId,
+                reason == RejectedReasons.Infected ? ContentTakedownKind.Safety : ContentTakedownKind.Abuse,
+                reason, evidence?.Sha256), ct);
+        }
         return Result<bool>.Ok(true);
     }
 
@@ -190,18 +222,21 @@ public sealed class ResourceRegistry(
     private async Task<ResourceDescriptor> DescribeAsync(ResourceRow row, CancellationToken ct)
     {
         var now = time.GetUtcNow().UtcDateTime;
+        await Task.CompletedTask;
+        return Describe(row, row.DownloadCount, now); // S-1: the durable column, never derived from grants
+    }
+
+    internal static ResourceDescriptor Describe(ResourceRow row, long downloads, DateTime now)
+    {
         LinkState? provisional = row.LinkId is null
             ? null
             : LinkStateCalculator.Compute(row.LinkPurgeAfter, row.DeletedAt, null, row.LinkExpiresAt, now);
-        var downloads = await db.DownloadGrants.AsNoTracking()
-            .LongCountAsync(g => g.ResourceId == row.Id && g.Purpose == DeliveryPurpose.Download && g.FirstUsedAt != null, ct);
-
         return new ResourceDescriptor(
             row.Id, row.PublicId, row.Kind, new ContentOwner(row.OwnerId, row.GuestCreatorKey), row.LinkId, row.Title,
             row.SizeBytes ?? row.DeclaredSizeBytes,
             ResourceStateCalculator.Compute(provisional, row.ProcessingStatus, row.BurnClaimedAt, row.DeletedAt),
             row.RejectedReason, row.LinkExpiresAt, row.LinkPurgeAfter, row.BurnAfterDownload, row.BurnClaimedAt,
-            downloads, row.CreatedAt);
+            downloads, row.CreatedAt, row.ProcessingStatus);
     }
 
     private async Task<Result<bool>> GuardedAsync(

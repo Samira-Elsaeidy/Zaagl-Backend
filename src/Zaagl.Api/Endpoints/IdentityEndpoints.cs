@@ -123,6 +123,14 @@ public static class IdentityEndpoints
                 await identity.GetUserAsync(user.GetUserId(), ct) is { } me ? Results.Ok(me) : ApiResults.NotFound("User not found."))
             .RequireAuthorization("Interactive"); // spec §7.4: account data for a JWT session only
 
+        // ARC-014 §3.1: identity probe that accepts a device token (/me refuses it). Role is never exposed for a native token.
+        auth.MapGet("/whoami", async (ClaimsPrincipal user, IdentityService identity, CancellationToken ct) =>
+            {
+                if (await identity.GetUserAsync(user.GetUserId(), ct) is not { } me) return ApiResults.NotFound("User not found.");
+                return Results.Ok(NativeClientPolicy.IsNativeToken(user) ? me with { Role = null } : me);
+            })
+            .RequireAuthorization("AnyJwt");
+
         // Social sign-in (PD-41): the browser navigates to /api/auth/external/google, we challenge the provider,
         // then land on the callback, which never puts a token in the URL. It stores a 60-second, single-use code
         // (hashed) bound to the user and redirects to {Frontend}/auth/callback?code=<code>; the web app's server

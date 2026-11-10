@@ -72,4 +72,28 @@ public sealed class StorageOptions
 
     /// <summary>Nginx <c>internal</c> location that maps to <see cref="Root"/> (ARC-008).</summary>
     public string InternalPathPrefix { get; set; } = "/_protected/";
+
+    /// <summary>Disk admission thresholds (ARC-009 section 13).</summary>
+    public AdmissionOptions Admission { get; set; } = new();
+
+    /// <summary>Partial uploads older than this are removed by the janitor (DEVOPS_PLAN 2.4, point 3).</summary>
+    public int TempMaxAgeHours { get; set; } = 24;
+}
+
+/// <summary><c>Storage:Admission:*</c> (DEVOPS_PLAN 2.4, ARC-009 section 13): when a new upload session is refused with 507.</summary>
+public sealed class AdmissionOptions
+{
+    /// <summary>Absolute free-space floor (static; used while the metric pipeline is not there yet).</summary>
+    public long MinFreeBytes { get; set; }
+
+    /// <summary>Percentage of the filesystem capacity that must stay free after the declared bytes of every open session.</summary>
+    public int SafetyPercent { get; set; } = 5;
+
+    /// <summary>At this used percentage new sessions are capped at 100 MB.</summary>
+    public int SoftClosePercent { get; set; } = 80;
+
+    /// <summary>At this used percentage every new session is refused (507); snippets and downloads keep working.</summary>
+    public int RefuseNewPercent { get; set; } = 90;
+
+    public int RetryAfterSeconds { get; set; } = 300;
 }

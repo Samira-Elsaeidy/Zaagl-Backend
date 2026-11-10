@@ -21,7 +21,7 @@ namespace Zaagl.Links.Tests;
 /// </summary>
 public sealed class FallbackUrlChecksTests : IDisposable
 {
-    private const string ConnectionString = RealApiFactory.ConnectionString;
+    private static readonly string ConnectionString = RealApiFactory.ConnectionString;
     private const string Destination = "https://dest-ok.example/page";
 
     private sealed class Reputation : IUrlReputationChecker

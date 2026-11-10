@@ -19,6 +19,21 @@ public static class LinksModule
             .UseNpgsql(connectionString, o => o.MigrationsHistoryTable("__ef_migrations", LinksDbContext.Schema))
             .UseSnakeCaseNamingConvention();
 
+    /// <summary>Worker only: just enough of Links for the C12 takedown the scan task requests (the links database, the NOTIFY cache invalidation the
+    /// Api listens to, the takedown routine of spec 7.15). No endpoints, no caches, no coordinator.</summary>
+    public static IServiceCollection AddLinksTakedown(this IServiceCollection services, IConfiguration configuration)
+    {
+        var connection = configuration.GetConnectionString("Postgres")
+            ?? throw new InvalidOperationException("ConnectionStrings:Postgres is not configured.");
+        services.Configure<AbuseOptions>(configuration.GetSection(AbuseOptions.Section));
+        services.AddDbContext<LinksDbContext>(o => Configure(o, connection));
+        services.AddSingleton(Npgsql.NpgsqlDataSource.Create(connection));
+        services.AddSingleton<ILinkCacheInvalidator, PgNotifyLinkCacheInvalidator>();
+        services.AddScoped<TakedownService>();
+        services.AddScoped<ILinkTakedown, ContentLinkTakedown>();
+        return services;
+    }
+
     public static IServiceCollection AddLinksModule(this IServiceCollection services, IConfiguration configuration)
     {
         var connection = configuration.GetConnectionString("Postgres")
@@ -100,17 +115,22 @@ public static class LinksModule
         services.AddScoped<LinkService>();
         // C1 (ARC-002 §5): content modules create links through ILinkIssuer, implemented by the Phase 0 engine.
         services.AddScoped<ILinkIssuer>(sp => sp.GetRequiredService<LinkService>());
+        services.AddScoped<IContentLinkCommands>(sp => sp.GetRequiredService<LinkService>());
         services.AddScoped<FolderService>();
         services.AddScoped<BulkLinkImporter>();
         services.AddScoped<LinkResolver>();
         services.AddScoped<ILinkResolver>(sp => sp.GetRequiredService<LinkResolver>());
         services.AddScoped<ILinkDirectory>(sp => sp.GetRequiredService<LinkResolver>());
+        services.AddScoped<ILinkSnapshots>(sp => sp.GetRequiredService<LinkResolver>());
         services.AddHostedService<PurgeJob>();
         services.AddHostedService<GuestQuotaCleanupJob>();
         services.AddScoped<IDestinationBlocklist, DestinationBlocklist>();
         services.AddScoped<IAliasDenylist, AliasDenylist>();
         services.AddScoped<AliasFreezeChecker>();
         services.AddScoped<TakedownService>();
+        services.AddScoped<ILinkTakedown, ContentLinkTakedown>(); // C12 (BE-022)
+        services.AddScoped<LifecycleOutboxDrain>(); // C10 drain; its job runs in the Api, which hosts Links and Resources together
+        services.AddHostedService<LifecycleOutboxDrainJob>();
         services.AddScoped<ReportService>();
         services.AddScoped<ILinkDigestSource, LinkDigestSource>();
         services.AddScoped<IAccountDataEraser, AccountDataEraser>();

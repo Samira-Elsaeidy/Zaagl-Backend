@@ -116,7 +116,36 @@ public class ZaaglApiFactory : WebApplicationFactory<Program>, IAsyncLifetime
         if (!gate.CanCreate) throw new InvalidOperationException($"CreationGate did not reach Ok against the fake coordinator: {gate.State}");
     }
 
-    Task IAsyncLifetime.DisposeAsync() => base.DisposeAsync().AsTask();
+    async Task IAsyncLifetime.DisposeAsync()
+    {
+        await CleanUpOutboxAsync();
+        await base.DisposeAsync();
+    }
+
+    /// <summary>Registering a user queues a confirm-email row that no test dispatches (the email dispatcher is one of
+    /// the hosted services removed above). Left pending, those rows are picked up by the next EmailJobsTests run, which
+    /// then sends, fails or suppresses them and can miss its own row in the batch. Every address this harness creates
+    /// matches <c>qa-api-*@example.test</c>; its outbox rows are removed with the factory.</summary>
+    private static async Task CleanUpOutboxAsync()
+    {
+        try
+        {
+            await using var connection = new Npgsql.NpgsqlConnection(TestDb.ConnectionString);
+            await connection.OpenAsync();
+            await using var command = connection.CreateCommand();
+            command.CommandText =
+                """
+                DELETE FROM identity.email_outbox o
+                WHERE o.recipient_email LIKE 'qa-api-%@example.test'
+                   OR o.user_id IN (SELECT id FROM identity.users WHERE email LIKE 'qa-api-%@example.test')
+                """;
+            await command.ExecuteNonQueryAsync();
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine($"Test cleanup of identity.email_outbox failed (ignored): {ex.Message}");
+        }
+    }
 
     // ---- Clients ------------------------------------------------------------------------
 
