@@ -27,6 +27,7 @@ Written 2026-11-09. Stage 1 is finished and pushed (backend `9295823`, frontend 
 2. Architect: finish `openapi-phase1.yaml` and `contracts.md` for the snippet and device-flow endpoints. This unblocks the other three.
 3. Backend: Snippets module (tables, immutable versions, public read, raw on the usercontent host), then Markdown + diff, CLI text ingest, device flow, guest limits (30/hour, 60/day), `docs/API.md`.
 4. Frontend: finish FE-001 and FE-004, then editor, `/paste/new`, viewer `/p/[slug]`, gates and states, Markdown, versions and diff, Arabic/RTL. Keep 0 CSP violations.
+4b. Frontend (added 2026-11-10 at the product owner's request): forgot-password and reset-password pages. The backend already has `POST /api/auth/forgot-password` and `POST /api/auth/reset-password` (`IdentityEndpoints.cs:66-77`; Development also returns `devOnlyResetToken`) and a `/account/reset-password` fragment page; the frontend has no pages for them yet. Add a "Forgot password?" link on sign-in, en/ar strings, and BFF routes if needed.
 5. CLI: add to `Zaagl.sln`, finish login/logout/whoami (device flow), token refresh lock, `link`, `paste` (UTF-8 and UTF-16), `ls`, `config`; add a CI matrix job; try a Windows AOT publish.
 6. Head reviews everything, then the lead brings the results and questions to the product owner. No commit without approval.
 

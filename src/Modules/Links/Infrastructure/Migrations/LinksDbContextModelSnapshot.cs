@@ -385,6 +385,68 @@ namespace Zaagl.Modules.Links.Infrastructure.Migrations
                     b.ToTable("idempotency_keys", "links");
                 });
 
+            modelBuilder.Entity("Zaagl.Modules.Links.Domain.LifecycleOutboxRow", b =>
+                {
+                    b.Property<long>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bigint")
+                        .HasColumnName("id");
+
+                    NpgsqlPropertyBuilderExtensions.UseIdentityAlwaysColumn(b.Property<long>("Id"));
+
+                    b.Property<int>("Attempts")
+                        .HasColumnType("integer")
+                        .HasColumnName("attempts");
+
+                    b.Property<short>("Event")
+                        .HasColumnType("smallint")
+                        .HasColumnName("event");
+
+                    b.Property<short>("Kind")
+                        .HasColumnType("smallint")
+                        .HasColumnName("kind");
+
+                    b.Property<string>("LastError")
+                        .HasMaxLength(1000)
+                        .HasColumnType("character varying(1000)")
+                        .HasColumnName("last_error");
+
+                    b.Property<Guid>("LinkId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("link_id");
+
+                    b.Property<DateTime>("OccurredAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("occurred_at");
+
+                    b.Property<string>("Payload")
+                        .HasColumnType("jsonb")
+                        .HasColumnName("payload");
+
+                    b.Property<DateTime?>("ProcessedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("processed_at");
+
+                    b.Property<Guid>("ResourceId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("resource_id");
+
+                    b.HasKey("Id")
+                        .HasName("pk_lifecycle_outbox");
+
+                    b.HasIndex("LinkId")
+                        .HasDatabaseName("ix_lifecycle_outbox_link_id");
+
+                    b.HasIndex("OccurredAt")
+                        .HasDatabaseName("ix_lifecycle_outbox_pending")
+                        .HasFilter("processed_at IS NULL");
+
+                    b.ToTable("lifecycle_outbox", "links", t =>
+                        {
+                            t.HasCheckConstraint("ck_lifecycle_outbox_event", "event IN (1, 2, 3, 4, 5, 6)");
+                        });
+                });
+
             modelBuilder.Entity("Zaagl.Modules.Links.Domain.Link", b =>
                 {
                     b.Property<Guid>("Id")
