@@ -1,0 +1,136 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Zaagl Phase 1 Test Report</title>
+<style>
+  :root {
+    --bg: #ffffff; --fg: #1b1f24; --muted: #5b6573; --card: #f5f7fa; --line: #dde2e8;
+    --done: #1a7f4b; --done-bg: #e3f4ea;
+    --prog: #9a6700; --prog-bg: #fff3cd;
+    --todo: #b42318; --todo-bg: #fde7e4;
+    --note: #3b5bdb; --note-bg: #e7edff;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #121417; --fg: #e8eaed; --muted: #9aa4b2; --card: #1b1f24; --line: #2c333b;
+      --done: #5fd39a; --done-bg: #14301f;
+      --prog: #f0c24b; --prog-bg: #3a2e0b;
+      --todo: #ff8f84; --todo-bg: #3d1713;
+      --note: #8fa8ff; --note-bg: #1c2540;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--fg); font: 16px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  main { max-width: 920px; margin: 0 auto; padding: 24px 16px 64px; }
+  h1 { font-size: 1.7rem; margin: 0 0 4px; }
+  h2 { font-size: 1.2rem; margin: 32px 0 8px; }
+  .sub { color: var(--muted); margin: 0 0 20px; }
+  .banner { background: var(--note-bg); color: var(--fg); border-left: 4px solid var(--note); padding: 12px 14px; border-radius: 6px; margin-bottom: 20px; }
+  .legend { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 8px; }
+  .tag { display: inline-block; padding: 2px 10px; border-radius: 999px; font-size: .82rem; font-weight: 600; white-space: nowrap; }
+  .done { background: var(--done-bg); color: var(--done); }
+  .prog { background: var(--prog-bg); color: var(--prog); }
+  .todo { background: var(--todo-bg); color: var(--todo); }
+  .block { background: var(--note-bg); color: var(--note); }
+  .table-wrap { overflow-x: auto; border: 1px solid var(--line); border-radius: 8px; }
+  table { border-collapse: collapse; width: 100%; background: var(--card); }
+  th, td { text-align: left; padding: 9px 12px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th { font-size: .8rem; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); }
+  tr:last-child td { border-bottom: 0; }
+  td.s { width: 1%; white-space: nowrap; }
+  .note { color: var(--muted); font-size: .9rem; }
+  ul { margin: 6px 0 0; padding-left: 20px; }
+  footer { margin-top: 36px; color: var(--muted); font-size: .85rem; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Zaagl Phase 1 Test Report</h1>
+  <p class="sub">Manual QA run on the live stack, 2026-11-11</p>
+
+  <div class="banner">
+    <strong>How to read this.</strong> Tested in a browser by Claude on the web against <code>localhost:3000</code>, after the key problem was fixed.
+    <strong>12 scenarios passed, 8 failed, and several could not be run in that setup.</strong>
+    All three fix agents have finished. Fixes were checked by the agents on the live stack, but are <strong>not confirmed until Claude web re-tests them</strong>. Nothing is committed yet.
+  </div>
+
+  <div class="legend">
+    <span class="tag done">Passed / fixed</span>
+    <span class="tag prog">Fix in progress</span>
+    <span class="tag todo">Failed / not done</span>
+    <span class="tag block">Not tested / your decision</span>
+  </div>
+
+  <h2>Already fixed during this session</h2>
+  <div class="table-wrap"><table>
+    <tr><th>Problem</th><th>Status</th></tr>
+    <tr><td>Creating links, snippets and uploads returned 503 (key mismatch). Cause: stale test fingerprint in the database; recovery run, stale row removed.</td><td class="s"><span class="tag done">Fixed</span></td></tr>
+    <tr><td>Coordinator could not save its state (volume owned by the wrong user), so every lease returned 503. Permissions corrected on the running volume.</td><td class="s"><span class="tag done">Fixed on this machine</span></td></tr>
+    <tr><td>Odd dotted line under the upload box (quota bar style)</td><td class="s"><span class="tag done">Fixed</span></td></tr>
+    <tr><td>Mailpit (test mail inbox) was not running</td><td class="s"><span class="tag done">Running</span></td></tr>
+  </table></div>
+
+  <h2>Failures found (and their fix status)</h2>
+  <div class="table-wrap"><table>
+    <tr><th>Issue</th><th>Severity</th><th>Status</th></tr>
+    <tr><td><strong>C2/C3 Burn after download does not burn.</strong> Server answers 200, page says "Could not start the download", file stays available. 3 of 3 tries.</td><td>Critical</td><td class="s"><span class="tag done">Fixed, needs re-test</span></td></tr>
+    <tr><td><strong>B2 Image viewer broken.</strong> "The image could not be loaded" on every image, though the raw download works.</td><td>High</td><td class="s"><span class="tag done">Fixed, needs re-test</span></td></tr>
+    <tr><td><strong>Open buttons drop the <code>#k=</code> key.</strong> The owner's own Open button lands on "Not found".</td><td>High</td><td class="s"><span class="tag done">Fixed, needs re-test</span></td></tr>
+    <tr><td><strong>A6 Snippet editing fails.</strong> Save gives <code>baseVersion must be at least 1</code>; no version 2 or diff. Edit page opens blank ("Version undefined · NaN lines").</td><td>High</td><td class="s"><span class="tag done">Fixed, needs re-test</span></td></tr>
+    <tr><td><strong>F4 No pixel limit.</strong> An 18000×18000 PNG (324 million pixels) was accepted and marked Ready. The limit should be 100 million.</td><td>High (security)</td><td class="s"><span class="tag done">Fixed, needs re-test</span> <span class="note">image is now download-only, not refused</span></td></tr>
+    <tr><td><strong>B1 No thumbnails.</strong> Every list shows a generic icon.</td><td>Medium</td><td class="s"><span class="tag prog">Re-test needed</span> <span class="note">worked in the agent's live check (PNG); JPEG, GIF, WebP not checked live</span></td></tr>
+    <tr><td><strong>Raw .NET error shown to users</strong> (<code>System.InvalidOperationException</code>) when the coordinator cannot lease. Should be a clean 503.</td><td>Medium (information leak)</td><td class="s"><span class="tag done">Fixed, needs re-test</span></td></tr>
+    <tr><td><strong>Docker volume permissions</strong> for the coordinator on a fresh <code>docker compose up</code></td><td>Medium</td><td class="s"><span class="tag done">Fixed</span></td></tr>
+    <tr><td><strong>C7 No copy button</strong> next to the SHA-256 (the hash itself is correct)</td><td>Low</td><td class="s"><span class="tag done">Fixed, needs re-test</span></td></tr>
+    <tr><td><strong>A8 No click limit or burn option for snippets</strong>, although the label mentions a click limit</td><td>Low</td><td class="s"><span class="tag block">Label fixed; feature needs your decision</span> <span class="note">backend has no click limit for snippets (PD-05, PD-10 open)</span></td></tr>
+  </table></div>
+
+  <h2>Passed</h2>
+  <div class="table-wrap"><table>
+    <tr><th>Scenario</th><th>Result</th></tr>
+    <tr><td>A1, A2 Create a snippet, open it signed out, syntax highlighting</td><td class="s"><span class="tag done">Pass</span></td></tr>
+    <tr><td>A3 Markdown XSS: script inert, <code>javascript:</code> link removed</td><td class="s"><span class="tag done">Pass</span></td></tr>
+    <tr><td>A4 Password protection (wrong refused, right opens)</td><td class="s"><span class="tag done">Pass</span></td></tr>
+    <tr><td>A5 Snippet expiry</td><td class="s"><span class="tag done">Pass</span></td></tr>
+    <tr><td>A7 Arabic and right-to-left layout</td><td class="s"><span class="tag done">Pass</span></td></tr>
+    <tr><td>B3 Downloaded SHA-256 equals the original</td><td class="s"><span class="tag done">Pass</span></td></tr>
+    <tr><td>B4 <code>.txt</code> renamed <code>.png</code> treated as a plain file</td><td class="s"><span class="tag done">Pass</span></td></tr>
+    <tr><td>B5 EICAR test virus blocked</td><td class="s"><span class="tag done">Pass</span></td></tr>
+    <tr><td>C4 File expiry</td><td class="s"><span class="tag done">Pass</span></td></tr>
+    <tr><td>C5 Encrypted ZIP refused</td><td class="s"><span class="tag done">Pass</span></td></tr>
+    <tr><td>F1 XSS in filenames and text fields</td><td class="s"><span class="tag done">Pass</span></td></tr>
+    <tr><td>F2 Guessed slugs give a clean 404, no leaks</td><td class="s"><span class="tag done">Pass</span></td></tr>
+    <tr><td>E1 Forgot-password does not reveal whether an email exists</td><td class="s"><span class="tag done">Pass</span></td></tr>
+  </table></div>
+
+  <h2>Not tested yet</h2>
+  <div class="table-wrap"><table>
+    <tr><th>Scenario</th><th>Why</th></tr>
+    <tr><td>D1 to D4 CLI (<code>login</code>, <code>whoami</code>, <code>paste</code>, <code>link</code>, <code>ls</code>, <code>logout</code>), F7 revoke a CLI session</td><td>Browser tester has no shell. To be run from the dev machine.</td></tr>
+    <tr><td>F5 31 guest snippets in an hour</td><td>Needs a signed-out identity. To be run from the dev machine.</td></tr>
+    <tr><td>Response headers (CSP, nosniff, cache) on every page and download</td><td>Blocked in the browser tester. Home page headers look correct.</td></tr>
+    <tr><td>C1 50 MB upload with pause and resume</td><td>Tester limited to 10 MB uploads.</td></tr>
+    <tr><td>E1 Finish password reset from the email link</td><td>Mailpit was off. It is running now, so this can be retried.</td></tr>
+    <tr><td>F6 Open another user's real item</td><td>Needs a second real account.</td></tr>
+  </table></div>
+
+  <h2>Questions for you</h2>
+  <ul>
+    <li>Snippets appear in the Files list as "Unnamed" files with file controls. Is that intended?</li>
+    <li>The quota meter does not drop when a file is deleted. The dialog says space is freed after the retention period. Is that what you want?</li>
+    <li><code>.exe</code> uploads are allowed on paid plans and blocked for guests and Free. Correct?</li>
+  </ul>
+
+  <h2>Next steps</h2>
+  <ul>
+    <li>Wait for the three fix agents, then rebuild and re-run sections A, B, C and F.</li>
+    <li>Run the CLI, guest-limit and header checks from the dev machine.</li>
+    <li>Then commit and push (needs your go-ahead), and show the head of tech the screenshots.</li>
+  </ul>
+
+  <footer>Source: Claude web QA report, 2026-11-11. Fix status is updated when each agent finishes and the item is re-tested.</footer>
+</main>
+</body>
+</html>

@@ -1,6 +1,7 @@
 using System.Security.Cryptography;
 using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using Zaagl.Modules.Files.Contracts;
@@ -30,6 +31,7 @@ public sealed class ScanTaskHandler(
     IMalwareScanner scanner,
     LocalObjectStorage storage,
     ScanConcurrencyGate gate,
+    [FromKeyedServices(FilesDbContext.Schema)] TaskQueue tasks,
     TimeProvider time,
     IOptions<ScanOptions> scanOptions,
     ILogger<ScanTaskHandler> logger) : ITaskHandler<FilesDbContext>
@@ -176,6 +178,22 @@ public sealed class ScanTaskHandler(
         await db.StorageObjects.Where(o => o.Id == obj.Id).ExecuteUpdateAsync(s => s.SetProperty(o => o.Area, StorageArea.Objects), ct);
         var ready = await resources.MarkReadyAsync(resourceId, obj.SizeBytes, ct);
         if (!ready.IsSuccess) throw new InvalidOperationException("Could not mark the resource ready: " + ready.Error!.Message);
+
+        // 7. Derivatives and metadata (ARC-011): queued after ready, for media resources only (never burn files); the task re-checks.
+        // A failure here never fails the scan: the original is already servable and the backfill sweep catches a missed task.
+        if (resource.Kind == ResourceKind.Media && !resource.BurnAfterDownload)
+        {
+            try
+            {
+                var now = time.GetUtcNow().UtcDateTime;
+                await tasks.EnqueueAsync(db, MediaPreviewTaskHandler.TaskKind, $"media-preview:{resourceId}",
+                    JsonSerializer.Serialize(new { resourceId }), 3, now, now, ct);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                logger.LogWarning(ex, "Could not queue media-preview for resource {ResourceId}", resourceId);
+            }
+        }
     }
 
     /// <summary>The dead-letter path (retries exhausted): rejected as scan-unavailable, temp bytes deleted, quota released.</summary>

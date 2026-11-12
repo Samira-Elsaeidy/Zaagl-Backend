@@ -312,4 +312,63 @@ public sealed class ShortHostStatusPageTests : IAsyncLifetime
         Assert.Equal(Destination, crawlerRedirect.Headers.Location?.ToString());
         Assert.Equal(0, _links.Consumed);
     }
+
+    [Theory]
+    [InlineData("disabled1", HttpStatusCode.Gone)]
+    [InlineData("safety1", HttpStatusCode.Gone)]
+    [InlineData("deleted1", HttpStatusCode.Gone)]
+    [InlineData("expnofallback", HttpStatusCode.Gone)]
+    [InlineData("unknown1", HttpStatusCode.NotFound)]
+    public async Task Every_non_redirect_page_is_branded_with_a_logo_dark_mode_and_a_link_back_to_the_app(string slug, HttpStatusCode status)
+    {
+        var body = await AssertStaticPageAsync(await SendAsync("GET", slug), status, head: false);
+        Assert.Contains("<svg", body);                              // inline pigeon mark, no external asset
+        Assert.Contains("prefers-color-scheme:dark", body);
+        Assert.Contains("href=\"https://app.zaa.test\"", body);     // back to the app (Frontend:BaseUrl)
+        Assert.Contains("lang=\"en\"", body);
+        Assert.DoesNotContain("style=", body);                      // no inline style attributes: only the one <style> block
+    }
+
+    [Fact]
+    public async Task Pages_are_localized_to_arabic_and_rtl_from_accept_language()
+    {
+        var request = new HttpRequestMessage(HttpMethod.Get, "/disabled1");
+        request.Headers.TryAddWithoutValidation("User-Agent", Browser);
+        request.Headers.TryAddWithoutValidation("Accept-Language", "ar-EG,ar;q=0.9,en;q=0.5");
+        var response = await _client.SendAsync(request);
+        Assert.Equal(HttpStatusCode.Gone, response.StatusCode);
+        Assert.Equal("ar", Assert.Single(response.Content.Headers.ContentLanguage));
+        var body = await response.Content.ReadAsStringAsync();
+        Assert.Contains("dir=\"rtl\"", body);
+        Assert.Contains("الرابط معطّل", body);
+    }
+
+    [Theory]
+    [InlineData("/sam")]          // 1-3 characters match no route (BE-031): used to be an EMPTY 404
+    [InlineData("/ab")]
+    [InlineData("/active1/extra")]
+    public async Task Unmatched_browser_paths_get_the_branded_404_page_never_an_empty_body(string path)
+    {
+        var response = await _client.GetAsync(path);
+        Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
+        Assert.Equal("text/html", response.Content.Headers.ContentType?.MediaType);
+        Assert.Contains("Link not found", await response.Content.ReadAsStringAsync());
+        Assert.Equal(StatusPages.ContentSecurityPolicy, string.Join(";", response.Headers.GetValues("Content-Security-Policy")));
+    }
+
+    [Fact]
+    public async Task Unmatched_api_paths_keep_a_plain_404()
+    {
+        var response = await _client.GetAsync("/api/nope");
+        Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
+        Assert.Equal("", await response.Content.ReadAsStringAsync());
+    }
+
+    [Theory]
+    [InlineData("ar-SA,en;q=0.8", true)]
+    [InlineData("en-US,ar;q=0.5", false)]
+    [InlineData("fr", false)]
+    [InlineData("", false)]
+    [InlineData("arx", false)]
+    public void Accept_language_selection(string header, bool arabic) => Assert.Equal(arabic, StatusPages.PrefersArabic(header));
 }

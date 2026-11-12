@@ -166,3 +166,26 @@ public interface IStoredObjectSummaries
 {
     Task<IReadOnlyDictionary<Guid, StoredObjectSummary>> GetAsync(IReadOnlyCollection<Guid> resourceIds, CancellationToken cancellationToken);
 }
+
+// ---- S3 (ARC-011): image metadata and the thumbnail derivative ----
+
+/// <summary>A derivative of a stored original (own id, own storage area). <paramref name="Status"/> is
+/// <c>pending</c>, <c>ready</c>, <c>failed</c> or <c>skipped</c>; no storage key is ever exposed.</summary>
+public sealed record StoredDerivative(Guid Id, string Kind, string Status, int? Width, int? Height, string? Mime, long? SizeBytes);
+
+/// <param name="Width">The displayed size (after EXIF orientation); null when the probe failed.</param>
+/// <param name="Orientation">The original EXIF orientation value 1-8.</param>
+/// <param name="Animated">GIF, APNG or animated WebP with more than one frame.</param>
+public sealed record StoredMedia(
+    Guid ResourceId, bool Animated, int? Width, int? Height, int? Orientation, int? FrameCount, bool? HasAlpha,
+    IReadOnlyList<StoredDerivative> Derivatives);
+
+/// <summary>Batch read of the probe result and the derivatives written by the <c>media-preview</c> task.</summary>
+public interface IMediaMetadata
+{
+    /// <summary>Ids that were not probed yet are simply absent.</summary>
+    Task<IReadOnlyDictionary<Guid, StoredMedia>> GetAsync(IReadOnlyCollection<Guid> resourceIds, CancellationToken cancellationToken);
+
+    /// <summary>The ready derivative of <paramref name="kind"/>, or null (not made, failed, skipped, or not yet).</summary>
+    Task<StoredDerivative?> GetReadyDerivativeAsync(Guid resourceId, string kind, CancellationToken cancellationToken);
+}

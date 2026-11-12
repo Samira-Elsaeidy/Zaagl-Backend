@@ -5,6 +5,7 @@ using Zaagl.Api.Infrastructure;
 using Zaagl.Modules.Billing.Contracts;
 using Zaagl.Modules.Files.Application;
 using Zaagl.Modules.Files.Contracts;
+using Zaagl.Modules.Files.Infrastructure;
 using Zaagl.Modules.Links.Application;
 using Zaagl.Modules.Resources.Application;
 using Zaagl.Modules.Resources.Contracts;
@@ -15,9 +16,9 @@ namespace Zaagl.Api.Endpoints;
 /// <summary>openapi ScanDto (owner only).</summary>
 public sealed record ScanDto(string Status, DateTime? ScannedAt);
 
-/// <summary>openapi MediaDto. S1 (plain images): <c>mediaType</c>, <c>detectedMime</c>, <c>browserPlayable</c> and no derivatives;
-/// every other field is null because the probe and the derivatives arrive in S3 (ARC-011 section 3.1). The browser reads the natural
-/// size from the loaded image.</summary>
+/// <summary>openapi MediaDto. <c>mediaType</c>, <c>detectedMime</c>, <c>browserPlayable</c> always; <c>width</c>, <c>height</c> (displayed, after EXIF
+/// orientation), <c>frameCount</c>, <c>hasAlpha</c>, <c>orientation</c> and <c>derivatives</c> once the <c>media-preview</c> task probed the original (S3,
+/// ARC-011 section 3.1); null until then, and for an image the probe could not read. <c>hasLocationData</c> stays null (PD-13 OPEN).</summary>
 public sealed record MediaBlockDto(
     string MediaType,
     string DetectedMime,
@@ -31,7 +32,10 @@ public sealed record MediaBlockDto(
     int? Orientation,
     bool BrowserPlayable,
     bool? HasLocationData,
-    IReadOnlyList<object> Derivatives);
+    IReadOnlyList<MediaDerivativeDto> Derivatives);
+
+/// <summary>openapi MediaDerivativeDto. <c>url</c> is a Preview ticket (15 minutes), only for a ready derivative of a non-burn file.</summary>
+public sealed record MediaDerivativeDto(string Kind, string Status, int? Width, int? Height, string? Url);
 
 public sealed record ResourceFileBlockDto(string Filename, string DetectedMime, string? Sha256);
 
@@ -62,7 +66,7 @@ public sealed record ResourceDto(
     MediaBlockDto? Media = null,
     ResourceFileBlockDto? File = null);
 
-public sealed record ResourceStatusDto(string State, string ProcessingStatus, string? RejectedReason, IReadOnlyList<object> Derivatives);
+public sealed record ResourceStatusDto(string State, string ProcessingStatus, string? RejectedReason, IReadOnlyList<MediaDerivativeDto> Derivatives);
 
 public sealed record DownloadTicketDto(string Url, DateTime ExpiresAt);
 
@@ -87,7 +91,8 @@ public static class ResourcesEndpoints
 
         resources.MapGet("", async (
                 string? kind, string? state, string? cursor, int? limit, ClaimsPrincipal user, HttpContext http,
-                OwnerResources owner, IStoredObjectSummaries objects, IOptions<Zaagl.Modules.Links.Application.LinkOptions> links, CancellationToken ct) =>
+                OwnerResources owner, IStoredObjectSummaries objects, IMediaMetadata mediaMeta, IDownloadGrants grants,
+                IOptions<Zaagl.Modules.Links.Application.LinkOptions> links, CancellationToken ct) =>
             {
                 http.Response.Headers.CacheControl = "private, no-store";
                 ResourceKind? kindFilter = null;
@@ -108,26 +113,35 @@ public static class ResourcesEndpoints
                 var page = await owner.ListAsync(user.GetUserId(), kindFilter, stateFilter, cursor, limit ?? 25, ct);
                 if (!page.IsSuccess) return ApiResults.Problem(page.Error!);
                 var summaries = await objects.GetAsync(page.Value!.Items.Select(i => i.Resource.ResourceId).ToList(), ct);
-                var items = page.Value.Items.Select(i => ToDto(i, summaries.GetValueOrDefault(i.Resource.ResourceId), links.Value.BaseUrl, detail: false)).ToList();
+                var metas = await mediaMeta.GetAsync(page.Value.Items.Where(i => i.Resource.Kind == ResourceKind.Media).Select(i => i.Resource.ResourceId).ToList(), ct);
+                var items = new List<ResourceDto>();
+                foreach (var i in page.Value.Items)
+                {
+                    var meta = metas.GetValueOrDefault(i.Resource.ResourceId);
+                    // A short-lived Preview ticket on the thumb-320 derivative (never for burn files, never when not ready).
+                    var thumbUrl = await ThumbnailTicketAsync(grants, i, meta, ct);
+                    items.Add(ToDto(i, summaries.GetValueOrDefault(i.Resource.ResourceId), links.Value.BaseUrl, detail: false, meta, thumbUrl));
+                }
                 return Results.Ok(new { items, nextCursor = page.Value.NextCursor });
             })
             .RequireScope(ApiScopes.ResourcesRead);
 
         resources.MapGet("/{id:guid}", async (
-                Guid id, ClaimsPrincipal user, HttpContext http, OwnerResources owner, IStoredObjectSummaries objects,
+                Guid id, ClaimsPrincipal user, HttpContext http, OwnerResources owner, IStoredObjectSummaries objects, IMediaMetadata mediaMeta, IDownloadGrants grants,
                 IOptions<Zaagl.Modules.Links.Application.LinkOptions> links, CancellationToken ct) =>
             {
                 http.Response.Headers.CacheControl = "private, no-store";
                 var resolved = await owner.ResolveAsync(id, user.GetUserId(), ct);
                 if (!resolved.IsSuccess) return ApiResults.Problem(resolved.Error!);
                 var summary = (await objects.GetAsync([id], ct)).GetValueOrDefault(id);
-                return Results.Ok(ToDto(resolved.Value!, summary, links.Value.BaseUrl, detail: true));
+                var meta = (await mediaMeta.GetAsync([id], ct)).GetValueOrDefault(id);
+                return Results.Ok(ToDto(resolved.Value!, summary, links.Value.BaseUrl, detail: true, meta, await ThumbnailTicketAsync(grants, resolved.Value!, meta, ct)));
             })
             .RequireScope(ApiScopes.ResourcesRead);
 
         // PATCH: title, expiresAt (renewal), public, password. The kind's write scope applies (interim rule, contracts.md C9).
         resources.MapPatch("/{id:guid}", async (
-                Guid id, JsonElement body, ClaimsPrincipal user, HttpContext http, OwnerResources owner, IStoredObjectSummaries objects,
+                Guid id, JsonElement body, ClaimsPrincipal user, HttpContext http, OwnerResources owner, IStoredObjectSummaries objects, IMediaMetadata mediaMeta, IDownloadGrants grants,
                 IOptions<Zaagl.Modules.Links.Application.LinkOptions> links, CancellationToken ct) =>
             {
                 http.Response.Headers.CacheControl = "private, no-store";
@@ -141,7 +155,8 @@ public static class ResourcesEndpoints
                 var updated = await owner.UpdateAsync(id, userId, patch.Value!, ct);
                 if (!updated.IsSuccess) return ApiResults.Problem(updated.Error!);
                 var summary = (await objects.GetAsync([id], ct)).GetValueOrDefault(id);
-                return Results.Ok(ToDto(updated.Value!.Owned, summary, links.Value.BaseUrl, detail: true) with { LinkKey = updated.Value.LinkKey });
+                var meta = (await mediaMeta.GetAsync([id], ct)).GetValueOrDefault(id);
+                return Results.Ok(ToDto(updated.Value!.Owned, summary, links.Value.BaseUrl, detail: true, meta, await ThumbnailTicketAsync(grants, updated.Value.Owned, meta, ct)) with { LinkKey = updated.Value.LinkKey });
             })
             .RequireScope(ApiScopes.FilesWrite)
             .RequireRateLimiting("content-write");
@@ -159,7 +174,7 @@ public static class ResourcesEndpoints
             .RequireRateLimiting("content-write");
 
         resources.MapGet("/{id:guid}/status", async (
-                Guid id, ClaimsPrincipal user, HttpContext http, OwnerResources owner, TimeProvider time, CancellationToken ct) =>
+                Guid id, ClaimsPrincipal user, HttpContext http, OwnerResources owner, TimeProvider time, IMediaMetadata mediaMeta, CancellationToken ct) =>
             {
                 http.Response.Headers.CacheControl = "private, no-store";
                 var resolved = await owner.ResolveAsync(id, user.GetUserId(), ct);
@@ -171,7 +186,10 @@ public static class ResourcesEndpoints
                     var age = time.GetUtcNow().UtcDateTime - o.Resource.CreatedAt;
                     http.Response.Headers.RetryAfter = (age < TimeSpan.FromSeconds(10) ? 1 : 3).ToString(System.Globalization.CultureInfo.InvariantCulture);
                 }
-                return Results.Ok(new ResourceStatusDto(Lower(o.State), Lower(o.Resource.Processing), o.Resource.RejectedReason, []));
+                var derivatives = o.Resource.Kind == ResourceKind.Media && o.State == ResourceState.Ready
+                    ? (await mediaMeta.GetAsync([id], ct)).GetValueOrDefault(id)?.Derivatives.Select(d => new MediaDerivativeDto(d.Kind, d.Status, d.Width, d.Height, null)).ToList() ?? []
+                    : [];
+                return Results.Ok(new ResourceStatusDto(Lower(o.State), Lower(o.Resource.Processing), o.Resource.RejectedReason, derivatives));
             })
             .RequireScope(ApiScopes.ResourcesRead);
 
@@ -179,7 +197,7 @@ public static class ResourcesEndpoints
         // that are not on the inline allowlist.
         resources.MapPost("/{id:guid}/inline", async (
                 Guid id, ClaimsPrincipal user, HttpContext http, OwnerResources owner, IStoredObjectSummaries objects,
-                IDownloadGrants grants, IOptions<ContentOptions> content, CancellationToken ct) =>
+                IDownloadGrants grants, IOptions<ContentOptions> content, IMediaMetadata inlineMeta, IOptions<MediaOptions> mediaOptions, CancellationToken ct) =>
             {
                 http.Response.Headers.CacheControl = "private, no-store";
                 var resolved = await owner.ResolveAsync(id, user.GetUserId(), ct);
@@ -191,6 +209,9 @@ public static class ResourcesEndpoints
                 var summary = (await objects.GetAsync([id], ct)).GetValueOrDefault(id);
                 if (summary?.DetectedMime is not { } mime || !content.Value.InlineMimeAllowlist.Contains(mime, StringComparer.OrdinalIgnoreCase))
                     return ApiResults.Problem(Error.Conflict("This file type does not open inline."));
+                if (o.Resource.Kind == ResourceKind.Media
+                    && ExceedsInlinePixels((await inlineMeta.GetAsync([id], ct)).GetValueOrDefault(id), mediaOptions.Value))
+                    return ApiResults.Problem(Error.Conflict("This image is too large to open inline. Download it instead."));
                 var ticket = await grants.MintAsync(new MintTicketRequest(id, DeliveryPurpose.Inline, null), ct);
                 return ticket.IsSuccess ? Results.Ok(new DownloadTicketDto(ticket.Value!.Url, ticket.Value.ExpiresAt)) : ApiResults.Problem(ticket.Error!);
             })
@@ -232,29 +253,48 @@ public static class ResourcesEndpoints
     private static IResult? KindScopeError(ClaimsPrincipal user, ResourceKind kind) =>
         kind == ResourceKind.Snippet && !ApiScopes.Allows(user, ApiScopes.SnippetsWrite) ? ApiScopes.InsufficientScope(ApiScopes.SnippetsWrite) : null;
 
-    internal static ResourceDto ToDto(OwnedResource owned, StoredObjectSummary? stored, string baseUrl, bool detail)
+    /// <summary>True when the probe measured more pixels than <c>Media:MaxInlinePixels</c>: the original is then download-only (ARC-011 section 6).</summary>
+    internal static bool ExceedsInlinePixels(StoredMedia? meta, MediaOptions options) =>
+        meta is { Width: { } w, Height: { } h } && (long)w * h > options.MaxInlinePixels;
+
+    /// <summary>The thumb-320 ticket for one row: only for a ready derivative of a ready, non-burn media resource.</summary>
+    internal static async Task<string?> ThumbnailTicketAsync(IDownloadGrants grants, OwnedResource owned, StoredMedia? meta, CancellationToken ct)
+    {
+        var r = owned.Resource;
+        if (r.Kind != ResourceKind.Media || r.BurnAfterDownload || owned.State != ResourceState.Ready || meta is null) return null;
+        if (!meta.Derivatives.Any(d => d.Kind == MediaPreviewTaskHandler.DerivativeKindThumb && d.Status == "ready")) return null;
+        var ticket = await grants.MintAsync(new MintTicketRequest(r.ResourceId, DeliveryPurpose.Preview, MediaPreviewTaskHandler.DerivativeKindThumb), ct);
+        return ticket.IsSuccess ? ticket.Value!.Url : null;
+    }
+
+    internal static ResourceDto ToDto(OwnedResource owned, StoredObjectSummary? stored, string baseUrl, bool detail, StoredMedia? media = null, string? thumbnailUrl = null)
     {
         var r = owned.Resource;
         var code = owned.Link?.Slug ?? "";
         var isFile = r.Kind is ResourceKind.File or ResourceKind.Media;
         var dto = new ResourceDto(
             r.ResourceId, Lower(r.Kind), r.Title, code, $"{baseUrl.TrimEnd('/')}/{code}", Lower(owned.State), Lower(r.Processing),
-            isFile ? stored?.DisplayName : null, isFile ? stored?.DetectedMime : null, null,
+            isFile ? stored?.DisplayName : null, isFile ? stored?.DetectedMime : null, thumbnailUrl,
             r.SizeBytes, owned.Link?.ExpiresAt ?? r.ExpiresAt, owned.Link?.PurgeAfter ?? r.PurgeAfter, r.BurnAfterDownload, owned.IsPublic,
             r.DownloadCount, r.CreatedAt, r.RejectedReason, BurnClaimedAt: r.BurnClaimedAt); // S2: both also in the list summary
-        if (!detail) return dto;
+        // The list carries the media block only once the probe ran (dimensions and the thumbnail for the library); the detail always has it.
+        if (!detail) return media is not null && r.Kind == ResourceKind.Media && stored?.DetectedMime is { } listMime ? dto with { Media = MediaBlock(listMime, media, thumbnailUrl) } : dto;
         return dto with
         {
             HasPassword = owned.Link?.HasPassword ?? false,
             Scan = isFile && stored is not null ? new ScanDto(Lower(stored.Scan), stored.ScannedAt) : null,
-            Media = r.Kind == ResourceKind.Media && stored?.DetectedMime is { } mime ? MediaBlock(mime) : null,
+            Media = r.Kind == ResourceKind.Media && stored?.DetectedMime is { } mime ? MediaBlock(mime, media, thumbnailUrl) : null,
             File = isFile && stored is not null ? new ResourceFileBlockDto(stored.DisplayName, stored.DetectedMime ?? "application/octet-stream", stored.Sha256) : null,
         };
     }
 
-    /// <summary>S1 stub of <c>IMediaReader</c> (ARC-011 section 3.1): the type from the detected MIME, nothing else. BE-015 replaces it.</summary>
-    internal static MediaBlockDto MediaBlock(string detectedMime) =>
-        new("image", detectedMime, null, null, null, null, null, null, null, null, BrowserPlayable: true, HasLocationData: null, Derivatives: []);
+    /// <summary>The <c>media</c> block (ARC-011 section 3.1): the type from the detected MIME, plus the probe result and the derivatives once the
+    /// <c>media-preview</c> task has run. An image it could not read keeps null dimensions and the viewer relies on the browser.</summary>
+    internal static MediaBlockDto MediaBlock(string detectedMime, StoredMedia? meta = null, string? thumbnailUrl = null) =>
+        new(meta?.Animated == true ? "animatedImage" : "image", detectedMime, meta?.Width, meta?.Height, null, meta?.FrameCount, meta?.HasAlpha, null, null,
+            meta?.Orientation, BrowserPlayable: true, HasLocationData: null,
+            Derivatives: meta?.Derivatives.Select(d => new MediaDerivativeDto(d.Kind, d.Status, d.Width, d.Height,
+                d.Kind == MediaPreviewTaskHandler.DerivativeKindThumb ? thumbnailUrl : null)).ToList() ?? []);
 
     private static Result<ResourcePatch> ParsePatch(JsonElement body)
     {

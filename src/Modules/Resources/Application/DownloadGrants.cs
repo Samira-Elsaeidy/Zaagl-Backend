@@ -70,8 +70,8 @@ public sealed class TicketKeyRing(HmacKeyRing ring)
 }
 
 /// <summary>
-/// C2 <see cref="IDownloadGrants"/>: Raw, Owner, Inline and Download tickets, and the burn claim (ARC-019). Preview tickets arrive
-/// with the derivatives (S3) and are refused with <c>validation</c>.
+/// C2 <see cref="IDownloadGrants"/>: Raw, Owner, Inline, Preview (a named derivative of an image, S3) and Download tickets, and the burn claim (ARC-019). Preview tickets arrived
+/// with the derivatives (S3); the delivery hop checks that the derivative is ready and the original clean.
 /// <see cref="AuthorizeAsync"/> is read-only for a Download ticket: it validates and says what must be recorded
 /// (<see cref="DeliveryDecision.Consume"/>); the hop records it with <see cref="ConsumeAsync"/> only after the object, size and
 /// Range checks, so a refused request consumes nothing (ARC-019 section 5).
@@ -92,7 +92,7 @@ public sealed class DownloadGrants(
     public async Task<Result<DeliveryTicket>> MintAsync(MintTicketRequest request, CancellationToken cancellationToken)
     {
         var ct = cancellationToken;
-        if (request.Purpose is not (DeliveryPurpose.Raw or DeliveryPurpose.Owner or DeliveryPurpose.Inline or DeliveryPurpose.Download))
+        if (request.Purpose is not (DeliveryPurpose.Raw or DeliveryPurpose.Owner or DeliveryPurpose.Inline or DeliveryPurpose.Download or DeliveryPurpose.Preview))
             return Error.Validation("This ticket purpose is not available yet.");
 
         var row = await db.Resources.AsNoTracking().FirstOrDefaultAsync(r => r.Id == request.ResourceId, ct);
@@ -109,13 +109,20 @@ public sealed class DownloadGrants(
         else
         {
             if (request.Purpose == DeliveryPurpose.Raw) return Error.Validation("Raw tickets are for snippets.");
-            if (!string.IsNullOrEmpty(request.Derivative)) return Error.Validation("Original downloads carry no derivative.");
+            // Preview tickets (S3) name an explicit derivative kind such as thumb-320; every other ticket is for the original.
+            if (request.Purpose == DeliveryPurpose.Preview)
+            {
+                if (string.IsNullOrEmpty(request.Derivative) || request.Derivative.Length > MaxDerivativeLength
+                    || !request.Derivative.All(c => char.IsAsciiLetterOrDigit(c) || c == '-'))
+                    return Error.Validation("A preview ticket needs a derivative kind.");
+            }
+            else if (!string.IsNullOrEmpty(request.Derivative)) return Error.Validation("Original downloads carry no derivative.");
         }
 
         if (row.ProcessingStatus != ProcessingStatus.Ready) return Error.Of(ErrorCodes.Processing, "This content is not ready.");
         // Burn files get no inline ticket (addendum §8.1.3). A claimed burn file cannot start a new download: the claiming client
         // holds its own ticket (ARC-019 section 4).
-        if (row.BurnAfterDownload && request.Purpose == DeliveryPurpose.Inline) return Error.Conflict("Burn files have no inline view.");
+        if (row.BurnAfterDownload && request.Purpose is DeliveryPurpose.Inline or DeliveryPurpose.Preview) return Error.Conflict("Burn files have no inline view.");
         if (row.BurnClaimedAt is not null && request.Purpose == DeliveryPurpose.Download)
             return Error.Of(ErrorCodes.Burned, "This content was downloaded and deleted.");
 
@@ -147,7 +154,7 @@ public sealed class DownloadGrants(
         if (HmacKeyRing.Split(ticket) is not { } parts) return invalid;
         if (ReadPayload(parts.Payload) is not { } claims || !keys.Ring.VerifyMac(claims.KeyId, parts.Payload, parts.Mac)) return invalid;
         var now = time.GetUtcNow().UtcDateTime;
-        if (claims.Purpose is not (DeliveryPurpose.Raw or DeliveryPurpose.Owner or DeliveryPurpose.Inline or DeliveryPurpose.Download)) return invalid;
+        if (claims.Purpose is not (DeliveryPurpose.Raw or DeliveryPurpose.Owner or DeliveryPurpose.Inline or DeliveryPurpose.Download or DeliveryPurpose.Preview)) return invalid;
         // A Download ticket's lifetime is its grant row (unused: first_use_by; used: the reuse or grace window), checked below.
         if (claims.Purpose != DeliveryPurpose.Download && now >= claims.ExpiresAt) return invalid;
 
@@ -185,8 +192,8 @@ public sealed class DownloadGrants(
                 .SetProperty(g => g.FirstUsedAt, g => g.FirstUsedAt ?? now), ct);
         }
         // A burn file never holds an Inline ticket (refused at mint); a defensive check against a stale row.
-        if (row.BurnAfterDownload && claims.Purpose == DeliveryPurpose.Inline) return invalid;
-        var disposition = claims.Purpose == DeliveryPurpose.Inline ? DeliveryDisposition.Inline : DeliveryDisposition.Attachment;
+        if (row.BurnAfterDownload && claims.Purpose is DeliveryPurpose.Inline or DeliveryPurpose.Preview) return invalid;
+        var disposition = claims.Purpose is DeliveryPurpose.Inline or DeliveryPurpose.Preview ? DeliveryDisposition.Inline : DeliveryDisposition.Attachment;
         return new DeliveryDecision(DeliveryOutcome.Allowed, row.Id, claims.Purpose, disposition, claims.Derivative);
     }
 

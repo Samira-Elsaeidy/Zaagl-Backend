@@ -33,6 +33,7 @@ public static class FilesModule
         services.Configure<UploadOptions>(configuration.GetSection(UploadOptions.Section));
         services.Configure<ScanOptions>(configuration.GetSection(ScanOptions.Section));
         services.Configure<ClamAvOptions>(configuration.GetSection(ClamAvOptions.Section));
+        services.Configure<MediaOptions>(configuration.GetSection(MediaOptions.Section));
         services.AddSingleton<LocalObjectStorage>();
         services.AddSingleton<IObjectStorage>(sp => sp.GetRequiredService<LocalObjectStorage>());
         services.AddSingleton<TempUploadFiles>();
@@ -44,6 +45,7 @@ public static class FilesModule
         services.AddScoped<StoredObjects>();
         services.AddScoped<IStoredObjects>(sp => sp.GetRequiredService<StoredObjects>());
         services.AddScoped<IStoredObjectSummaries>(sp => sp.GetRequiredService<StoredObjects>());
+        services.AddScoped<IMediaMetadata, MediaMetadata>();
         services.AddScoped<IResourceBytes>(sp => sp.GetRequiredService<StoredObjects>());
         services.AddScoped<IUploadStats>(sp => sp.GetRequiredService<StoredObjects>());
         services.AddScoped<IContentHashBlocklist, ContentHashBlocklist>();
@@ -86,6 +88,8 @@ public static class FilesModule
         services.AddSingleton<ScanConcurrencyGate>();
         services.AddScoped<ITaskHandler<FilesDbContext>, ScanTaskHandler>();
         services.AddScoped<ITaskHandler<FilesDbContext>, DeleteBytesTaskHandler>();
+        services.AddSingleton<MediaConcurrencyGate>();
+        services.AddScoped<ITaskHandler<FilesDbContext>, MediaPreviewTaskHandler>();
         services.AddScoped<ScanTaskHandler>();
         return services;
     }
@@ -97,6 +101,7 @@ public static class FilesModule
         services.AddFilesTaskHandlers(configuration, isDevelopment);
         services.AddScoped<UploadSessionExpiry>();
         services.AddHostedService<UploadSessionExpiryJob>();
+        services.AddHostedService<MediaBackfillJob>();
 
         var options = configuration.GetSection("Jobs:Files").Get<TaskRunnerOptions>() ?? new TaskRunnerOptions();
         services.AddHostedService(sp => new TaskRunner<FilesDbContext>(

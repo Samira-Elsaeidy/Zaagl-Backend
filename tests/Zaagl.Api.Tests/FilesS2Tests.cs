@@ -258,6 +258,8 @@ public sealed class BurnClaimTests(FilesS2Factory api) : S2Support(api), IClassF
             Assert.Equal(JsonValueKind.Null, d.GetProperty("inlineUrl").ValueKind);
             Assert.Equal(FilesApiFactory.ResponseCap, d.GetProperty("file").GetProperty("singleResponseLimitBytes").GetInt64());
             Assert.DoesNotContain("/d/", d.ToString());
+            var expected = await ScalarAsync<string>("SELECT encode(sha256, 'hex') FROM files.storage_objects WHERE resource_id = @r", ("r", resourceId));
+            Assert.Equal(expected, d.GetProperty("file").GetProperty("sha256").GetString());
         }
         var ticket = await MintAsync(code);
         using (var head = await FetchAsync(ticket, method: HttpMethod.Head)) Assert.Equal(HttpStatusCode.OK, head.StatusCode);

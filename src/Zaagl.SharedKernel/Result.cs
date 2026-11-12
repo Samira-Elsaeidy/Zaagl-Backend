@@ -25,6 +25,8 @@ public static class ErrorCodes
 {
     // Phase 0 (unchanged spelling, existing clients depend on it).
     public const string Validation = "validation";
+    /// <summary>The request could not be bound at all: malformed JSON, a value of the wrong type, an out-of-range number, a bad route/query value.</summary>
+    public const string InvalidRequest = "invalid_request";
     public const string Unauthorized = "unauthorized";
     public const string InvalidCode = "invalid_code";
     public const string PlanRequired = "plan_required";

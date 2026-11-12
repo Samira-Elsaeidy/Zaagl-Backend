@@ -145,9 +145,15 @@ public sealed class AbuseControlsTests : IDisposable
         Assert.True((reloaded.DisabledAt!.Value - originalDisabledAt!.Value).Duration() < TimeSpan.FromMilliseconds(1));
     }
 
-    private sealed class AlwaysUnsafe : IUrlReputationChecker
+    /// <summary>Flags ONLY the URL the test created. The re-check job claims every eligible link in the database,
+    /// so a blanket "unsafe" fake disables unrelated rows (this is how real dev links such as qwemkh got
+    /// "Flagged by re-check: MALWARE" when the suite ran against the dev database).</summary>
+    private sealed class UnsafeFor(string unsafeHost) : IUrlReputationChecker
     {
-        public Task<ReputationResult> CheckAsync(string url, CancellationToken ct) => Task.FromResult(new ReputationResult(false, "MALWARE"));
+        public Task<ReputationResult> CheckAsync(string url, CancellationToken ct) =>
+            Task.FromResult(Uri.TryCreate(url, UriKind.Absolute, out var u) && u.Host == unsafeHost
+                ? new ReputationResult(false, "MALWARE")
+                : new ReputationResult(true));
     }
 
     private sealed class AlwaysFailOpen : IUrlReputationChecker
@@ -175,7 +181,7 @@ public sealed class AbuseControlsTests : IDisposable
         // Never checked and not recently created enough to force recency-only selection is fine: SafetyCheckedAt
         // is null, which the job's WHERE clause always selects regardless of CreatedAt.
 
-        await MakeJob(new AlwaysUnsafe()).RunOnceAsync(default);
+        await MakeJob(new UnsafeFor("evil.example")).RunOnceAsync(default);
 
         var reloaded = await _db.Links.AsNoTracking().FirstAsync(l => l.Id == link.Id);
         Assert.Equal(DisabledKinds.Safety, reloaded.DisabledKind);

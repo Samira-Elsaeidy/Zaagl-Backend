@@ -4,6 +4,7 @@ using System.Text.RegularExpressions;
 using Microsoft.Extensions.Options;
 using Microsoft.Net.Http.Headers;
 using Zaagl.Modules.Files.Contracts;
+using Zaagl.Modules.Files.Infrastructure;
 using Zaagl.Modules.Resources.Application;
 using Zaagl.Modules.Resources.Contracts;
 using Zaagl.SharedKernel;
@@ -20,6 +21,7 @@ namespace Zaagl.Api.Infrastructure;
 public sealed partial class ObjectDelivery(
     IStoredObjects objects,
     IStoredObjectSummaries summaries,
+    IMediaMetadata media,
     IObjectStorage storage,
     IOptions<ContentOptions> options,
     IDownloadGrants grants,
@@ -42,15 +44,38 @@ public sealed partial class ObjectDelivery(
             return ApiResults.Problem(Error.Of(ErrorCodes.Gone, "This content is no longer available."));
         }
 
+        // A Preview ticket names a derivative (S3): its own file, type and size. It is served only here, after the original passed the
+        // clean-in-objects check above, and only when the derivative row is ready and its file has the recorded size. Never the original.
+        var serveKey = stored.StorageKey;
+        var serveSize = size.Value;
+        var serveMime = string.IsNullOrWhiteSpace(stored.DetectedMime) ? "application/octet-stream" : stored.DetectedMime;
+        string? serveName = null;
+        string? serveEtag = stored.Sha256.Length > 0 ? $"\"{Convert.ToHexStringLower(stored.Sha256)}\"" : null;
+        if (decision.Purpose == DeliveryPurpose.Preview)
+        {
+            var derivative = decision.Derivative is null ? null : await media.GetReadyDerivativeAsync(resource.ResourceId, decision.Derivative, ct);
+            var derivativeSize = derivative is null ? null : await storage.StatAsync(StorageKeys.Create(DerivativeArea(derivative.Kind), derivative.Id), ct);
+            if (derivative is null || derivative.Mime is not { Length: > 0 } derivativeMime || derivativeSize is null || derivativeSize.Value != derivative.SizeBytes)
+            {
+                logger.LogWarning("files_derivative_not_servable: resource {ResourceId} derivative {Kind}", resource.ResourceId, decision.Derivative);
+                return ApiResults.Problem(Error.Of(ErrorCodes.Gone, "This content is no longer available."));
+            }
+            serveKey = StorageKeys.Create(DerivativeArea(derivative.Kind), derivative.Id);
+            serveSize = derivativeSize.Value;
+            serveMime = derivativeMime;
+            serveName = derivative.Kind + (derivativeMime == "image/png" ? ".png" : ".webp");
+            serveEtag = $"\"{derivative.Id:N}\"";
+        }
+
         // Size and Range (response cap). Done before anything is counted or claimed, so a refusal consumes nothing. HEAD has no body
         // and is always allowed: it reports the size and Accept-Ranges so a client can plan its parts (ARC-008 section 5).
-        if (!isHead && size.Value > o.MaxResponseBytes && !RangeAcceptable(http.Request.Headers.Range.ToString(), size.Value, o.MaxResponseBytes))
+        if (!isHead && serveSize > o.MaxResponseBytes && !RangeAcceptable(http.Request.Headers.Range.ToString(), serveSize, o.MaxResponseBytes))
         {
             var refusal = ApiResults.Problem(Error.Of(ErrorCodes.RangeRequired, "This file needs a byte range of at most the per-response limit."));
             return new HeaderResult(refusal, h =>
             {
                 h.AcceptRanges = "bytes";
-                h.ContentRange = "bytes */" + size.Value.ToString(CultureInfo.InvariantCulture);
+                h.ContentRange = "bytes */" + serveSize.ToString(CultureInfo.InvariantCulture);
             });
         }
 
@@ -61,12 +86,12 @@ public sealed partial class ObjectDelivery(
             if (consumed.Outcome != DeliveryOutcome.Allowed) return Refusal(consumed.Outcome, http);
         }
 
-        var name = (await summaries.GetAsync([resource.ResourceId], ct)).GetValueOrDefault(resource.ResourceId)?.DisplayName ?? "file";
-        var mime = string.IsNullOrWhiteSpace(stored.DetectedMime) ? "application/octet-stream" : stored.DetectedMime;
+        var name = serveName ?? (await summaries.GetAsync([resource.ResourceId], ct)).GetValueOrDefault(resource.ResourceId)?.DisplayName ?? "file";
+        var mime = serveMime;
         var isInlinePurpose = decision.Purpose is DeliveryPurpose.Inline or DeliveryPurpose.Preview;
         var inline = isInlinePurpose && o.InlineMimeAllowlist.Contains(mime, StringComparer.OrdinalIgnoreCase);
         var disposition = ContentDispositionFor(inline, name);
-        var etag = stored.Sha256.Length > 0 ? $"\"{Convert.ToHexStringLower(stored.Sha256)}\"" : null;
+        var etag = serveEtag;
 
         var headers = http.Response.Headers;
         headers.ContentType = mime;
@@ -78,7 +103,7 @@ public sealed partial class ObjectDelivery(
 
         if (!o.DirectObjectServing)
         {
-            var internalPath = storage.GetInternalPath(stored.StorageKey); // refuses temp and quarantine
+            var internalPath = storage.GetInternalPath(serveKey); // refuses temp and quarantine
             if (!InternalPathPattern().IsMatch(internalPath)) throw new InvalidOperationException("The internal path is not in the allowed shape.");
             if (etag is not null) headers.ETag = etag;
             headers["X-Accel-Redirect"] = internalPath;
@@ -87,14 +112,17 @@ public sealed partial class ObjectDelivery(
 
         if (isHead)
         {
-            headers.ContentLength = size.Value;
+            headers.ContentLength = serveSize;
             if (etag is not null) headers.ETag = etag;
             return Results.Empty;
         }
-        var stream = await storage.OpenReadAsync(stored.StorageKey, 0, null, ct);
+        var stream = await storage.OpenReadAsync(serveKey, 0, null, ct);
         return Results.Stream(stream, mime, fileDownloadName: null, lastModified: null,
             entityTag: etag is null ? null : new EntityTagHeaderValue(etag), enableRangeProcessing: true);
     }
+
+    /// <summary>Derivative kinds and where their files live (ARC-011 section 3): thumbnails in <c>thumbnails/</c>, the rest in <c>previews/</c>.</summary>
+    private static StorageArea DerivativeArea(string kind) => kind is "thumb-320" or "poster" ? StorageArea.Thumbnails : StorageArea.Previews;
 
     /// <summary>The refusal of a consume step. Nothing was consumed for any of them.</summary>
     internal static IResult Refusal(DeliveryOutcome outcome, HttpContext http)

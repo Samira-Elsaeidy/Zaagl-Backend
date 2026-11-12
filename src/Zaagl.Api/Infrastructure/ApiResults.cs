@@ -16,7 +16,7 @@ public static class ApiResults
 
     public static int StatusFor(string code) => code switch
     {
-        ErrorCodes.Validation or ErrorCodes.CaptchaRequired or ErrorCodes.CaptchaInvalid
+        ErrorCodes.Validation or ErrorCodes.InvalidRequest or ErrorCodes.CaptchaRequired or ErrorCodes.CaptchaInvalid
             or ErrorCodes.UploadLengthRequired or ErrorCodes.ExpiryBeyondPlan => StatusCodes.Status400BadRequest,
         ErrorCodes.Unauthorized or ErrorCodes.InvalidCode or ErrorCodes.PasswordRequired => StatusCodes.Status401Unauthorized,
         ErrorCodes.PlanRequired => StatusCodes.Status402PaymentRequired,
@@ -46,6 +46,9 @@ public static class ApiResults
     /// <summary>Seconds a client waits before retrying a <see cref="ErrorCodes.Busy"/> answer (spec §7.0).</summary>
     public const int BusyRetryAfterSeconds = 1;
 
+    /// <summary>Seconds a client waits before retrying a <see cref="ErrorCodes.ServiceUnavailable"/> answer.</summary>
+    public const int UnavailableRetryAfterSeconds = 5;
+
     public static IResult Problem(Error error)
     {
         var problem = Results.Problem(
@@ -53,7 +56,12 @@ public static class ApiResults
             title: error.Message,
             type: ProblemType(error.Code),
             extensions: new Dictionary<string, object?> { ["code"] = error.Code });
-        return error.Code == ErrorCodes.Busy ? new WithRetryAfter(problem, BusyRetryAfterSeconds) : problem;
+        return error.Code switch
+        {
+            ErrorCodes.Busy => new WithRetryAfter(problem, BusyRetryAfterSeconds),
+            ErrorCodes.ServiceUnavailable => new WithRetryAfter(problem, UnavailableRetryAfterSeconds),
+            _ => problem,
+        };
     }
 
     private sealed class WithRetryAfter(IResult inner, int seconds) : IResult

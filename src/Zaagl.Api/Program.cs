@@ -51,6 +51,10 @@ var bodyLimits = config.GetSection(RequestBodyLimitOptions.Section).Get<RequestB
 builder.WebHost.ConfigureKestrel(o => bodyLimits.Apply(o.Limits));
 builder.Services.AddOpenApi();
 // BE-002: every problem body (ours and the framework's) carries type https://zaa.gl/problems/<code>, title, status, code.
+builder.Services.AddExceptionHandler<Zaagl.Api.Infrastructure.ApiExceptionHandler>();
+// Binding failures throw BadHttpRequestException in every environment (the default is Development only), so ApiExceptionHandler
+// turns all of them into the same 400 invalid_request problem+json instead of an empty framework 400 in production.
+builder.Services.Configure<Microsoft.AspNetCore.Routing.RouteHandlerOptions>(o => o.ThrowOnBadRequest = true);
 builder.Services.AddProblemDetails(o => o.CustomizeProblemDetails = ctx => ApiResults.Normalize(ctx.ProblemDetails));
 
 // Spec §7.13 (BE-030): forwarded headers are trusted only from Network:KnownProxies (exact addresses of the
@@ -270,6 +274,8 @@ if (args.Contains("migrate"))
 
 app.UseForwardedHeaders();
 app.UseSerilogRequestLogging();
+// Any exception that escapes an endpoint becomes a clean problem+json (ApiExceptionHandler), in every environment.
+app.UseExceptionHandler();
 app.UseHostRouting();
 
 if (app.Environment.IsDevelopment())

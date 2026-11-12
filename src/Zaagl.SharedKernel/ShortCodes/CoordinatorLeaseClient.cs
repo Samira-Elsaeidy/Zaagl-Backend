@@ -42,15 +42,24 @@ public sealed class CoordinatorLeaseClient(HttpClient http, string keyFingerprin
 
         var requestId = Guid.NewGuid();
         var request = new LeaseRequest(requestId, _nodeId, poolId, keyFingerprint);
-        var response = await http.PostAsJsonAsync("/v1/leases", request, ct);
+        HttpResponseMessage response;
+        try
+        {
+            response = await http.PostAsJsonAsync("/v1/leases", request, ct);
+        }
+        catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException && !ct.IsCancellationRequested)
+        {
+            throw new CoordinatorUnavailableException("The coordinator could not be reached: " + ex.Message, ex);
+        }
 
         if (response.StatusCode == HttpStatusCode.InsufficientStorage)
-            throw new InvalidOperationException("The code space is exhausted at the maximum length (10 characters); no more generated codes can be issued.");
+            throw new CoordinatorUnavailableException("The code space is exhausted at the maximum length (10 characters); no more generated codes can be issued.");
         if (response.StatusCode == HttpStatusCode.Conflict)
-            throw new InvalidOperationException("The coordinator rejected this lease request: key-mismatch or a reused request id with different data.");
+            throw new CoordinatorUnavailableException("The coordinator rejected this lease request: key-mismatch or a reused request id with different data.");
         if (response.StatusCode == HttpStatusCode.ServiceUnavailable)
-            throw new InvalidOperationException("The coordinator is not leasing right now (blocked or not initialised).");
-        response.EnsureSuccessStatusCode();
+            throw new CoordinatorUnavailableException("The coordinator is not leasing right now (blocked or not initialised).");
+        if (!response.IsSuccessStatusCode)
+            throw new CoordinatorUnavailableException($"The coordinator answered HTTP {(int)response.StatusCode} to a lease request.");
 
         var lease = await response.Content.ReadFromJsonAsync<LeaseResponse>(ct)
             ?? throw new InvalidOperationException("Coordinator returned an empty lease.");
@@ -69,4 +78,15 @@ public sealed class CoordinatorLeaseClient(HttpClient http, string keyFingerprin
     private sealed record LeaseRequest(Guid RequestId, string NodeId, string PoolId, string KeyFingerprint);
 
     private sealed record LeaseResponse(long LeaseId, string PoolId, int CodeLength, short KeyVersion, long StartNumber, long EndNumber);
+}
+
+/// <summary>
+/// The coordinator cannot hand out a block of numbers right now (down, not initialised, blocked, key mismatch or code space
+/// exhausted). It is an operational condition, not a caller mistake: the API answers a clean 503 with Retry-After and never echoes
+/// this message (it names internals). Still an <see cref="InvalidOperationException"/> so existing catch blocks keep working.
+/// </summary>
+public sealed class CoordinatorUnavailableException : InvalidOperationException
+{
+    public CoordinatorUnavailableException(string message) : base(message) { }
+    public CoordinatorUnavailableException(string message, Exception inner) : base(message, inner) { }
 }

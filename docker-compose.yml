@@ -37,6 +37,32 @@ services:
       timeout: 3s
       retries: 10
 
+  # One-shot, runs as root: makes sure the named volumes are owned by the services' uid/gid 10001. A volume first created
+  # by another image or an older build keeps its old owner, and the non-root coordinator then could not write
+  # /state/hwm.json (leases answered 503). It only changes ownership when the top-level owner differs and never
+  # removes or recreates a volume. Reuses the coordinator image (no extra pull).
+  volume-init:
+    build:
+      context: .
+      dockerfile: src/Zaagl.Coordinator/Dockerfile
+    container_name: zaagl-volume-init
+    user: "0:0"
+    entrypoint:
+      - sh
+      - -c
+      - |
+        mkdir -p /state/allocator-sink /srv/zaagl/storage
+        # /state is tiny: fix it whenever anything inside is not owned by 10001 (e.g. a hwm.json written as another uid).
+        if [ -n "$$(find /state ! -uid 10001 -print -quit)" ]; then chown -R 10001:10001 /state; fi
+        # The object store can be large: only the mount root is checked (new files are always written as 10001).
+        [ "$$(stat -c %u:%g /srv/zaagl/storage)" = "10001:10001" ] || chown -R 10001:10001 /srv/zaagl/storage
+    volumes:
+      - coordstate:/state
+      - storage:/srv/zaagl/storage
+    networks:
+      - backend
+    restart: "no"
+
   # Spec §3 `migrator`: one-shot, applies every module's EF Core migrations, exits 0. Not run by default;
   # `docker compose run --rm migrator` (or it runs automatically via `depends_on: condition:
   # service_completed_successfully` on api/coordinator below).
@@ -77,6 +103,8 @@ services:
       - coordstate:/state
     depends_on:
       migrator:
+        condition: service_completed_successfully
+      volume-init:
         condition: service_completed_successfully
     networks:
       - backend
@@ -131,6 +159,8 @@ services:
     depends_on:
       migrator:
         condition: service_completed_successfully
+      volume-init:
+        condition: service_completed_successfully
       coordinator:
         condition: service_healthy
     networks:
@@ -166,6 +196,8 @@ services:
       - storage:/srv/zaagl/storage
     depends_on:
       migrator:
+        condition: service_completed_successfully
+      volume-init:
         condition: service_completed_successfully
     networks:
       - backend

@@ -15,8 +15,9 @@ public sealed record FileClassification(DetectedType? Type, FileClass Class);
 /// <summary>
 /// The interim PD-16 policy (ARC-009 section 9.2, PD-16 OPEN: configuration, not a decision). Detection reads only the first 64 KB of the
 /// bytes; the declared type is never an input and the file name is used only as an extra check on the display name, never for a path.
-/// Executables (PE, ELF, Mach-O, shebang scripts, .lnk, and a blocklisted extension) are refused for guests and Free; encrypted ZIP and
-/// RAR archives are refused for everyone. 7z is not inspected here (its header flag lives at the tail); clamd AlertEncrypted is the backstop.
+/// Executables (PE, ELF, Mach-O, shebang scripts, .lnk, and a blocklisted extension) are refused for guests and Free; encrypted ZIP,
+/// RAR and 7z archives are refused for everyone. 7z is a bounded check (see <see cref="IsEncrypted7z"/>): it only sees archives whose end header
+/// lies inside the first 64 KB; clamd AlertEncrypted is the backstop for the rest.
 /// </summary>
 public static class FileTypePolicy
 {
@@ -100,6 +101,36 @@ public static class FileTypePolicy
             var next = 7 + size;
             if (next >= 7 && next + 7 <= head.Length && head[next + 2] == 0x74
                 && (BinaryPrimitives.ReadUInt16LittleEndian(head.Slice(next + 3, 2)) & 0x0004) != 0) return true;
+        }
+        return IsEncrypted7z(head);
+    }
+
+    private static readonly byte[] SevenZipSignature = [0x37, 0x7A, 0xBC, 0xAF, 0x27, 0x1C];
+
+    /// <summary>
+    /// Bounded 7z check. A 7z archive keeps its (possibly LZMA-compressed) header at the tail; the 32 byte signature header at the front only says where.
+    /// The AES coder id (06 F1 07 01) appears in clear in a plain header and in the stream info of an encoded header, so when the whole next header
+    /// lies inside <paramref name="head"/> it is scanned for a coder record carrying that id (flag byte: id size 4, not a complex coder).
+    /// Limits, by design (full detection needs extraction): (1) a next header beyond the first 64 KB is not seen; (2) when only file data is
+    /// encrypted and the header is LZMA-compressed (7-Zip's default, -mhe=off), the coders sit inside the compressed header and are not visible.
+    /// Header-encrypted archives (-mhe=on) store the AES coder in the clear encoded-header stream info, so they are found whenever (1) holds.
+    /// </summary>
+    public static bool IsEncrypted7z(ReadOnlySpan<byte> head)
+    {
+        if (head.Length < 32 || !head[..6].SequenceEqual(SevenZipSignature)) return false;
+        var offset = BinaryPrimitives.ReadUInt64LittleEndian(head.Slice(12, 8));
+        var size = BinaryPrimitives.ReadUInt64LittleEndian(head.Slice(20, 8));
+        if (size == 0 || offset > (ulong)head.Length || size > (ulong)head.Length) return false;
+        var start = 32 + (long)offset;
+        var end = start + (long)size;
+        if (end > head.Length) return false;
+        var header = head[(int)start..(int)end];
+        // 0x01 Header (plain) or 0x17 EncodedHeader; anything else is not a header.
+        if (header.Length == 0 || header[0] is not (0x01 or 0x17)) return false;
+        for (var i = 0; i + 5 <= header.Length; i++)
+        {
+            if ((header[i] & 0x1F) == 0x04 && header[i + 1] == 0x06 && header[i + 2] == 0xF1 && header[i + 3] == 0x07 && header[i + 4] == 0x01)
+                return true;
         }
         return false;
     }

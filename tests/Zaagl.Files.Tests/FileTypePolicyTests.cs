@@ -69,6 +69,43 @@ public sealed class FileTypePolicyTests
         Assert.Equal("image/png", FileTypePolicy.Classify([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0]).Type!.Mime);
     }
 
+    private static byte[] SevenZip(byte[] header, int padBefore = 0)
+    {
+        var b = new byte[32 + padBefore + header.Length];
+        new byte[] { 0x37, 0x7A, 0xBC, 0xAF, 0x27, 0x1C, 0, 4 }.CopyTo(b, 0);
+        BitConverter.GetBytes((ulong)padBefore).CopyTo(b, 12);
+        BitConverter.GetBytes((ulong)header.Length).CopyTo(b, 20);
+        header.CopyTo(b, 32 + padBefore);
+        return b;
+    }
+
+    [Fact]
+    public void Encrypted_7z_is_found_by_the_aes_coder_in_the_next_header_and_a_plain_one_is_not()
+    {
+        // EncodedHeader (0x17) whose folder coder is AES: flag 0x24 (id size 4, has props), id 06F10701.
+        byte[] encrypted = [0x17, 0x06, 0x00, 0x01, 0x09, 0x10, 0x00, 0x07, 0x0B, 0x01, 0x00, 0x01, 0x24, 0x06, 0xF1, 0x07, 0x01, 0x03, 0x01, 0x02, 0x03, 0x00];
+        var c = FileTypePolicy.Classify(SevenZip(encrypted, padBefore: 40));
+        Assert.Equal(FileClass.EncryptedArchive, c.Class);
+        Assert.Null(c.Type);
+        // The same shape with an LZMA coder (030101) is an ordinary 7z.
+        byte[] plain = [0x17, 0x06, 0x00, 0x01, 0x09, 0x10, 0x00, 0x07, 0x0B, 0x01, 0x00, 0x01, 0x23, 0x03, 0x01, 0x01, 0x05, 0x5D, 0, 0, 0x10, 0x00, 0x00];
+        var other = FileTypePolicy.Classify(SevenZip(plain, padBefore: 40));
+        Assert.Equal(FileClass.Other, other.Class);
+        Assert.Equal("application/x-7z-compressed", other.Type!.Mime);
+    }
+
+    [Fact]
+    public void The_7z_check_is_bounded_a_header_outside_the_head_or_a_malformed_one_is_not_flagged()
+    {
+        byte[] encrypted = [0x17, 0x24, 0x06, 0xF1, 0x07, 0x01];
+        var beyond = SevenZip(encrypted);
+        BitConverter.GetBytes(10_000_000UL).CopyTo(beyond, 12); // header far past the first 64 KB
+        Assert.False(FileTypePolicy.IsEncrypted7z(beyond));
+        Assert.False(FileTypePolicy.IsEncrypted7z(SevenZip([0x99, 0x24, 0x06, 0xF1, 0x07, 0x01]))); // not a header id
+        Assert.False(FileTypePolicy.IsEncrypted7z([0x37, 0x7A, 0xBC, 0xAF, 0x27, 0x1C, 0, 4]));       // truncated
+        Assert.True(FileTypePolicy.IsEncrypted7z(SevenZip(encrypted)));
+    }
+
     [Fact]
     public void Executables_are_blocked_for_guests_and_free_by_default_and_the_list_is_configuration()
     {

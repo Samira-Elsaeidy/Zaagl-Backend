@@ -37,6 +37,8 @@ public sealed class ApiScopeTests(RealApiFactory real) : IAsyncLifetime, IClassF
     {
         ["GET /{slug:redirect}"] = "short-host redirect",
         ["HEAD /{slug:redirect}"] = "short-host redirect",
+        ["GET /{**path:nonfile}"] = "short-host branded 404 page for unmatched browser paths",
+        ["HEAD /{**path:nonfile}"] = "short-host branded 404 page for unmatched browser paths",
         ["* /health"] = "infrastructure",
         ["* /health/live"] = "infrastructure",
         ["* /health/ready"] = "infrastructure",
@@ -103,7 +105,7 @@ public sealed class ApiScopeTests(RealApiFactory real) : IAsyncLifetime, IClassF
                              typeof(Zaagl.Modules.Resources.Contracts.IDownloadGrants), typeof(Zaagl.Modules.Resources.Contracts.IResourceRegistry),
                              typeof(Zaagl.Modules.Resources.Application.OwnerResources), typeof(Zaagl.Modules.Files.Contracts.IStoredObjectSummaries),
                              typeof(Zaagl.Modules.Resources.Contracts.IContentQuota), typeof(Zaagl.Modules.Billing.Contracts.IContentPlanProvider),
-                             typeof(Zaagl.Modules.Files.Contracts.IUploadStats),
+                             typeof(Zaagl.Modules.Files.Contracts.IUploadStats), typeof(Zaagl.Modules.Files.Contracts.IMediaMetadata),
                          })
                     services.AddPlaceholder(type);
             },

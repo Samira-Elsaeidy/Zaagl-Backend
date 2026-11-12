@@ -1,7 +1,9 @@
 using Zaagl.Api.Infrastructure;
 using Microsoft.Extensions.Options;
 using Zaagl.Modules.Access.Application;
+using Zaagl.Modules.Files.Application;
 using Zaagl.Modules.Files.Contracts;
+using Zaagl.Modules.Files.Infrastructure;
 using Zaagl.Modules.Resources.Application;
 using Zaagl.Modules.Access.Contracts;
 using Zaagl.Modules.Links.Application;
@@ -51,8 +53,8 @@ public static class PublicContentEndpoints
 
         content.MapGet("/{code}", async (
                 string code, HttpContext http, IAccessGate gate, ILinkResolver links, IResourceRegistry registry,
-                ISnippetReader reader, IDownloadGrants grants, IStoredObjectSummaries objects, IOptions<ContentOptions> content,
-                CancellationToken ct) =>
+                ISnippetReader reader, IDownloadGrants grants, IStoredObjectSummaries objects, IMediaMetadata mediaMeta, IOptions<ContentOptions> content,
+                IOptions<MediaOptions> mediaOptions, CancellationToken ct) =>
             {
                 // ARC-003 §4.1: private, no-store and noindex on every answer, errors included.
                 http.Response.Headers.CacheControl = "private, no-store";
@@ -89,7 +91,7 @@ public static class PublicContentEndpoints
                     return await FileDescriptorAsync(resource, expiresAt, hasPassword, objects, content.Value, ct);
 
                 if (gated.Kind == LinkTargetKind.Media)
-                    return await MediaDescriptorAsync(resource, expiresAt, hasPassword, objects, content.Value, grants, ct);
+                    return await MediaDescriptorAsync(resource, expiresAt, hasPassword, objects, mediaMeta, content.Value, mediaOptions.Value, grants, ct);
 
                 var view = await reader.GetViewAsync(resourceId, null, ct);
                 if (view is null) return ApiResults.NotFound();
@@ -143,7 +145,7 @@ public static class PublicContentEndpoints
     }
 
     /// <summary>File descriptor (ARC-019 section 11.1): the card data and never a URL of any kind. <c>burnAfterDownload</c> tells the page to show the
-    /// once-only notice; the ticket exists only behind the button's POST. The hash is not exposed (addendum OPEN).</summary>
+    /// once-only notice; the ticket exists only behind the button's POST. `sha256` is the hex of the stored bytes (set by the scan task, so present once Clean).</summary>
     private static async Task<IResult> FileDescriptorAsync(
         ResourceDescriptor resource, DateTime expiresAt, bool hasPassword, IStoredObjectSummaries objects, ContentOptions content, CancellationToken ct)
     {
@@ -153,29 +155,40 @@ public static class PublicContentEndpoints
         var mime = summary.DetectedMime ?? "application/octet-stream";
         return Results.Ok(new ContentDescriptorDto("file", "ready", resource.Title, summary.SizeBytes, mime, summary.DisplayName, expiresAt,
             resource.BurnAfterDownload, hasPassword, null, null, null, null, null,
-            new FileBlockDto(mime, summary.SizeBytes, null, content.MaxResponseBytes)));
+            new FileBlockDto(mime, summary.SizeBytes, summary.Sha256, content.MaxResponseBytes)));
     }
 
-    /// <summary>Media descriptor (ARC-011 section 9, S1): the original behind an Inline ticket, the detected type, no derivatives.
+    /// <summary>Media descriptor (ARC-011 section 9, S1): the original behind an Inline ticket, the detected type, and from S3 the probe result and the thumbnail ticket.
     /// <c>mime</c> and <c>filename</c> come from the stored object; nothing here ever contains a download URL.</summary>
     private static async Task<IResult> MediaDescriptorAsync(
-        ResourceDescriptor resource, DateTime expiresAt, bool hasPassword, IStoredObjectSummaries objects, ContentOptions content,
-        IDownloadGrants grants, CancellationToken ct)
+        ResourceDescriptor resource, DateTime expiresAt, bool hasPassword, IStoredObjectSummaries objects, IMediaMetadata mediaMeta, ContentOptions content,
+        MediaOptions mediaOptions, IDownloadGrants grants, CancellationToken ct)
     {
         var summary = (await objects.GetAsync([resource.ResourceId], ct)).GetValueOrDefault(resource.ResourceId);
         // Fail closed: a ready media resource whose object row is missing, or not scanned clean, is not served.
         if (summary is null || summary.Scan != ScanVerdict.Clean || summary.DetectedMime is not { } mime)
             return ApiResults.Problem(Error.Of(ErrorCodes.Gone, "This content is no longer available."));
 
+        var meta = (await mediaMeta.GetAsync([resource.ResourceId], ct)).GetValueOrDefault(resource.ResourceId);
         string? inlineUrl = null;
-        if (content.InlineMimeAllowlist.Contains(mime, StringComparer.OrdinalIgnoreCase) && !resource.BurnAfterDownload)
+        // ARC-011 section 6: an image the probe measured above Media:MaxInlinePixels is download-only (a browser tab can fail on it).
+        if (content.InlineMimeAllowlist.Contains(mime, StringComparer.OrdinalIgnoreCase) && !resource.BurnAfterDownload
+            && !ResourcesEndpoints.ExceedsInlinePixels(meta, mediaOptions))
         {
             var ticket = await grants.MintAsync(new MintTicketRequest(resource.ResourceId, DeliveryPurpose.Inline, null), ct);
             if (!ticket.IsSuccess) return ApiResults.Problem(ticket.Error!);
             inlineUrl = ticket.Value!.Url;
         }
+        // S3: the probe result and a short-lived Preview ticket on thumb-320 (also as previewUrl). Burn files have none; a visitor never sees
+        // a derivative that is not ready.
+        string? thumbUrl = null;
+        if (!resource.BurnAfterDownload && meta?.Derivatives.Any(d => d.Kind == MediaPreviewTaskHandler.DerivativeKindThumb && d.Status == "ready") == true)
+        {
+            var thumb = await grants.MintAsync(new MintTicketRequest(resource.ResourceId, DeliveryPurpose.Preview, MediaPreviewTaskHandler.DerivativeKindThumb), ct);
+            if (thumb.IsSuccess) thumbUrl = thumb.Value!.Url;
+        }
         return Results.Ok(new ContentDescriptorDto("media", "ready", resource.Title, summary.SizeBytes, mime, summary.DisplayName, expiresAt,
-            false, hasPassword, inlineUrl, null, null, null, ResourcesEndpoints.MediaBlock(mime), null));
+            false, hasPassword, inlineUrl, thumbUrl, null, null, ResourcesEndpoints.MediaBlock(mime, meta, thumbUrl), null));
     }
 
     private static string? Header(HttpContext http, string name)

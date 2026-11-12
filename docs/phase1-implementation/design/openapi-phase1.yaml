@@ -541,8 +541,9 @@ paths:
       summary: The caller's content library (keyset pagination, newest first).
       description: |
         Owner only; every kind, every state except purgeable. Ordered by `createdAt` descending then `id` descending
-        (index `(owner_id, created_at DESC)`); the cursor is opaque. `thumbnailUrl` is null until S3 (no per-row ticket
-        is minted in S1, so a page costs no grant rows). The link key is never returned here (only at creation).
+        (index `(owner_id, created_at DESC)`); the cursor is opaque. S3: `thumbnailUrl` is a `preview` ticket on the `thumb-320`
+        derivative of each ready, non-burn image that has one (one grant row per such item, 15 minutes), and `media` (displayed
+        size, alpha, frames, derivative status) is present on a media item once the worker probed it; both are null/absent otherwise. The link key is never returned here (only at creation).
         Guests have no library. Items are cheap: no kind-specific query beyond the summary blocks.
       x-zaagl-auth: [J, "K(resources:read)"]
       x-zaagl-scopes: [resources:read]
@@ -1374,9 +1375,11 @@ components:
     MediaDto:
       type: object
       description: |
-        S1 (plain images): `mediaType`, `detectedMime`, `browserPlayable: true` and an empty `derivatives`; every other
-        field is null because the probe and derivatives arrive in S3 (ARC-011 §3.1). `width` and `height` are the
-        displayed size (after EXIF orientation).
+        `mediaType`, `detectedMime`, `browserPlayable: true` always. S3: once the `media-preview` task probed the original
+        (PNG, JPEG, GIF, WebP only), `width`/`height` (the displayed size, after EXIF orientation), `hasAlpha`, `orientation`
+        (original EXIF value 1-8), `frameCount` and `mediaType: animatedImage` (more than one frame) are set, and `derivatives`
+        lists `thumb-320` (`ready` with a preview `url`, or `skipped` above `Media:MaxPixels`, or `failed`). An unreadable image
+        keeps the null fields and the viewer relies on the browser. The original is never modified (no EXIF stripping, no wire field for it: PD-13 OPEN).
       required: [mediaType, detectedMime, browserPlayable, derivatives]
       properties:
         mediaType: { $ref: '#/components/schemas/MediaType' }
@@ -1420,7 +1423,7 @@ components:
           properties:
             detectedMime: { type: string }
             sizeBytes: { type: integer }
-            sha256: { type: [string, 'null'], description: 'Hex. Whether to expose it publicly is OPEN.' }
+            sha256: { type: [string, 'null'], description: 'Hex SHA-256 of the stored bytes. Set by the scan task, so null while processing and present once clean.' }
             singleResponseLimitBytes: { type: [integer, 'null'], description: 'Content:MaxResponseBytes (to confirm, proposed 90,000,000). A file larger than this needs Range parts; how the browser assembles them is OPEN (ARC-008 Q1). Null when unknown.', x-zaagl-status: 'OPEN (ARC-008)' }
 
     UnlockRequest:
@@ -1454,7 +1457,8 @@ components:
         processingStatus: { $ref: '#/components/schemas/ProcessingStatus' }
         filename: { type: [string, 'null'], description: 'Sanitised display name (files and media), never a path.' }
         mime: { type: [string, 'null'], description: 'Detected type (files and media).' }
-        thumbnailUrl: { type: [string, 'null'], description: 'Preview ticket URL for a thumb-320 derivative. Null until S3 and always null for burn files.', x-zaagl-slice: S3 }
+        thumbnailUrl: { type: [string, 'null'], description: 'Preview ticket URL (15 minutes) for a ready thumb-320 derivative. Null until the media-preview task made one, when it was skipped or failed (oversized or undecodable image), and always for burn files.', x-zaagl-slice: S3 }
+        media: { oneOf: [{ $ref: '#/components/schemas/MediaDto' }, { type: 'null' }], description: 'S3, additive: in the list only for a media item that was probed (always in the detail).' }
         sizeBytes: { type: integer }
         expiresAt: { type: string, format: date-time }
         purgeAfter: { type: [string, 'null'], format: date-time }

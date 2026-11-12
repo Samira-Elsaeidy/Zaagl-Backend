@@ -586,7 +586,7 @@ public sealed class IdentityService(
 
     public async Task<PagedResult<AdminUserDto>> AdminListUsersAsync(string? email, int page, int pageSize, CancellationToken ct)
     {
-        page = Math.Max(1, page);
+        page = Math.Clamp(page, 1, 1_000_000); // an unbounded page would overflow (page - 1) * pageSize
         pageSize = Math.Clamp(pageSize, 1, 100);
 
         var q = db.Users.AsNoTracking().AsQueryable();

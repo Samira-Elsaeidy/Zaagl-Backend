@@ -187,7 +187,18 @@ public sealed partial class LinkService(
             }
             else
             {
-                var (length, number) = await leases.NextAsync(ct);
+                int length;
+                long number;
+                try
+                {
+                    (length, number) = await leases.NextAsync(ct);
+                }
+                catch (CoordinatorUnavailableException ex)
+                {
+                    // Operational, not a caller error: a clean 503 (callers abort what they reserved), details only in the log.
+                    logger?.LogError(ex, "link_issuer_unavailable: the coordinator cannot lease a block of numbers");
+                    return Error.ServiceUnavailable("Creating links is temporarily unavailable. Please try again in a moment.");
+                }
                 var generated = codes.Encode(length, number);
                 if (SlugRules.IsReserved(generated)) continue; // skipped per spec §7.2 step 6; the number is simply not reused for a slug
                 slug = generated;
@@ -497,6 +508,8 @@ public sealed partial class LinkService(
             return Error.Validation("renewal-must-extend: the new expiry must be later than the current one.");
         if (newExpiry <= now)
             return Error.Validation("The new expiry must be in the future.");
+        if (newExpiry > LinkInputValidator.MaxExpiry)
+            return Error.Validation("The expiry date cannot be later than 2100-01-01.");
         if (limits.MaxExpiryDays is { } maxDays && newExpiry > now.AddDays(maxDays))
             return Error.Validation($"The new expiry cannot be more than {maxDays} days from now.");
 
@@ -563,7 +576,7 @@ public sealed partial class LinkService(
 
     public async Task<PagedResult<LinkDto>> ListAsync(Guid userId, ListLinksQuery query, CancellationToken ct)
     {
-        var page = Math.Max(1, query.Page);
+        var page = Math.Clamp(query.Page, 1, 1_000_000); // an unbounded page would overflow (page - 1) * pageSize
         var pageSize = Math.Clamp(query.PageSize, 1, 100);
 
         // Deleted links are owner-invisible per spec §4.3's state table ("Visible to owner: no").
@@ -669,10 +682,16 @@ public sealed partial class LinkService(
             .Where(l => l.SlugKey == key)
             .Select(l => new { l.PurgeAfter, l.DeletedAt, l.DisabledAt, Expires = l.Policy != null ? l.Policy.ExpiresAt : null })
             .FirstOrDefaultAsync(ct);
-        if (row is null) return new(true, null);
+        if (row is not null
+            && LinkStateCalculator.Compute(row.PurgeAfter, row.DeletedAt, row.DisabledAt, row.Expires, now) != LinkState.Purgeable)
+            return new(false, "This slug is already taken.");
 
-        var state = LinkStateCalculator.Compute(row.PurgeAfter, row.DeletedAt, row.DisabledAt, row.Expires, now);
-        return state == LinkState.Purgeable ? new(true, null) : new(false, "This slug is already taken.");
+        // Spec §7.11: while an alias freeze is active no new alias can be claimed, so "free" would be a lie
+        // (creation would answer alias-frozen). One cached lookup; reported only for otherwise-free slugs.
+        if (await aliasFreeze.GetActiveFreezeAsync(ct) is { } freeze)
+            return new(false, $"New aliases are frozen until {freeze.Until:O}.", "alias-frozen", freeze.Until);
+
+        return new(true, null);
     }
 
     // ---- Admin (spec §7.9) -------------------------------------------------
@@ -1024,7 +1043,10 @@ public sealed partial class LinkService(
         l.TargetKind,
         l.ResourceId,
         $"{options.Value.BaseUrl.TrimEnd('/')}/{l.Slug}",
-        l.TargetKind switch { LinkTargetKind.Snippet => "snippet", LinkTargetKind.Media => "image", LinkTargetKind.File => "file", _ => "url" });
+        l.TargetKind switch { LinkTargetKind.Snippet => "snippet", LinkTargetKind.Media => "image", LinkTargetKind.File => "file", _ => "url" },
+        l.DisabledKind,
+        l.DisabledAt,
+        l.DisabledKind == DisabledKinds.Safety ? l.DisabledReason : null);
 
     private static string? Clean(string? value) => string.IsNullOrWhiteSpace(value) ? null : value.Trim();
 

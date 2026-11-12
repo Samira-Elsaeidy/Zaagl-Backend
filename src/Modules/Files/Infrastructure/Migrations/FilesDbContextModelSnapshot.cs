@@ -47,6 +47,112 @@ namespace Zaagl.Modules.Files.Infrastructure.Migrations
                         });
                 });
 
+            modelBuilder.Entity("Zaagl.Modules.Files.Domain.MediaDerivativeRow", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<short>("Area")
+                        .HasColumnType("smallint")
+                        .HasColumnName("area");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at");
+
+                    b.Property<int?>("Height")
+                        .HasColumnType("integer")
+                        .HasColumnName("height");
+
+                    b.Property<string>("Kind")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)")
+                        .HasColumnName("kind");
+
+                    b.Property<string>("Mime")
+                        .HasMaxLength(127)
+                        .HasColumnType("character varying(127)")
+                        .HasColumnName("mime");
+
+                    b.Property<string>("Reason")
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)")
+                        .HasColumnName("reason");
+
+                    b.Property<Guid>("ResourceId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("resource_id");
+
+                    b.Property<long?>("SizeBytes")
+                        .HasColumnType("bigint")
+                        .HasColumnName("size_bytes");
+
+                    b.Property<short>("Status")
+                        .HasColumnType("smallint")
+                        .HasColumnName("status");
+
+                    b.Property<int?>("Width")
+                        .HasColumnType("integer")
+                        .HasColumnName("width");
+
+                    b.HasKey("Id")
+                        .HasName("pk_media_derivatives");
+
+                    b.HasIndex("ResourceId", "Kind")
+                        .IsUnique()
+                        .HasDatabaseName("ix_media_derivatives_resource_id_kind");
+
+                    b.ToTable("media_derivatives", "files", t =>
+                        {
+                            t.HasCheckConstraint("ck_media_derivatives_status", "status IN (0, 1, 2, 3)");
+                        });
+                });
+
+            modelBuilder.Entity("Zaagl.Modules.Files.Domain.MediaItemRow", b =>
+                {
+                    b.Property<Guid>("ResourceId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("resource_id");
+
+                    b.Property<int?>("FrameCount")
+                        .HasColumnType("integer")
+                        .HasColumnName("frame_count");
+
+                    b.Property<bool?>("HasAlpha")
+                        .HasColumnType("boolean")
+                        .HasColumnName("has_alpha");
+
+                    b.Property<int?>("Height")
+                        .HasColumnType("integer")
+                        .HasColumnName("height");
+
+                    b.Property<short>("MediaType")
+                        .HasColumnType("smallint")
+                        .HasColumnName("media_type");
+
+                    b.Property<short?>("Orientation")
+                        .HasColumnType("smallint")
+                        .HasColumnName("orientation");
+
+                    b.Property<DateTime>("ProbedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("probed_at");
+
+                    b.Property<int?>("Width")
+                        .HasColumnType("integer")
+                        .HasColumnName("width");
+
+                    b.HasKey("ResourceId")
+                        .HasName("pk_media_items");
+
+                    b.ToTable("media_items", "files", t =>
+                        {
+                            t.HasCheckConstraint("ck_media_items_orientation", "orientation IS NULL OR orientation BETWEEN 1 AND 8");
+                        });
+                });
+
             modelBuilder.Entity("Zaagl.Modules.Files.Domain.StorageObjectRow", b =>
                 {
                     b.Property<Guid>("Id")

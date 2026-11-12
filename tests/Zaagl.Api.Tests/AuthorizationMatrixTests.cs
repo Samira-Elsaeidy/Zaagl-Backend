@@ -222,6 +222,8 @@ public static class AuthzOracle
     public static readonly Dictionary<string, Rule> Rules = new()
     {
         // ---- Short host / public / infrastructure
+        ["GET /{**path:nonfile}"] = new(Access.Anyone, Execute: false, Note: "short host branded 404 for unmatched browser paths"),
+        ["HEAD /{**path:nonfile}"] = new(Access.Anyone, Execute: false, Note: "short host branded 404 for unmatched browser paths"),
         ["GET /{slug:redirect}"] = new(Access.Anyone, Execute: false, Note: "short host; covered by QA-008"),
         ["HEAD /{slug:redirect}"] = new(Access.Anyone, Execute: false, Note: "short host; covered by QA-008"),
         ["* /health"] = new(Access.Anyone, Execute: false),

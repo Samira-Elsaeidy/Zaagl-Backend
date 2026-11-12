@@ -96,7 +96,8 @@ public static class AnalyticsEndpoints
                     return ApiResults.NotFound("No public stats for this link.");
 
                 var overview = await analytics.GetOverviewAsync(link.Id, AnalyticsRange.Last30Days, null, null, 30, ct);
-                return Results.Ok(new { link.Slug, link.Title, overview });
+                // Title is the owner's private library label: it must never appear on an unauthenticated response.
+                return Results.Ok(new { link.Slug, overview });
             })
             .WithTags("Analytics").AllowAnonymous();
     }

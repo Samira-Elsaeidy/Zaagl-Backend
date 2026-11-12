@@ -91,6 +91,16 @@ public sealed class DeleteBytesTaskHandler(FilesDbContext db, LocalObjectStorage
         var id = doc.RootElement.GetProperty("objectId").GetGuid();
         foreach (var area in new[] { StorageArea.Temp, StorageArea.Objects, StorageArea.Quarantine })
             await storage.DeleteAsync(StorageKeys.Create(area, id), ct);
+
+        // I6: derivatives live only as long as the resource. Files first, then rows, so a retry still finds the rows.
+        var resourceId = await db.StorageObjects.AsNoTracking().Where(o => o.Id == id).Select(o => (Guid?)o.ResourceId).FirstOrDefaultAsync(ct);
+        if (resourceId is { } rid)
+        {
+            foreach (var d in await db.MediaDerivatives.AsNoTracking().Where(d => d.ResourceId == rid).Select(d => new { d.Id, d.Area }).ToListAsync(ct))
+                await storage.DeleteAsync(StorageKeys.Create(d.Area, d.Id), ct);
+            await db.MediaDerivatives.Where(d => d.ResourceId == rid).ExecuteDeleteAsync(ct);
+            await db.MediaItems.Where(m => m.ResourceId == rid).ExecuteDeleteAsync(ct);
+        }
         await db.StorageObjects.Where(o => o.Id == id).ExecuteDeleteAsync(ct);
     }
 }

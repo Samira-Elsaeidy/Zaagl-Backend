@@ -226,7 +226,7 @@ public sealed class ReportService(LinksDbContext db, TimeProvider time)
 
     public async Task<(IReadOnlyList<AbuseReport> Items, int Total)> ListAsync(string? status, int page, int pageSize, CancellationToken ct)
     {
-        page = Math.Max(1, page);
+        page = Math.Clamp(page, 1, 1_000_000); // an unbounded page would overflow (page - 1) * pageSize
         pageSize = Math.Clamp(pageSize, 1, 100);
         var q = db.AbuseReports.AsNoTracking().AsQueryable();
         if (!string.IsNullOrWhiteSpace(status)) q = q.Where(r => r.Status == status);

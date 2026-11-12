@@ -85,13 +85,22 @@ public sealed record LinkDto(
     Guid? ResourceId = null,
     string? ShortUrl = null,
     /// <summary>S2 (additive): <c>url</c>, <c>snippet</c>, <c>image</c> or <c>file</c>, from <see cref="TargetKind"/>.</summary>
-    string Kind = "url");
+    string Kind = "url",
+    /// <summary>Additive: why the link stops resolving - <c>user-disabled</c>, <c>admin</c>, <c>abuse</c> or <c>safety</c>;
+    /// null while it is not disabled. Lets the owner's library show "Disabled" instead of "Active" for a link that serves 410.</summary>
+    string? DisabledKind = null,
+    DateTime? DisabledAt = null,
+    /// <summary>Additive: only for <c>safety</c> takedowns, whose reason is system text ("Flagged by re-check: MALWARE");
+    /// admin and abuse reasons can hold internal notes and are never returned to owners.</summary>
+    string? DisabledReason = null);
 
 public sealed record PagedResult<T>(IReadOnlyList<T> Items, int Total, int Page, int PageSize);
 
 public sealed record FolderDto(Guid Id, string Name, int LinkCount);
 
-public sealed record SlugAvailabilityDto(bool Available, string? Reason);
+/// <summary><c>Code</c> is a stable machine value when unavailable for a structured reason (<c>alias-frozen</c>, with
+/// <c>FrozenUntil</c> set); <c>Reason</c> stays the English fallback text. Both extras are additive.</summary>
+public sealed record SlugAvailabilityDto(bool Available, string? Reason, string? Code = null, DateTime? FrozenUntil = null);
 
 /// <summary>Spec §7.9: the admin link view - adds everything an owner's view intentionally hides.</summary>
 public sealed record AdminLinkDto(
@@ -280,7 +289,8 @@ public interface ILinkResolver
 
 public sealed record OwnedLink(Guid Id, string Slug);
 
-public sealed record PublicLink(Guid Id, string Slug, string? DestinationUrl, string? Title);
+/// <summary>Only what the public stats page may show. Deliberately carries no title, destination, tags or notes.</summary>
+public sealed record PublicLink(Guid Id, string Slug);
 
 public interface ILinkDirectory
 {

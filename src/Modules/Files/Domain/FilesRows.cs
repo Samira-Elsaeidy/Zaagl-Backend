@@ -58,3 +58,39 @@ public sealed class BlockedHashRow
     public string Reason { get; set; } = "";
     public DateTime CreatedAt { get; set; }
 }
+
+/// <summary><c>files.media_items</c> (ARC-011 section 3.1): what the probe learned from the original. Written by the
+/// <c>media-preview</c> task after <c>ready</c>; a failed probe leaves the dimension fields null.</summary>
+public sealed class MediaItemRow
+{
+    public Guid ResourceId { get; set; }
+    /// <summary>0 image, 1 animated image (the <c>MediaType</c> enum of the Media contracts).</summary>
+    public short MediaType { get; set; }
+    /// <summary>As stored (before EXIF orientation); the wire shows the displayed size.</summary>
+    public int? Width { get; set; }
+    public int? Height { get; set; }
+    /// <summary>The original EXIF orientation value 1-8.</summary>
+    public short? Orientation { get; set; }
+    public int? FrameCount { get; set; }
+    public bool? HasAlpha { get; set; }
+    public DateTime ProbedAt { get; set; }
+}
+
+/// <summary><c>files.media_derivatives</c>: one row per (resource, kind). The id is the storage object id of the derivative file in
+/// <c>thumbnails/</c> or <c>previews/</c>; a Skipped or Failed row has no file.</summary>
+public sealed class MediaDerivativeRow
+{
+    public Guid Id { get; set; }
+    public Guid ResourceId { get; set; }
+    public string Kind { get; set; } = "";
+    /// <summary>0 pending, 1 ready, 2 failed, 3 skipped (<c>DerivativeStatus</c>).</summary>
+    public short Status { get; set; }
+    public StorageArea Area { get; set; }
+    public int? Width { get; set; }
+    public int? Height { get; set; }
+    public long? SizeBytes { get; set; }
+    public string? Mime { get; set; }
+    /// <summary>Short machine reason for failed and skipped; owner support only, never on the wire.</summary>
+    public string? Reason { get; set; }
+    public DateTime CreatedAt { get; set; }
+}

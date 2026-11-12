@@ -48,7 +48,7 @@ public sealed class LinkResolver(LinksDbContext db, RedirectsDataSource redirect
         var key = SlugRules.Key(slug);
         return await db.Links.AsNoTracking()
             .Where(l => l.SlugKey == key && l.PublicStats)
-            .Select(l => new PublicLink(l.Id, l.Slug, l.DestinationUrl, l.Title))
+            .Select(l => new PublicLink(l.Id, l.Slug))
             .FirstOrDefaultAsync(cancellationToken);
     }
 

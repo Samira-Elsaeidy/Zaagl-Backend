@@ -14,6 +14,8 @@ public sealed class FilesDbContext(DbContextOptions<FilesDbContext> options) : D
     public DbSet<UploadSessionRow> UploadSessions => Set<UploadSessionRow>();
     public DbSet<StorageObjectRow> StorageObjects => Set<StorageObjectRow>();
     public DbSet<BlockedHashRow> BlockedHashes => Set<BlockedHashRow>();
+    public DbSet<MediaItemRow> MediaItems => Set<MediaItemRow>();
+    public DbSet<MediaDerivativeRow> MediaDerivatives => Set<MediaDerivativeRow>();
 
     protected override void OnModelCreating(ModelBuilder b)
     {
@@ -60,6 +62,25 @@ public sealed class FilesDbContext(DbContextOptions<FilesDbContext> options) : D
             e.Property(x => x.ScanSignature).HasMaxLength(255);
             e.Property(x => x.ScanEngine).HasMaxLength(100);
             e.HasIndex(x => x.Sha256).HasFilter("sha256 IS NOT NULL").HasDatabaseName("ix_storage_objects_sha256");
+        });
+
+        b.Entity<MediaItemRow>(e =>
+        {
+            e.ToTable("media_items", t => t.HasCheckConstraint("ck_media_items_orientation", "orientation IS NULL OR orientation BETWEEN 1 AND 8"));
+            e.HasKey(x => x.ResourceId);
+            e.Property(x => x.ResourceId).ValueGeneratedNever();
+        });
+
+        b.Entity<MediaDerivativeRow>(e =>
+        {
+            e.ToTable("media_derivatives", t => t.HasCheckConstraint("ck_media_derivatives_status", "status IN (0, 1, 2, 3)"));
+            e.HasKey(x => x.Id);
+            e.Property(x => x.Id).ValueGeneratedNever();
+            e.Property(x => x.Kind).HasMaxLength(32).IsRequired();
+            e.Property(x => x.Area).HasConversion<short>();
+            e.Property(x => x.Mime).HasMaxLength(127);
+            e.Property(x => x.Reason).HasMaxLength(64);
+            e.HasIndex(x => new { x.ResourceId, x.Kind }).IsUnique();
         });
 
         b.Entity<BlockedHashRow>(e =>

@@ -43,17 +43,34 @@
   .note { color: var(--muted); font-size: .9rem; }
   ul { margin: 6px 0 0; padding-left: 20px; }
   footer { margin-top: 36px; color: var(--muted); font-size: .85rem; }
+  .tabs-radio { position: absolute; opacity: 0; pointer-events: none; }
+  .tabbar { display: flex; gap: 4px; border-bottom: 1px solid var(--line); margin-bottom: 20px; }
+  .tabbar label { padding: 9px 18px; cursor: pointer; font-weight: 600; color: var(--muted); border-bottom: 3px solid transparent; }
+  .panel { display: none; }
+  #t1:checked ~ #p-status, #t2:checked ~ #p-test { display: block; }
+  #t1:checked ~ .tabbar label[for="t1"], #t2:checked ~ .tabbar label[for="t2"] { color: var(--fg); border-bottom-color: var(--note); }
+  #t1:focus-visible ~ .tabbar label[for="t1"], #t2:focus-visible ~ .tabbar label[for="t2"] { outline: 2px solid var(--note); }
+  .count { display: inline-block; margin-right: 12px; font-size: .9rem; color: var(--muted); }
 </style>
 </head>
 <body>
 <main>
   <h1>Zaagl Phase 1 Status</h1>
-  <p class="sub">Updated 2026-11-10</p>
+  <p class="sub">Updated 2026-11-12</p>
 
+  <input class="tabs-radio" type="radio" name="tab" id="t1" checked aria-label="Status tab">
+  <input class="tabs-radio" type="radio" name="tab" id="t2" aria-label="Testing tab">
+  <div class="tabbar" role="tablist">
+    <label for="t1">Status</label>
+    <label for="t2">Testing and bugs</label>
+  </div>
+
+  <div class="panel" id="p-status">
   <div class="banner">
-    <strong>How to read this.</strong> “Built” means the code exists and its own tests pass, but it is
-    <strong>uncommitted</strong> and has <strong>not run end to end on the real stack</strong>.
-    The 503 “KeyMismatch” error (creating any link or snippet) blocks that.
+    <strong>How to read this.</strong> The stack now runs end to end. The key problem is fixed, and snippets, images and files
+    passed <strong>two rounds of browser testing</strong> (see <code>TEST_REPORT.html</code>). “Built” still means the code exists and its tests pass.
+    The last pushed commits are backend <code>3aa25e0</code> and frontend <code>ac4af87</code>. <strong>Everything done since then is uncommitted</strong>:
+    thumbnails, the 7z check, SHA-256, all bug fixes from testing, and the UI polish.
   </div>
 
   <div class="legend">
@@ -82,22 +99,23 @@
     <tr><td>CLI: <code>login</code>, <code>logout</code>, <code>whoami</code>, <code>link</code>, <code>paste</code>, <code>ls</code>, <code>config</code></td><td class="s"><span class="tag done">Built, fake-server tests only</span></td></tr>
     <tr><td>Device login (<code>/activate</code> and its backend)</td><td class="s"><span class="tag done">Built</span></td></tr>
     <tr><td>Guest limits: 30 per hour, 60 per day</td><td class="s"><span class="tag done">Built (backend)</span></td></tr>
-    <tr><td>Guest snippet creation on the web</td><td class="s"><span class="tag todo">Not done</span> <span class="note">CAPTCHA not wired</span></td></tr>
+    <tr><td>Guest snippet creation on the web</td><td class="s"><span class="tag todo">Not done</span> <span class="note">needs the CAPTCHA below</span></td></tr>
+    <tr><td>CAPTCHA settings in an admin control panel (instead of requiring a Google API key)</td><td class="s"><span class="tag todo">Not done</span> <span class="note">new, from the head of tech</span></td></tr>
     <tr><td>Visitors seeing older versions</td><td class="s"><span class="tag block">Your decision</span></td></tr>
-    <tr><td>CLI Windows AOT build</td><td class="s"><span class="tag todo">Not done</span> <span class="note">needs C++ tools</span></td></tr>
-    <tr><td>CLI Linux credential store, macOS check</td><td class="s"><span class="tag todo">Not done</span></td></tr>
-    <tr><td>CLI build job in CI</td><td class="s"><span class="tag todo">Not done</span></td></tr>
+    <tr><td>CLI Windows AOT build</td><td class="s"><span class="tag block">Moved to Phase 2</span></td></tr>
+    <tr><td>CLI Linux credential store, macOS check</td><td class="s"><span class="tag block">Moved to Phase 2</span></td></tr>
+    <tr><td>CLI build job in CI</td><td class="s"><span class="tag block">Moved to Phase 2</span></td></tr>
   </table></div>
 
   <h2>E1.2 Images and media</h2>
   <div class="table-wrap"><table>
     <tr><th>Sub-feature</th><th>Status</th></tr>
     <tr><td>tus resumable uploads</td><td class="s"><span class="tag done">Built</span></td></tr>
-    <tr><td>Virus scan (ClamAV, fail-closed) and quarantine</td><td class="s"><span class="tag done">Built</span> <span class="note">ClamAV never ran a real scan</span></td></tr>
+    <tr><td>Virus scan (ClamAV, fail-closed) and quarantine</td><td class="s"><span class="tag done">Built</span> <span class="note">real scan blocked the EICAR test file</span></td></tr>
     <tr><td>Image viewer with background switcher and loupe</td><td class="s"><span class="tag done">Built</span></td></tr>
-    <tr><td><code>/files</code> library and uploader</td><td class="s"><span class="tag done">Built</span> <span class="note">no thumbnails</span></td></tr>
+    <tr><td><code>/files</code> library and uploader</td><td class="s"><span class="tag done">Built</span> <span class="note">with thumbnails</span></td></tr>
     <tr><td>PNG, JPEG, GIF, WebP</td><td class="s"><span class="tag done">Built</span></td></tr>
-    <tr><td>Thumbnails and metadata</td><td class="s"><span class="tag todo">Not done</span></td></tr>
+    <tr><td>Thumbnails (320 px WebP) and image metadata</td><td class="s"><span class="tag done">Built, not committed</span></td></tr>
     <tr><td>SVG, video, PDF preview</td><td class="s"><span class="tag block">Your decisions</span></td></tr>
     <tr><td>EXIF and GPS option</td><td class="s"><span class="tag block">Your decision</span></td></tr>
   </table></div>
@@ -107,18 +125,30 @@
     <tr><th>Sub-feature</th><th>Status</th></tr>
     <tr><td>Design for burn, expiry, quota</td><td class="s"><span class="tag done">Done (docs)</span></td></tr>
     <tr><td>Frontend: download page <code>/f/[slug]</code>, owner page, guest upload, uploader for any file, quota meter</td><td class="s"><span class="tag done">Built</span></td></tr>
-    <tr><td>File uploads (non-image) on the backend</td><td class="s"><span class="tag prog">In progress</span></td></tr>
-    <tr><td>Burn after download (claim wired into delivery)</td><td class="s"><span class="tag prog">In progress</span></td></tr>
-    <tr><td>Expiry and purge</td><td class="s"><span class="tag prog">In progress</span></td></tr>
-    <tr><td>Quotas and cleanup</td><td class="s"><span class="tag prog">In progress</span></td></tr>
-    <tr><td>Guest uploads</td><td class="s"><span class="tag prog">In progress</span></td></tr>
-    <tr><td>Takedown for infected files</td><td class="s"><span class="tag prog">In progress</span></td></tr>
+    <tr><td>File uploads (non-image) on the backend, with the file type policy</td><td class="s"><span class="tag done">Built</span></td></tr>
+    <tr><td>Burn after download (exactly one of many parallel downloads wins; 15 rounds × 40 requests)</td><td class="s"><span class="tag done">Built</span></td></tr>
+    <tr><td>Expiry and purge</td><td class="s"><span class="tag done">Built</span></td></tr>
+    <tr><td>Quotas and cleanup (reconciliation, orphan sweep)</td><td class="s"><span class="tag done">Built</span></td></tr>
+    <tr><td>Guest uploads (CAPTCHA, 30 per hour, 60 per day)</td><td class="s"><span class="tag done">Built</span> <span class="note">Turnstile never tested for real</span></td></tr>
+    <tr><td>Takedown for infected files</td><td class="s"><span class="tag done">Built</span></td></tr>
+    <tr><td>7z encryption check, sha256 on the public file page</td><td class="s"><span class="tag done">Built, not committed</span> <span class="note">7z check only sees clear-text headers; ClamAV is the backstop</span></td></tr>
+    <tr><td>Flaky burn test <code>The_same_ticket_twice_at_once</code></td><td class="s"><span class="tag todo">Not investigated</span></td></tr>
   </table></div>
 
   <h2>E1.4 Desktop tray app</h2>
   <div class="table-wrap"><table>
     <tr><th>Sub-feature</th><th>Status</th></tr>
-    <tr><td>Everything: tray, shortcut, clipboard, upload, signing</td><td class="s"><span class="tag todo">Not started</span> <span class="note">no Rust here, no certificates</span></td></tr>
+    <tr><td>Everything: tray, shortcut, clipboard, upload, signing</td><td class="s"><span class="tag block">Moved to Phase 2</span> <span class="note">decided by the head of tech</span></td></tr>
+  </table></div>
+
+  <h2>Postponed from Phase 1 to Phase 2</h2>
+  <p class="note">Decision from the head of tech, 2026-11-11.</p>
+  <div class="table-wrap"><table>
+    <tr><th>Item</th><th>Status</th></tr>
+    <tr><td>CLI Windows AOT build</td><td class="s"><span class="tag block">Phase 2</span></td></tr>
+    <tr><td>CLI Linux credential store and macOS check</td><td class="s"><span class="tag block">Phase 2</span></td></tr>
+    <tr><td>CLI build job in CI</td><td class="s"><span class="tag block">Phase 2</span></td></tr>
+    <tr><td>E1.4 Desktop tray app (tray, shortcut, clipboard, upload, signing)</td><td class="s"><span class="tag block">Phase 2</span></td></tr>
   </table></div>
 
   <h2>Phase 2: Accelerators (not started)</h2>
@@ -165,12 +195,123 @@
     <li>Extras not needed for a working feature.</li>
   </ul>
 
-  <h2>Blocking everything</h2>
-  <ul>
-    <li><strong>The key mismatch:</strong> creating any link or snippet returns 503. It needs your decision: supply the original key, reset the allocator, or wipe the database.</li>
-    <li><strong>Nothing is committed.</strong> All of today's work is uncommitted in both repos.</li>
-    <li><strong>Backend:</strong> running again with the S1 code and part of S2, while the S2 backend agent finishes the rest.</li>
-  </ul>
+  <h2>What is done and tested in the browser</h2>
+  <div class="table-wrap"><table>
+    <tr><th>Area</th><th>Status</th></tr>
+    <tr><td>Key mismatch (503 on every create), coordinator permissions, raw .NET errors, Docker volume fix</td><td class="s"><span class="tag done">Fixed</span></td></tr>
+    <tr><td>Snippets: create, view, highlight, Markdown safety, password, expiry, edit, versions, diff, Arabic</td><td class="s"><span class="tag done">Passed</span></td></tr>
+    <tr><td>Images: upload, thumbnails, viewer, background switcher, zoom, hash match, huge image is download-only</td><td class="s"><span class="tag done">Passed</span></td></tr>
+    <tr><td>Files: upload, burn after download, two-tab race, expiry, password, SHA-256 with copy button, blocked types, EICAR virus test</td><td class="s"><span class="tag done">Passed</span></td></tr>
+    <tr><td>Security spot checks: XSS in titles, bodies, file names and API key names; guessed URLs; no account enumeration on password reset</td><td class="s"><span class="tag done">Passed</span></td></tr>
+    <tr><td>UI polish (menu, link library, create link, analytics, snippets, files, viewers)</td><td class="s"><span class="tag done">Built</span> <span class="note">your review needed</span></td></tr>
+  </table></div>
+
+  <h2>What is left in Phase 1</h2>
+  <div class="table-wrap"><table>
+    <tr><th>Item</th><th>Status</th></tr>
+    <tr><td>Link shortener fixes from the latest test: disabled links shown as "Active", empty error pages, raw "alias-frozen" message, YouTube link flagged MALWARE</td><td class="s"><span class="tag prog">Agent working</span></td></tr>
+    <tr><td>CLI against the real API (login, whoami, paste, link, ls, logout, session revoke)</td><td class="s"><span class="tag todo">Not tested</span></td></tr>
+    <tr><td>Guest limit (31st guest snippet refused) and guest uploads</td><td class="s"><span class="tag todo">Not tested</span></td></tr>
+    <tr><td>Response headers (CSP, nosniff, cache) on pages and downloads</td><td class="s"><span class="tag todo">Not tested</span></td></tr>
+    <tr><td>50 MB upload with pause and resume</td><td class="s"><span class="tag todo">Not tested</span></td></tr>
+    <tr><td>Flaky tests: burn claim, expiry and purge (backend), snippet detail (frontend)</td><td class="s"><span class="tag todo">Not investigated</span></td></tr>
+    <tr><td>Password reset and confirmation emails (dev mail goes to the API log, not Mailpit)</td><td class="s"><span class="tag todo">Not working in dev</span></td></tr>
+    <tr><td>Header icons white on white in light mode on public pages</td><td class="s"><span class="tag todo">Not fixed</span></td></tr>
+    <tr><td>"Download original" 503 seen by the web tester on <code>usercontent.localhost</code></td><td class="s"><span class="tag block">Needs your local check</span></td></tr>
+    <tr><td>CAPTCHA admin control panel (last item; guest snippets on the web need it)</td><td class="s"><span class="tag todo">Not done</span> <span class="note">decide: Phase 1 end or Phase 2</span></td></tr>
+    <tr><td>Snippet click limit or burn option</td><td class="s"><span class="tag block">Your decision</span> <span class="note">backend has no field (PD-05, PD-10)</span></td></tr>
+    <tr><td>SVG, video, PDF preview, EXIF and GPS option, older versions visible to visitors, Arabic native review</td><td class="s"><span class="tag block">Your decisions</span></td></tr>
+    <tr><td>One-day soak: check expiry, purge and orphan cleanup jobs after the stack runs for a day</td><td class="s"><span class="tag todo">Not done</span></td></tr>
+    <tr><td>Commit and push everything, open a pull request to <code>main</code></td><td class="s"><span class="tag todo">Waiting for your go-ahead</span></td></tr>
+    <tr><td>Screenshots for the head of tech</td><td class="s"><span class="tag todo">Not done</span></td></tr>
+  </table></div>
+
+  </div><!-- /p-status -->
+
+  <div class="panel" id="p-test">
+    <div class="banner">
+      <strong>Testing so far.</strong> Claude on the web tested the live app in a browser three times (two rounds on Phase 1, one exploratory round on the link shortener).
+      “Retested” means the same scenario was run again after the fix and passed. Fixes by agents were also checked live by the agents themselves.
+    </div>
+
+    <div class="legend">
+      <span class="tag done">Fixed and retested</span>
+      <span class="tag prog">Fixed, not retested / in progress</span>
+      <span class="tag todo">Not fixed</span>
+      <span class="tag block">Decision or not a bug</span>
+    </div>
+
+    <h2>Bugs found and what happened to them</h2>
+    <div class="table-wrap"><table>
+      <tr><th>Bug</th><th>Fixed?</th><th>Retested?</th></tr>
+      <tr><td><strong>503 “KeyMismatch”</strong> on every link, snippet and upload (old test fingerprint in the database), then a second 503 because the coordinator could not save its state (folder owned by the wrong user)</td><td class="s"><span class="tag done">Fixed</span></td><td class="s"><span class="tag done">Yes, creation works</span></td></tr>
+      <tr><td><strong>Burn after download did not burn</strong> (UI said “could not start”, file stayed). Cause: the download link host did not match the frontend's allowed host</td><td class="s"><span class="tag done">Fixed</span></td><td class="s"><span class="tag done">Yes, incl. two-tab race</span></td></tr>
+      <tr><td><strong>Image viewer “could not be loaded”</strong> (same host mismatch)</td><td class="s"><span class="tag done">Fixed</span></td><td class="s"><span class="tag done">Yes, all 4 formats</span></td></tr>
+      <tr><td><strong>“Open” buttons missing the <code>#k=</code> key</strong> (owner landed on “Not found”)</td><td class="s"><span class="tag done">Fixed</span> <span class="note">key now remembered in the owner's browser</span></td><td class="s"><span class="tag done">Yes</span></td></tr>
+      <tr><td><strong>Snippet edit failed</strong> (<code>baseVersion must be at least 1</code>), blank editor, “Version undefined · NaN”</td><td class="s"><span class="tag done">Fixed</span></td><td class="s"><span class="tag done">Yes, v2, v3 and diff</span></td></tr>
+      <tr><td><strong>No thumbnails</strong> in the Files list</td><td class="s"><span class="tag done">Fixed</span> <span class="note">worker and thumbnails were fine in the new build</span></td><td class="s"><span class="tag done">Yes</span></td></tr>
+      <tr><td><strong>No copy button</strong> next to SHA-256</td><td class="s"><span class="tag done">Fixed</span></td><td class="s"><span class="tag done">Yes, hash matches</span></td></tr>
+      <tr><td><strong>Snippet form promised a click limit</strong> but showed only a date</td><td class="s"><span class="tag done">Label fixed</span> <span class="note">feature itself needs your decision</span></td><td class="s"><span class="tag done">Yes</span></td></tr>
+      <tr><td><strong>18000×18000 image accepted</strong> and offered inline (pixel limit not applied to opening)</td><td class="s"><span class="tag done">Fixed</span> <span class="note">now download-only, not refused</span></td><td class="s"><span class="tag done">Yes, banner shows</span></td></tr>
+      <tr><td><strong>Huge image showed “Not found”</strong> instead of “too large, download it”</td><td class="s"><span class="tag done">Fixed</span></td><td class="s"><span class="tag done">Yes</span></td></tr>
+      <tr><td><strong>“Download original” silent 503</strong> seen by the web tester on <code>usercontent.localhost:5084</code></td><td class="s"><span class="tag prog">Not reproduced</span> <span class="note">friendly error and retry button added</span></td><td class="s"><span class="tag block">Needs your local check</span></td></tr>
+      <tr><td><strong>Raw .NET exception shown to users</strong> when the coordinator cannot lease</td><td class="s"><span class="tag done">Fixed</span> <span class="note">clean 503 with retry hint</span></td><td class="s"><span class="tag prog">Partly: no raw errors seen in later rounds</span></td></tr>
+      <tr><td><strong>Coordinator folder permissions</strong> on a fresh <code>docker compose up</code></td><td class="s"><span class="tag done">Fixed</span> <span class="note">new one-time init step</span></td><td class="s"><span class="tag prog">Not exercised on a wrong-owner volume</span></td></tr>
+      <tr><td><strong>Dotted line under the upload box</strong> (quota bar style)</td><td class="s"><span class="tag done">Fixed</span></td><td class="s"><span class="tag prog">Not retested by the tester</span></td></tr>
+      <tr><td><strong>UI “very bad”</strong>: menu phase labels, clipped user box, spacing, contrast, editor size, diff colours, light-mode viewer pages</td><td class="s"><span class="tag prog">Polished</span></td><td class="s"><span class="tag prog">Not retested, needs your review</span></td></tr>
+      <tr><td><strong>Header icons white on white</strong> in light mode on public pages</td><td class="s"><span class="tag todo">Not fixed</span></td><td class="s"><span class="tag todo">No</span></td></tr>
+    </table></div>
+
+    <h2>Found in the link shortener round (Phase 0)</h2>
+    <div class="table-wrap"><table>
+      <tr><th>Bug</th><th>Fixed?</th><th>Retested?</th></tr>
+      <tr><td><strong>Disabled link shown as “Active”</strong> on the dashboard (visitors get 410)</td><td class="s"><span class="tag prog">Agent working</span></td><td class="s"><span class="tag todo">No</span></td></tr>
+      <tr><td><strong>Empty-body 404</strong> for a disabled link; plain unstyled “Link not found” page on the redirect host</td><td class="s"><span class="tag prog">Agent working</span></td><td class="s"><span class="tag todo">No</span></td></tr>
+      <tr><td><strong>Raw “alias-frozen: …” message</strong> shown in the create form</td><td class="s"><span class="tag prog">Agent working</span></td><td class="s"><span class="tag todo">No</span></td></tr>
+      <tr><td><strong>YouTube link flagged MALWARE</strong> by the safety re-check</td><td class="s"><span class="tag prog">Agent investigating</span></td><td class="s"><span class="tag todo">No</span></td></tr>
+      <tr><td>Reported “503 on expired link”: our logs show an empty 404, no 503 anywhere</td><td class="s"><span class="tag block">Not a 503</span></td><td class="s"><span class="tag block">Covered by the empty-404 fix</span></td></tr>
+    </table></div>
+
+    <h2>Not bugs, or waiting on you</h2>
+    <div class="table-wrap"><table>
+      <tr><th>Item</th><th>Status</th></tr>
+      <tr><td>Quota meter does not drop on delete (the app says space is freed after the retention period)</td><td class="s"><span class="tag block">By design, confirm</span></td></tr>
+      <tr><td><code>.exe</code> allowed on a paid plan (blocked only for guests and Free)</td><td class="s"><span class="tag block">By design, confirm</span></td></tr>
+      <tr><td>Snippets listed in Files &amp; media as “Unnamed” files</td><td class="s"><span class="tag block">Is this intended?</span></td></tr>
+      <tr><td>Snippet click limit or burn-after-read</td><td class="s"><span class="tag block">Backend has no field; your decision</span></td></tr>
+      <tr><td>Image dimension limit: huge images are download-only, not refused at upload</td><td class="s"><span class="tag block">Confirm this is what you want</span></td></tr>
+    </table></div>
+
+    <h2>What passed in browser testing</h2>
+    <div class="table-wrap"><table>
+      <tr><th>Area</th><th>Result</th></tr>
+      <tr><td>Snippets: create, anonymous view, highlighting, password, expiry, Arabic layout</td><td class="s"><span class="tag done">Pass</span></td></tr>
+      <tr><td>Markdown and XSS: script inert, <code>javascript:</code> link removed; XSS payloads in titles, snippet bodies, file names and API key names</td><td class="s"><span class="tag done">Pass</span></td></tr>
+      <tr><td>Image hash match, renamed <code>.txt</code> as <code>.png</code> treated as a file, EICAR test virus blocked, encrypted ZIP refused</td><td class="s"><span class="tag done">Pass</span></td></tr>
+      <tr><td>File expiry, password on files, guessed slugs and IDs give clean 404</td><td class="s"><span class="tag done">Pass</span></td></tr>
+      <tr><td>Forgot-password does not reveal whether an email exists</td><td class="s"><span class="tag done">Pass</span></td></tr>
+      <tr><td>Links: invalid URL, duplicate back-half, password plus one-click limit, Settings and API key create and revoke, Analytics date range</td><td class="s"><span class="tag done">Pass</span></td></tr>
+      <tr><td>No console or CSP errors on Files, snippet and file pages</td><td class="s"><span class="tag done">Pass</span></td></tr>
+    </table></div>
+
+    <h2>Not tested yet</h2>
+    <div class="table-wrap"><table>
+      <tr><th>Item</th><th>Why</th></tr>
+      <tr><td>CLI against the real API; revoke a CLI session</td><td>Browser tester has no shell. To be run on the dev machine.</td></tr>
+      <tr><td>31st guest snippet refused; guest uploads</td><td>Needs a signed-out identity.</td></tr>
+      <tr><td>Response headers on pages and downloads</td><td>Blocked in the browser tester. Home page headers look correct.</td></tr>
+      <tr><td>50 MB upload with pause and resume</td><td>Tester limited to 10 MB.</td></tr>
+      <tr><td>Password reset from the emailed link</td><td>Dev mail goes to the API log, not Mailpit.</td></tr>
+      <tr><td>Opening another real user's item</td><td>Needs a second real account.</td></tr>
+      <tr><td>Flaky backend and frontend tests; one-day soak of cleanup jobs</td><td>Not started.</td></tr>
+    </table></div>
+
+    <h2>Automated tests (agents' own runs)</h2>
+    <ul>
+      <li>Backend: Api 691, Files 86, Snippets 39, Links 556, CLI 68, Coordinator 9 passed. Two tests fail now and then under load (burn claim, expiry and purge); both pass when run alone.</li>
+      <li>Frontend: about 232 passed. One snippet detail test fails now and then in the full run and passes alone.</li>
+    </ul>
+  </div><!-- /p-test -->
 
   <footer>Source: this session's agent reports. Test counts are the agents' own, except the full backend run I re-ran after Feature 1.</footer>
 </main>

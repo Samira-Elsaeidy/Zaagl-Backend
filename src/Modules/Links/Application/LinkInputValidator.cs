@@ -7,6 +7,9 @@ namespace Zaagl.Modules.Links.Application;
 
 public sealed class LinkInputValidator : AbstractValidator<LinkInput>
 {
+    /// <summary>Hard ceiling for any link expiry: far enough for every plan, and safe for date arithmetic (purge date = expiry + quarantine).</summary>
+    public static readonly DateTime MaxExpiry = new(2100, 1, 1, 0, 0, 0, DateTimeKind.Utc);
+
     public LinkInputValidator(CodeGenerator codes)
     {
         RuleFor(x => x.DestinationUrl).NotEmpty().MaximumLength(UrlSafety.MaxLength);
@@ -45,7 +48,12 @@ public sealed class LinkInputValidator : AbstractValidator<LinkInput>
         When(x => x.Policy is not null, () =>
         {
             RuleFor(x => x.Policy!.MaxClicks).GreaterThan(0).LessThanOrEqualTo(100_000_000)
+                .WithMessage("Click limit must be between 1 and 100,000,000.")
                 .When(x => x.Policy!.MaxClicks is not null);
+            RuleFor(x => x.Policy!.ExpiresAt)
+                .Must(d => d!.Value.ToUniversalTime() <= MaxExpiry)
+                .WithMessage("The expiry date cannot be later than 2100-01-01.")
+                .When(x => x.Policy!.ExpiresAt is not null);
             RuleFor(x => x.Policy!.Password).MinimumLength(4).MaximumLength(128)
                 .When(x => !string.IsNullOrEmpty(x.Policy!.Password));
             RuleFor(x => x.Policy!.FallbackUrl).MaximumLength(UrlSafety.MaxLength);

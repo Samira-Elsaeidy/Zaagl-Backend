@@ -19,8 +19,10 @@ RUN groupadd --system --gid 10001 zaagl \
 COPY --from=build --chown=10001:10001 /app .
 # The coordinator's HWM file + the dev-mode local-filesystem allocator sink both live under /state,
 # matching the docker-compose `coordstate` volume mount below. Note: an existing named volume created by
-# an older image keeps the old (random) owner; chown it to 10001:10001 once when upgrading.
-RUN mkdir -p /state && chown 10001:10001 /state
+# an older image keeps the old (random) owner: docker-compose.yml's one-shot `volume-init` service corrects that on
+# every `up` (it hands /state to 10001:10001 when the owner differs), so a stale volume never leaves the coordinator
+# unable to write hwm.json (leases would answer 503).
+RUN mkdir -p /state/allocator-sink && chown 10001:10001 /state /state/allocator-sink
 USER 10001:10001
 
 ENV ASPNETCORE_URLS=http://+:8080

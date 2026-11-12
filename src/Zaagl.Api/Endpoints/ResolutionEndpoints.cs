@@ -73,6 +73,20 @@ public static class ResolutionEndpoints
             })
             .WithTags("Resolution").ExcludeFromDescription();
 
+        // Every other GET/HEAD that matched no route (a 1-3 character slug such as the legacy "sam", a multi-segment or
+        // file-like path, a reserved word) used to get an empty-body 404. Browsers navigating the short host now get the
+        // same branded "Link not found" page; API, hub and health paths keep their plain 404.
+        app.MapMethods("/{**path:nonfile}", ["GET", "HEAD"], async (HttpContext http) =>
+        {
+            var path = http.Request.Path;
+            if (path.StartsWithSegments("/api") || path.StartsWithSegments("/hubs") || path.StartsWithSegments("/health"))
+            {
+                http.Response.StatusCode = StatusCodes.Status404NotFound;
+                return;
+            }
+            await StatusPages.NotFound.ExecuteAsync(http);
+        }).ExcludeFromDescription();
+
         app.MapPost("/api/unlock/{slug}", async (
                 string slug, UnlockRequest request, HttpContext http, ResolutionService resolution, CancellationToken ct) =>
             {
