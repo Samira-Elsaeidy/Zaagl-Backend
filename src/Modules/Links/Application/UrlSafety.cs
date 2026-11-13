@@ -18,6 +18,12 @@ public static class UrlSafety
         if (string.IsNullOrWhiteSpace(input)) { error = "URL is required."; return false; }
         var trimmed = input.Trim();
         if (trimmed.Length > MaxLength) { error = $"URL must be at most {MaxLength} characters."; return false; }
+        // Spec §7.6: no control characters or whitespace anywhere in the URL (they were silently percent-encoded).
+        if (trimmed.Any(c => char.IsControl(c) || char.IsWhiteSpace(c)))
+        {
+            error = "URLs cannot contain spaces or control characters.";
+            return false;
+        }
 
         if (!Uri.TryCreate(trimmed, UriKind.Absolute, out var uri)
             || (uri.Scheme != Uri.UriSchemeHttp && uri.Scheme != Uri.UriSchemeHttps))
@@ -38,13 +44,18 @@ public static class UrlSafety
             error = "Private and loopback addresses are not allowed.";
             return false;
         }
-        if (ownHosts.Contains(host))
+        // Spec §7.6: not Zaagl itself, and not a subdomain of it (api., app., usercontent., ...).
+        if (ownHosts.Any(own => host == own || host.EndsWith("." + own, StringComparison.Ordinal)))
         {
             error = "A short link cannot point to Zaagl itself.";
             return false;
         }
 
-        normalized = uri.AbsoluteUri;
+        // Spec §7.6: the host is stored as punycode. AbsoluteUri keeps a Unicode host (http://аpple.com/ with a
+        // Cyrillic а), which hid a homograph and made every redirect to it fail with a 500 on the non-ASCII Location.
+        normalized = uri.HostNameType == UriHostNameType.Dns && uri.Host != uri.IdnHost
+            ? $"{uri.Scheme}://{uri.IdnHost}{(uri.IsDefaultPort ? "" : $":{uri.Port}")}{uri.GetComponents(UriComponents.PathAndQuery | UriComponents.Fragment, UriFormat.UriEscaped)}"
+            : uri.AbsoluteUri;
         return true;
     }
 

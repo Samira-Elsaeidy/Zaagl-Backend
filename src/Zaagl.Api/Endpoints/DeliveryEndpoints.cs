@@ -42,8 +42,7 @@ public static class DeliveryEndpoints
         string ticket, HttpContext http, IDownloadGrants grants, IResourceRegistry registry, ILinkSnapshots links,
         ISnippetReader reader, ObjectDelivery objectsDelivery, CancellationToken ct)
     {
-                var isHead = HttpMethods.IsHead(http.Request.Method)
-                    || string.Equals(http.Request.Headers["X-Zaagl-Method"].ToString(), "HEAD", StringComparison.OrdinalIgnoreCase);
+                var isHead = objectsDelivery.IsHead(http);
                 var decision = await grants.AuthorizeAsync(ticket, isHead, ct);
 
                 switch (decision.Outcome)

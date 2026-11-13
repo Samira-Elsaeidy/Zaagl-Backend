@@ -45,14 +45,20 @@ public sealed class IdentityService(
     /// requested explicitly, so existing clients never gain new powers silently.</summary>
     public static readonly IReadOnlyList<string> DefaultScopes = ["links:read", "links:write", "stats:read"];
 
+    /// <summary>Spec §7.4: minimum password length.</summary>
+    public const int MinPasswordLength = 10;
+    private const int MaxResetEmailsPerDay = 3;
+    /// <summary>A real bcrypt hash of a random value, verified against for unknown addresses so they cost the same.</summary>
+    private static readonly string DummyHash = BCrypt.Net.BCrypt.HashPassword(Guid.NewGuid().ToString("N"));
+
     // ---- Registration (spec §7.4: always the same response shape) --------
 
     public async Task<RegisterOutcome> RegisterAsync(RegisterRequest request, CancellationToken ct)
     {
         var email = NormalizeEmail(request.Email);
         if (email is null) return new RegisterOutcome(Error.Validation("A valid email address is required."), null);
-        if (request.Password is not { Length: >= 8 and <= 128 })
-            return new RegisterOutcome(Error.Validation("Password must be between 8 and 128 characters."), null);
+        if (request.Password is not { Length: >= MinPasswordLength and <= 128 })
+            return new RegisterOutcome(Error.Validation("Password must be between 10 and 128 characters."), null);
 
         var existing = await db.Users.FirstOrDefaultAsync(u => u.Email == email, ct);
         string? devToken = null;
@@ -89,6 +95,9 @@ public sealed class IdentityService(
         }
         else
         {
+            // Spec §7.4 equal work: the other two paths pay for a bcrypt hash; without one here, a fast answer
+            // revealed that the address already has a confirmed account.
+            _ = BCrypt.Net.BCrypt.HashPassword(request.Password);
             await EmailQueue.QueueAccountEmailAsync(db, existing.Id, EmailKinds.AccountExists, null, null, ct);
             logger.LogInformation("Register: address {Email} already has a confirmed account; queued account-exists notice.", email);
         }
@@ -143,6 +152,16 @@ public sealed class IdentityService(
         var user = normalized is null ? null : await db.Users.FirstOrDefaultAsync(u => u.Email == normalized && u.EmailConfirmed, ct);
         if (user is null) return null;
 
+        // Spec: at most 3 reset emails per address per 24 h, so nobody can flood a victim's inbox. The caller's
+        // response stays the same either way (no enumeration).
+        var dayAgo = DateTime.UtcNow.AddHours(-24);
+        var recent = await db.EmailTokens.CountAsync(t => t.UserId == user.Id && t.Kind == EmailTokenKind.PasswordReset && t.CreatedAt >= dayAgo, ct);
+        if (recent >= MaxResetEmailsPerDay)
+        {
+            logger.LogInformation("Password-reset for user {UserId} not sent: {Count} already in the last 24 h.", user.Id, recent);
+            return null;
+        }
+
         var (raw, hash) = NewToken();
         db.EmailTokens.Add(new EmailToken
         {
@@ -158,8 +177,8 @@ public sealed class IdentityService(
 
     public async Task<Result<bool>> ResetPasswordAsync(Guid userId, string token, string newPassword, CancellationToken ct)
     {
-        if (newPassword is not { Length: >= 8 and <= 128 })
-            return Error.Validation("Password must be between 8 and 128 characters.");
+        if (newPassword is not { Length: >= MinPasswordLength and <= 128 })
+            return Error.Validation("Password must be between 10 and 128 characters.");
 
         var hash = Hash(token);
         var entry = await db.EmailTokens.FirstOrDefaultAsync(
@@ -171,6 +190,10 @@ public sealed class IdentityService(
         user.PasswordHash = BCrypt.Net.BCrypt.HashPassword(newPassword);
         user.SecurityStamp = Guid.CreateVersion7();
         entry.UsedAt = DateTime.UtcNow;
+        // Every other unused reset link for this account dies with this reset (they used to stay valid and could
+        // change the password again).
+        await db.EmailTokens.Where(t => t.UserId == userId && t.Kind == EmailTokenKind.PasswordReset && t.UsedAt == null && t.Id != entry.Id)
+            .ExecuteUpdateAsync(x => x.SetProperty(t => t.UsedAt, DateTime.UtcNow), ct);
 
         await RevokeAllRefreshTokensAsync(userId, ct);
         await db.ApiKeys.Where(k => k.UserId == userId && k.RevokedAt == null)
@@ -199,7 +222,13 @@ public sealed class IdentityService(
         if (user?.PasswordHash is null || !BCrypt.Net.BCrypt.Verify(request.Password ?? "", user.PasswordHash))
         {
             if (user is not null) await RecordFailureAsync(user.Id, ipPartition, ct);
-            else await ProgressiveDelayAsync(0, ct); // unknown address: no account to key the delay on, skip
+            else
+            {
+                // Spec §7.4 no enumeration: an unknown address pays the same bcrypt cost and the same first-failure
+                // wait as a known one (it used to answer in ~20 ms against >1 s for a real account).
+                _ = BCrypt.Net.BCrypt.Verify(request.Password ?? "", DummyHash);
+                await ProgressiveDelayAsync(1, ct);
+            }
             return new LoginOutcome(null, null, Error.Unauthorized("Invalid email or password."));
         }
 
@@ -214,8 +243,15 @@ public sealed class IdentityService(
                 var (enrolToken, expires) = tokens.IssueEnrolOnlyToken(user);
                 return new LoginOutcome(null, new EnrolTotpIssued(enrolToken, expires), null);
             }
-            if (string.IsNullOrEmpty(request.TotpCode) || !Totp.Validate(user.TotpSecret, request.TotpCode, DateTimeOffset.UtcNow))
+            if (string.IsNullOrEmpty(request.TotpCode))
                 return new LoginOutcome(null, null, new Error("totp_required", "A valid authenticator code is required."));
+            // A wrong code counts toward the same (account, IP) lockout and progressive delay as a wrong password,
+            // so the 6 digits cannot be brute-forced at the auth limiter's 10/min per IP.
+            if (!Totp.Validate(user.TotpSecret, request.TotpCode, DateTimeOffset.UtcNow))
+            {
+                await RecordFailureAsync(user.Id, ipPartition, ct);
+                return new LoginOutcome(null, null, new Error("totp_required", "A valid authenticator code is required."));
+            }
         }
 
         await ClearFailuresAsync(user.Id, ipPartition, ct);
@@ -303,6 +339,10 @@ public sealed class IdentityService(
 
     public async Task LogoutEverywhereAsync(Guid userId, CancellationToken ct)
     {
+        // A new security stamp also ends access tokens already issued (checked on every request, cached <= 60 s);
+        // revoking refresh families alone left them working for up to their full lifetime.
+        await db.Users.Where(u => u.Id == userId)
+            .ExecuteUpdateAsync(x => x.SetProperty(u => u.SecurityStamp, Guid.CreateVersion7()), ct);
         await RevokeAllRefreshTokensAsync(userId, ct);
         await db.ApiKeys.Where(k => k.UserId == userId && k.RevokedAt == null)
             .ExecuteUpdateAsync(s => s.SetProperty(k => k.RevokedAt, DateTime.UtcNow), ct);

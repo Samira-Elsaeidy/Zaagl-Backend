@@ -56,8 +56,8 @@ public static class IdentityEndpoints
         // GET pages that read the fragment client-side and POST it - the token itself never reaches
         // the server in this request, so it never reaches a server/proxy log (spec §7.4, §11 #30).
         // Mapped on the app directly (not the /api/auth group) since they live at /account/*.
-        app.MapGet("/account/confirm-email", () => Results.Content(FragmentPostPage("/api/auth/confirm-email"), "text/html"));
-        app.MapGet("/account/reset-password", () => Results.Content(FragmentPostPage("/api/auth/reset-password"), "text/html"));
+        app.MapGet("/account/confirm-email", (HttpContext http) => AccountPage(http, "/api/auth/confirm-email"));
+        app.MapGet("/account/reset-password", (HttpContext http) => AccountPage(http, "/api/auth/reset-password"));
 
         auth.MapPost("/confirm-email", async (ConfirmEmailRequest request, IdentityService identity, CancellationToken ct) =>
             ApiResults.From(await identity.ConfirmEmailAsync(request.UserId, request.Token, ct), _ => Results.NoContent()));
@@ -256,10 +256,24 @@ public static class IdentityEndpoints
     /// <summary>Spec §7.4: a minimal page that reads the token out of the URL fragment (never sent to
     /// any server by the browser) and POSTs it to the real endpoint in a request body instead - so a
     /// link scanner that only GETs this page, or any server/proxy access log, never sees the token.</summary>
-    private static string FragmentPostPage(string postTo) => $$"""
+    /// <summary>Spec §7.4 headers for the account pages: a nonce CSP (only this page's own script runs), no referrer
+    /// (the fragment token never leaks), no caching, no sniffing and no framing.</summary>
+    private static IResult AccountPage(HttpContext http, string postTo)
+    {
+        var nonce = Convert.ToBase64String(System.Security.Cryptography.RandomNumberGenerator.GetBytes(16));
+        var h = http.Response.Headers;
+        h.ContentSecurityPolicy = $"default-src 'none'; script-src 'nonce-{nonce}'; connect-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'";
+        h["Referrer-Policy"] = "no-referrer";
+        h.CacheControl = "no-store";
+        h.XContentTypeOptions = "nosniff";
+        h.XFrameOptions = "DENY";
+        return Results.Content(FragmentPostPage(postTo, nonce), "text/html; charset=utf-8");
+    }
+
+    private static string FragmentPostPage(string postTo, string nonce) => $$"""
         <!doctype html><html><head><meta charset="utf-8"><title>Zaagl</title></head><body>
         <p id="status">Working&hellip;</p>
-        <script>
+        <script nonce="{{nonce}}">
           (function () {
             var params = new URLSearchParams(location.hash.replace(/^#/, ''));
             var userId = params.get('u');

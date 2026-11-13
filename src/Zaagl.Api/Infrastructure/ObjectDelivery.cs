@@ -27,6 +27,17 @@ public sealed partial class ObjectDelivery(
     IDownloadGrants grants,
     ILogger<ObjectDelivery> logger)
 {
+    /// <summary>
+    /// Whether a delivery request is a HEAD. Behind Nginx (X-Accel) the proxy always overwrites
+    /// <c>X-Zaagl-Method: $request_method</c> (ARC-008), so the header is trusted there. With
+    /// <c>DirectObjectServing</c> no proxy sets it, so a client could send it on a GET to skip the burn/count step:
+    /// only the real method counts then.
+    /// </summary>
+    public bool IsHead(HttpContext http) =>
+        HttpMethods.IsHead(http.Request.Method)
+        || (!options.Value.DirectObjectServing
+            && string.Equals(http.Request.Headers["X-Zaagl-Method"].ToString(), "HEAD", StringComparison.OrdinalIgnoreCase));
+
     public async Task<IResult> ServeAsync(ResourceDescriptor resource, DeliveryDecision decision, HttpContext http, bool isHead, CancellationToken ct)
     {
         var o = options.Value;

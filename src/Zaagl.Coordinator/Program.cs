@@ -11,6 +11,11 @@ var stateFilePath = builder.Configuration["Coordinator:StateFilePath"]
     ?? Path.Combine(AppContext.BaseDirectory, "coordinator-state.json");
 var runtimeToken = builder.Configuration["Coordinator:Token"] ?? "";
 var adminToken = builder.Configuration["Coordinator:AdminToken"] ?? "";
+// An empty token turns its check off (the auth middleware below), which is only acceptable on a developer machine.
+if (!builder.Environment.IsDevelopment() && !builder.Environment.IsEnvironment("Testing") && (string.IsNullOrEmpty(runtimeToken) || string.IsNullOrEmpty(adminToken)))
+    throw new InvalidOperationException("Coordinator:Token and Coordinator:AdminToken must both be set outside Development.");
+if (!string.IsNullOrEmpty(adminToken) && adminToken == runtimeToken)
+    throw new InvalidOperationException("Coordinator:AdminToken must differ from Coordinator:Token.");
 var requireArchiveConfirmation = builder.Configuration.GetValue<bool?>("Allocator:RequireArchiveConfirmation") ?? false;
 var sinkType = builder.Configuration["Allocator:Sink:Type"] ?? "LocalFileSystem";
 var sinkDirectory = builder.Configuration["Allocator:Sink:LocalFileSystem:Directory"]
@@ -60,14 +65,17 @@ Console.WriteLine($"Startup check: row {startup.Row} -> {leasingState}" + (leasi
 // ---- Auth middleware: COORDINATOR_TOKEN for runtime routes, COORDINATOR_ADMIN_TOKEN for /v1/admin/* ----
 app.Use(async (ctx, next) =>
 {
-    var path = ctx.Request.Path.Value ?? "";
-    if (path.StartsWith("/health")) { await next(); return; }
+    // Routing matches paths case-insensitively, so the admin test must too: an ordinal "/v1/admin/" check let
+    // "/V1/ADMIN/init" reach the admin endpoints with only the runtime token.
+    var path = ctx.Request.Path;
+    if (path.StartsWithSegments("/health", StringComparison.OrdinalIgnoreCase)) { await next(); return; }
 
-    var required = path.StartsWith("/v1/admin/") ? adminToken : runtimeToken;
+    var required = path.StartsWithSegments("/v1/admin", StringComparison.OrdinalIgnoreCase) ? adminToken : runtimeToken;
     if (!string.IsNullOrEmpty(required))
     {
-        var header = ctx.Request.Headers.Authorization.ToString();
-        if (header != $"Bearer {required}")
+        var header = System.Text.Encoding.UTF8.GetBytes(ctx.Request.Headers.Authorization.ToString());
+        var expected = System.Text.Encoding.UTF8.GetBytes($"Bearer {required}");
+        if (!System.Security.Cryptography.CryptographicOperations.FixedTimeEquals(header, expected))
         {
             ctx.Response.StatusCode = StatusCodes.Status401Unauthorized;
             await ctx.Response.WriteAsync("Unauthorized.");

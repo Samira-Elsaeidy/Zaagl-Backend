@@ -120,6 +120,10 @@ public sealed partial class LinkService(
 
         if (input.Policy?.ExpiresAt is { } expires && expires <= DateTime.UtcNow)
             return Error.Validation("The expiry date must be in the future.");
+        // Spec §1.1: every plan caps how far out a link expires, and a link without one gets the plan default.
+        var planExpiry = PlanExpiry(input.Policy?.ExpiresAt, current: null, limits, time.GetUtcNow().UtcDateTime);
+        if (!planExpiry.IsSuccess) return planExpiry.Error!;
+        input = input with { Policy = (input.Policy ?? new PolicyInput()) with { ExpiresAt = planExpiry.Value } };
 
         return await AllocateAndInsertAsync(new AllocationRequest<LinkDto>(
             CustomSlug: customSlugRaw,
@@ -438,6 +442,24 @@ public sealed partial class LinkService(
         return System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(material));
     }
 
+    /// <summary>
+    /// Spec §1.1 plan expiry, shared by create and update (renew has its own forward-only rules): a requested expiry
+    /// may be at most <see cref="PlanLimits.MaxExpiryDays"/> out; none requested means the plan default on a plan with a
+    /// cap, never "no expiry". On update, an unchanged expiry (<paramref name="current"/>) always passes, so a link
+    /// made before the cap was enforced, or under a bigger plan, can still have its title edited; clearing the expiry
+    /// keeps the current one.
+    /// </summary>
+    private static Result<DateTime?> PlanExpiry(DateTime? requested, DateTime? current, PlanLimits limits, DateTime now)
+    {
+        if (limits.MaxExpiryDays is not { } maxDays) return requested?.ToUniversalTime();
+        if (requested is not { } asked) return current ?? now.AddDays(limits.DefaultExpiryDays);
+        var utc = asked.ToUniversalTime();
+        if (current is { } same && Math.Abs((utc - same).TotalSeconds) < 1) return current;
+        if (utc > now.AddDays(maxDays))
+            return Error.Validation($"expiry-beyond-plan: your plan allows links to expire at most {maxDays} days from now.");
+        return utc;
+    }
+
     /// <summary>purge_after = expires_at + QuarantineDays for an owned link with an expiry; null (never
     /// purged by age) when there's no expiry at all, matching this app's existing "expiry is optional"
     /// design rather than the spec's "every link expires" (guests, where purge_after = expires_at exactly,
@@ -459,6 +481,14 @@ public sealed partial class LinkService(
         var prepared = await PrepareAsync(userId, input with { CustomSlug = null }, limits, isCreate: false, ct);
         if (prepared.Error is not null) return prepared.Error;
         var n = prepared.Value!;
+
+        // Same plan cap as create and renew (a null Policy keeps the current expiry, so it is not checked).
+        if (input.Policy is { } requestedPolicy)
+        {
+            var planExpiry = PlanExpiry(requestedPolicy.ExpiresAt, link.Policy?.ExpiresAt, limits, time.GetUtcNow().UtcDateTime);
+            if (!planExpiry.IsSuccess) return planExpiry.Error!;
+            input = input with { Policy = requestedPolicy with { ExpiresAt = planExpiry.Value } };
+        }
 
         await using var tx = await db.Database.BeginTransactionAsync(ct);
         await db.Database.ExecuteSqlRawAsync("SET LOCAL lock_timeout = '3s'", ct);

@@ -43,7 +43,9 @@ public sealed class DestinationBlocklist(LinksDbContext db, IOptions<SafetyOptio
 {
     public async Task<bool> IsBlockedAsync(string targetHost, string normalizedUrl, CancellationToken ct)
     {
-        if (safety.Value.DenyRedirectorHosts.Contains(targetHost, StringComparer.OrdinalIgnoreCase))
+        // Spec §7.6: known shorteners and open redirectors, including their subdomains (www.bit.ly).
+        if (safety.Value.DenyRedirectorHosts.Any(h => targetHost.Equals(h, StringComparison.OrdinalIgnoreCase)
+                || targetHost.EndsWith("." + h, StringComparison.OrdinalIgnoreCase)))
             return true;
 
         var entries = await db.BlockedDestinations.AsNoTracking().ToListAsync(ct);

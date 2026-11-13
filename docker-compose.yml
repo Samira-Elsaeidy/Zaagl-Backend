@@ -12,7 +12,7 @@ services:
       POSTGRES_USER: zaagl
       POSTGRES_PASSWORD: zaagl_dev
     ports:
-      - "5433:5432" # host-side remap only; containers reach it at postgres:5432 (see note in README)
+      - "127.0.0.1:5433:5432" # host-side remap only; containers reach it at postgres:5432 (see note in README)
     volumes:
       - postgres-data:/var/lib/postgresql
       - ./deploy/init-db:/docker-entrypoint-initdb.d:ro
@@ -28,7 +28,7 @@ services:
     image: valkey/valkey:8
     container_name: zaagl-valkey
     ports:
-      - "6379:6379"
+      - "127.0.0.1:6379:6379" # this machine only, never the LAN
     networks:
       - backend
     healthcheck:
@@ -98,7 +98,7 @@ services:
       Allocator__Sink__LocalFileSystem__Directory: "/state/allocator-sink"
       Allocator__RequireArchiveConfirmation: "false" # dev Postgres has no WAL archiving configured; see docs/TRACEABILITY.md
     ports:
-      - "5085:8080" # spec: backend-network-only in production; published here so this dev host can reach it directly
+      - "127.0.0.1:5085:8080" # spec: backend-network-only in production; published here so this dev host can reach it directly
     volumes:
       - coordstate:/state
     depends_on:
@@ -153,7 +153,7 @@ services:
       # Dev delivery: usercontent.localhost resolves to 127.0.0.1 in browsers; the API itself answers /d/<ticket>
       # (Hosts:RewriteDeliveryPath=true in appsettings.Development.json), so no Nginx is run in dev.
     ports:
-      - "5084:8080" # spec: edge-network-only, port not published in production; published here for dev access
+      - "127.0.0.1:5084:8080" # spec: edge-network-only, port not published in production; published here for dev access
     volumes:
       - storage:/srv/zaagl/storage
     depends_on:
@@ -248,8 +248,8 @@ services:
     image: axllent/mailpit
     container_name: zaagl-mailpit
     ports:
-      - "8025:8025" # web UI
-      - "1025:1025" # SMTP
+      - "127.0.0.1:8025:8025" # web UI
+      - "127.0.0.1:1025:1025" # SMTP
     networks:
       - backend
     profiles:

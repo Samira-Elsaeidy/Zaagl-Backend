@@ -40,6 +40,17 @@ var jwt = config.GetSection(JwtOptions.Section).Get<JwtOptions>() ?? new JwtOpti
 if (jwt.EffectiveKeys().Any(k => k.Key.Length < 32))
     throw new InvalidOperationException("Every Jwt signing key must be at least 32 characters. Set Jwt:Key (or Jwt:Keys) via configuration or an environment variable.");
 
+// Two settings fail OPEN when empty: no Captcha:Secret registers a no-op verifier (guest CAPTCHA off everywhere), and
+// no Admin:AllowedNetworks lets every IP reach /api/admin. Fine on a developer machine, never on a real deployment:
+// refuse to start there unless the operator opts out explicitly.
+if (!builder.Environment.IsDevelopment() && !builder.Environment.IsEnvironment("Testing"))
+{
+    if (config.GetValue("Captcha:Enabled", true) && string.IsNullOrWhiteSpace(config["Captcha:Secret"]))
+        throw new InvalidOperationException("Captcha:Secret is empty: guest CAPTCHA would be off. Set it, or set Captcha:Enabled=false on purpose.");
+    if (!config.GetSection("Admin:AllowedNetworks").GetChildren().Any() && !config.GetValue("Admin:AllowAnyNetwork", false))
+        throw new InvalidOperationException("Admin:AllowedNetworks is empty: /api/admin would be open to every IP. Set it, or set Admin:AllowAnyNetwork=true on purpose.");
+}
+
 // ---- Infrastructure -------------------------------------------------------
 
 builder.Services.AddSingleton<Zaagl.SharedKernel.Testing.IFailpoints, Zaagl.SharedKernel.Testing.NoOpFailpoints>();
@@ -52,6 +63,8 @@ builder.WebHost.ConfigureKestrel(o => bodyLimits.Apply(o.Limits));
 builder.Services.AddOpenApi();
 // BE-002: every problem body (ours and the framework's) carries type https://zaa.gl/problems/<code>, title, status, code.
 builder.Services.AddExceptionHandler<Zaagl.Api.Infrastructure.ApiExceptionHandler>();
+// A NUL in any JSON string field is a 400, never a PostgreSQL 22021 surfacing as a 500 (NulGuard.cs).
+builder.Services.ConfigureHttpJsonOptions(o => o.SerializerOptions.Converters.Add(new Zaagl.Api.Infrastructure.NulRejectingStringConverter()));
 // Binding failures throw BadHttpRequestException in every environment (the default is Development only), so ApiExceptionHandler
 // turns all of them into the same 400 invalid_request problem+json instead of an empty framework 400 in production.
 builder.Services.Configure<Microsoft.AspNetCore.Routing.RouteHandlerOptions>(o => o.ThrowOnBadRequest = true);
@@ -107,9 +120,12 @@ builder.Services.AddRateLimiter(o =>
     o.AddPolicy("device-activate", c => Fixed($"dact:{c.User.FindFirst("sub")?.Value ?? Ip(c)}", rateLimits.DeviceActivatePerMinute, TimeSpan.FromMinutes(1)));
     o.AddPolicy("link-write", c => Fixed($"link:{c.User.FindFirst("sub")?.Value ?? Ip(c)}", rateLimits.LinkWritePerMinute, TimeSpan.FromMinutes(1)));
     // Password guessing: tight limit per visitor and link.
-    o.AddPolicy("unlock", c => Fixed($"unlock:{Ip(c)}:{c.Request.RouteValues["slug"] ?? c.Request.RouteValues["code"]}", rateLimits.UnlockPerMinute, TimeSpan.FromMinutes(1)));
+    // Codes resolve case-insensitively (SlugRules.Key), so the bucket must too: keyed on the raw route value,
+    // "Z2972", "z2972", "Z2972"... each got their own 10/min and multiplied the guessing budget.
+    static string Code(HttpContext c) => ((c.Request.RouteValues["slug"] ?? c.Request.RouteValues["code"])?.ToString() ?? "").ToLowerInvariant();
+    o.AddPolicy("unlock", c => Fixed($"unlock:{Ip(c)}:{Code(c)}", rateLimits.UnlockPerMinute, TimeSpan.FromMinutes(1)));
     // ARC-003 §4.1 (ARC-013 values OPEN, technical defaults): the content API partitions by IP and code.
-    o.AddPolicy("content-read", c => Fixed($"cread:{Ip(c)}:{c.Request.RouteValues["code"]}", rateLimits.ContentReadPerMinute, TimeSpan.FromMinutes(1)));
+    o.AddPolicy("content-read", c => Fixed($"cread:{Ip(c)}:{Code(c)}", rateLimits.ContentReadPerMinute, TimeSpan.FromMinutes(1)));
     o.AddPolicy("content-write", c => Fixed($"cwrite:{c.User.FindFirst("sub")?.Value ?? Ip(c)}", rateLimits.ContentWritePerMinute, TimeSpan.FromMinutes(1)));
 });
 
@@ -276,6 +292,19 @@ app.UseForwardedHeaders();
 app.UseSerilogRequestLogging();
 // Any exception that escapes an endpoint becomes a clean problem+json (ApiExceptionHandler), in every environment.
 app.UseExceptionHandler();
+app.UseNulGuard();
+// Login, refresh, register, device token... carry tokens or one-time secrets: never stored by a browser or proxy cache.
+app.Use(async (http, next) =>
+{
+    if (http.Request.Path.StartsWithSegments("/api/auth", StringComparison.OrdinalIgnoreCase))
+        http.Response.OnStarting(() =>
+        {
+            http.Response.Headers.CacheControl = "no-store";
+            http.Response.Headers.Pragma = "no-cache";
+            return Task.CompletedTask;
+        });
+    await next();
+});
 app.UseHostRouting();
 
 if (app.Environment.IsDevelopment())
