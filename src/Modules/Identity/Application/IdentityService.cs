@@ -48,8 +48,38 @@ public sealed class IdentityService(
     /// <summary>Spec §7.4: minimum password length.</summary>
     public const int MinPasswordLength = 10;
     private const int MaxResetEmailsPerDay = 3;
+    /// <summary>Spec §7.4: "sends to one address are capped at 3 per 24 h" across confirm-email (register, re-register,
+    /// resend) and account-exists.</summary>
+    private const int MaxAccountEmailsPerDay = 3;
     /// <summary>A real bcrypt hash of a random value, verified against for unknown addresses so they cost the same.</summary>
     private static readonly string DummyHash = BCrypt.Net.BCrypt.HashPassword(Guid.NewGuid().ToString("N"));
+
+    /// <summary>Spec §7.4 password rules: 10-128 characters, and not only whitespace (ten spaces used to be accepted).
+    /// Spaces inside a password stay allowed. Null when the password is acceptable.</summary>
+    public static Error? ValidateNewPassword(string? password)
+    {
+        if (password is not { Length: >= MinPasswordLength and <= 128 })
+            return Error.Validation("Password must be between 10 and 128 characters.");
+        if (string.IsNullOrWhiteSpace(password))
+            return Error.Validation("Password cannot be only spaces.");
+        return null;
+    }
+
+    /// <summary>Serialises per-user email sends (reset cap, confirmation cap) so "count, then insert" is atomic:
+    /// a transaction-scoped advisory lock keyed on the purpose and the user id.</summary>
+    private async Task LockUserAsync(string purpose, Guid userId, CancellationToken ct)
+    {
+        var key = $"zaagl.{purpose}:{userId}";
+        await db.Database.ExecuteSqlInterpolatedAsync($"SELECT pg_advisory_xact_lock(hashtextextended({key}, 0))", ct);
+    }
+
+    /// <summary>Confirm-email and account-exists emails queued for this user in the last 24 h (the outbox keeps sent rows).</summary>
+    private Task<int> RecentAccountEmailsAsync(Guid userId, CancellationToken ct)
+    {
+        var dayAgo = DateTime.UtcNow.AddHours(-24);
+        return db.EmailOutbox.CountAsync(o => o.UserId == userId
+            && (o.Kind == EmailKinds.ConfirmEmail || o.Kind == EmailKinds.AccountExists) && o.CreatedAt >= dayAgo, ct);
+    }
 
     // ---- Registration (spec §7.4: always the same response shape) --------
 
@@ -57,8 +87,7 @@ public sealed class IdentityService(
     {
         var email = NormalizeEmail(request.Email);
         if (email is null) return new RegisterOutcome(Error.Validation("A valid email address is required."), null);
-        if (request.Password is not { Length: >= MinPasswordLength and <= 128 })
-            return new RegisterOutcome(Error.Validation("Password must be between 10 and 128 characters."), null);
+        if (ValidateNewPassword(request.Password) is { } passwordError) return new RegisterOutcome(passwordError, null);
 
         var existing = await db.Users.FirstOrDefaultAsync(u => u.Email == email, ct);
         string? devToken = null;
@@ -85,28 +114,46 @@ public sealed class IdentityService(
             }
             devToken = await QueueConfirmationAsync(user, ct);
         }
-        else if (!existing.EmailConfirmed)
-        {
-            // Restart the registration: replace the password, rotate the stamp, requeue confirmation.
-            existing.PasswordHash = BCrypt.Net.BCrypt.HashPassword(request.Password);
-            existing.SecurityStamp = Guid.CreateVersion7();
-            await db.SaveChangesAsync(ct);
-            devToken = await QueueConfirmationAsync(existing, ct);
-        }
         else
         {
-            // Spec §7.4 equal work: the other two paths pay for a bcrypt hash; without one here, a fast answer
-            // revealed that the address already has a confirmed account.
-            _ = BCrypt.Net.BCrypt.HashPassword(request.Password);
-            await EmailQueue.QueueAccountEmailAsync(db, existing.Id, EmailKinds.AccountExists, null, null, ct);
-            logger.LogInformation("Register: address {Email} already has a confirmed account; queued account-exists notice.", email);
+            // Spec §7.4 equal work: every path pays for one bcrypt hash, so timing never tells the paths apart.
+            var newHash = BCrypt.Net.BCrypt.HashPassword(request.Password);
+            await using var tx = await db.Database.BeginTransactionAsync(ct);
+            await LockUserAsync("account-email", existing.Id, ct);
+            var recent = await RecentAccountEmailsAsync(existing.Id, ct);
+            if (recent >= MaxAccountEmailsPerDay)
+            {
+                // Over the per-address cap: nothing changes and nothing is sent (the response stays the same 202).
+                logger.LogInformation("Register for user {UserId} ignored: {Count} account emails already in the last 24 h.", existing.Id, recent);
+            }
+            else if (!existing.EmailConfirmed)
+            {
+                // Restart the registration: replace the password, rotate the stamp, requeue confirmation. Every earlier
+                // confirm link dies here (F2 pre-hijack: a victim's old link used to confirm the attacker's password).
+                existing.PasswordHash = newHash;
+                existing.SecurityStamp = Guid.CreateVersion7();
+                await db.SaveChangesAsync(ct);
+                devToken = await QueueConfirmationAsync(existing, ct);
+            }
+            else
+            {
+                await EmailQueue.QueueAccountEmailAsync(db, existing.Id, EmailKinds.AccountExists, null, null, ct);
+                logger.LogInformation("Register: address {Email} already has a confirmed account; queued account-exists notice.", email);
+            }
+            await tx.CommitAsync(ct);
         }
 
         return new RegisterOutcome(null, devToken);
     }
 
+    /// <summary>Issues a new confirm-email token and queues its email. Every older unused confirm token of this user is
+    /// invalidated first, so only the newest link can confirm the account (and only for the password set with it).</summary>
     private async Task<string> QueueConfirmationAsync(User user, CancellationToken ct)
     {
+        // Tracked (not ExecuteUpdate) so a token this context already tracks is updated too; saved with the new token below.
+        var now = DateTime.UtcNow;
+        foreach (var old in await db.EmailTokens.Where(t => t.UserId == user.Id && t.Kind == EmailTokenKind.ConfirmEmail && t.UsedAt == null).ToListAsync(ct))
+            old.UsedAt = now;
         var (raw, hash) = NewToken();
         db.EmailTokens.Add(new EmailToken
         {
@@ -141,7 +188,20 @@ public sealed class IdentityService(
     {
         var normalized = NormalizeEmail(email);
         var user = normalized is null ? null : await db.Users.FirstOrDefaultAsync(u => u.Email == normalized && !u.EmailConfirmed, ct);
-        return user is null ? null : await QueueConfirmationAsync(user, ct);
+        if (user is null) return null;
+
+        // Same per-address cap as registration (spec §7.4 "limited like registration"), counted atomically.
+        await using var tx = await db.Database.BeginTransactionAsync(ct);
+        await LockUserAsync("account-email", user.Id, ct);
+        var recent = await RecentAccountEmailsAsync(user.Id, ct);
+        if (recent >= MaxAccountEmailsPerDay)
+        {
+            logger.LogInformation("Resend-confirmation for user {UserId} not sent: {Count} account emails already in the last 24 h.", user.Id, recent);
+            return null;
+        }
+        var token = await QueueConfirmationAsync(user, ct);
+        await tx.CommitAsync(ct);
+        return token;
     }
 
     // ---- Password reset -----------------------------------------------------
@@ -153,7 +213,10 @@ public sealed class IdentityService(
         if (user is null) return null;
 
         // Spec: at most 3 reset emails per address per 24 h, so nobody can flood a victim's inbox. The caller's
-        // response stays the same either way (no enumeration).
+        // response stays the same either way (no enumeration). Count and insert run under a per-user advisory lock in
+        // one transaction, so concurrent requests cannot all see "2 sent" and each send one more (9 parallel -> 9 emails).
+        await using var tx = await db.Database.BeginTransactionAsync(ct);
+        await LockUserAsync("password-reset", user.Id, ct);
         var dayAgo = DateTime.UtcNow.AddHours(-24);
         var recent = await db.EmailTokens.CountAsync(t => t.UserId == user.Id && t.Kind == EmailTokenKind.PasswordReset && t.CreatedAt >= dayAgo, ct);
         if (recent >= MaxResetEmailsPerDay)
@@ -171,14 +234,14 @@ public sealed class IdentityService(
             ExpiresAt = DateTime.UtcNow.Add(ResetTokenLifetime),
         });
         await EmailQueue.QueueAccountEmailAsync(db, user.Id, EmailKinds.PasswordReset, new PasswordResetPayload(raw), null, ct);
+        await tx.CommitAsync(ct);
         logger.LogInformation("Queued password-reset for user {UserId} (dev-mode devOnlyConfirmToken also returned).", user.Id);
         return raw;
     }
 
     public async Task<Result<bool>> ResetPasswordAsync(Guid userId, string token, string newPassword, CancellationToken ct)
     {
-        if (newPassword is not { Length: >= MinPasswordLength and <= 128 })
-            return Error.Validation("Password must be between 10 and 128 characters.");
+        if (ValidateNewPassword(newPassword) is { } passwordError) return passwordError;
 
         var hash = Hash(token);
         var entry = await db.EmailTokens.FirstOrDefaultAsync(
@@ -213,22 +276,26 @@ public sealed class IdentityService(
         var email = NormalizeEmail(request.Email);
         var user = email is null ? null : await db.Users.FirstOrDefaultAsync(u => u.Email == email, ct);
 
-        if (user is not null && await IsLockedAsync(user.Id, ipPartition, ct))
+        // Spec §7.4 no enumeration, including by timing: failures are tracked for EVERY address, known or not. An unknown
+        // address gets a stable pseudo-subject (a hash of the normalised address), so it accumulates failures, reaches the
+        // (address, IP) lock and pays the same progressive delay as a real account. The locked path pays the same bcrypt
+        // and the same delay too (it used to answer fast, and unknown addresses always waited exactly 1 s).
+        var subject = user?.Id ?? UnknownLoginSubject(email ?? (request.Email ?? "").Trim().ToLowerInvariant());
+
+        if (await IsLockedAsync(subject, ipPartition, ct))
         {
-            // Spec §7.4: a pair in its wait period gets the exact same response as wrong credentials.
+            // A pair in its wait period gets the exact same response as wrong credentials, after the same work.
+            _ = BCrypt.Net.BCrypt.Verify(request.Password ?? "", user?.PasswordHash ?? DummyHash);
+            await ProgressiveDelayAsync(await RecentFailuresAsync(subject, ct), ct);
             return new LoginOutcome(null, null, Error.Unauthorized("Invalid email or password."));
         }
 
-        if (user?.PasswordHash is null || !BCrypt.Net.BCrypt.Verify(request.Password ?? "", user.PasswordHash))
+        // Always one bcrypt verification: against the user's hash, or the dummy hash for an unknown address or an
+        // account without a password (social-only).
+        var passwordOk = BCrypt.Net.BCrypt.Verify(request.Password ?? "", user?.PasswordHash ?? DummyHash);
+        if (!passwordOk || user?.PasswordHash is null)
         {
-            if (user is not null) await RecordFailureAsync(user.Id, ipPartition, ct);
-            else
-            {
-                // Spec §7.4 no enumeration: an unknown address pays the same bcrypt cost and the same first-failure
-                // wait as a known one (it used to answer in ~20 ms against >1 s for a real account).
-                _ = BCrypt.Net.BCrypt.Verify(request.Password ?? "", DummyHash);
-                await ProgressiveDelayAsync(1, ct);
-            }
+            await RecordFailureAsync(subject, ipPartition, ct);
             return new LoginOutcome(null, null, Error.Unauthorized("Invalid email or password."));
         }
 
@@ -292,6 +359,11 @@ public sealed class IdentityService(
         {
             var existing = await db.RefreshTokens.AsNoTracking().FirstOrDefaultAsync(t => t.TokenHash == hash, ct);
             if (existing is null) return Error.Unauthorized("Invalid refresh token.");
+
+            // Never used, but revoked (logout, logout-everywhere, password reset) or expired: not a replay, just a dead
+            // token. Say so plainly; reuse detection below still covers every token that WAS used.
+            if (existing.UsedAt is null)
+                return Error.Unauthorized(existing.RevokedAt is not null ? "This session has been signed out. Please sign in again." : "Invalid refresh token.");
 
             if (existing.UsedAt is { } usedAt && existing.RevokedAt is null && now - usedAt < TimeSpan.FromSeconds(30))
                 return new Error("refresh_raced", "This refresh token was already rotated a moment ago; retry with the token your last refresh returned.");
@@ -368,14 +440,31 @@ public sealed class IdentityService(
 
     private async Task RecordFailureAsync(Guid userId, string ipPartition, CancellationToken ct)
     {
+        // Rows older than both windows (15 min lock, 1 h delay) are dead weight: drop this subject's, so failures
+        // recorded for made-up addresses cannot grow the table without bound.
+        var stale = DateTime.UtcNow.AddHours(-2);
+        await db.LoginFailures.Where(f => f.UserId == userId && f.CreatedAt < stale).ExecuteDeleteAsync(ct);
         db.LoginFailures.Add(new LoginFailure { UserId = userId, IpPartition = ipPartition });
         await db.SaveChangesAsync(ct);
 
         // Progressive per-account delay across all partitions, so an attacker spreading guesses across
         // many IPs still slows down, but nobody (including the real owner) can be locked out entirely.
+        await ProgressiveDelayAsync(await RecentFailuresAsync(userId, ct), ct);
+    }
+
+    private Task<int> RecentFailuresAsync(Guid subject, CancellationToken ct)
+    {
         var since = DateTime.UtcNow.AddHours(-1);
-        var recent = await db.LoginFailures.CountAsync(f => f.UserId == userId && f.CreatedAt >= since, ct);
-        await ProgressiveDelayAsync(recent, ct);
+        return db.LoginFailures.CountAsync(f => f.UserId == subject && f.CreatedAt >= since, ct);
+    }
+
+    /// <summary>The login-failure subject for an address with no account: the first 16 bytes of SHA-256 over a
+    /// domain-separated normalised address. Stable per address, never equal to a real (version 7) user id in practice,
+    /// and the address itself is not stored.</summary>
+    internal static Guid UnknownLoginSubject(string normalizedEmail)
+    {
+        var digest = SHA256.HashData(Encoding.UTF8.GetBytes("zaagl.login-unknown:" + normalizedEmail));
+        return new Guid(digest.AsSpan(0, 16));
     }
 
     private async Task ClearFailuresAsync(Guid userId, string ipPartition, CancellationToken ct) =>

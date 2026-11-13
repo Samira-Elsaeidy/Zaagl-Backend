@@ -8,13 +8,13 @@ namespace Zaagl.Links.Tests;
 /// <summary>
 /// The real Zaagl.Api Program (every endpoint, the real authentication and authorization setup) for tests
 /// that must see the app exactly as it is mapped. Every hosted service is removed, so nothing sweeps or
-/// migrates the shared database; only requests a test sends touch PostgreSQL (localhost:5433). Valkey is
+/// migrates the test database; only requests a test sends touch PostgreSQL (zaagl_test, tests/Shared/TestDatabase.cs). Valkey is
 /// never contacted unless a request uses the cache.
 /// </summary>
 public sealed class RealApiFactory : WebApplicationFactory<Program>
 {
     public const string ApiHost = "api.zaa.test";
-    public static readonly string ConnectionString = Environment.GetEnvironmentVariable("ZAAGL_TEST_PG") ?? "Host=localhost;Port=5433;Database=zaagl;Username=zaagl;Password=zaagl_dev";
+    public static readonly string ConnectionString = Zaagl.Tests.Shared.TestDatabaseMigrator.ConnectionString;
 
     protected override void ConfigureWebHost(IWebHostBuilder builder)
     {
@@ -22,7 +22,7 @@ public sealed class RealApiFactory : WebApplicationFactory<Program>
         var settings = new Dictionary<string, string>
         {
             ["ConnectionStrings:Postgres"] = ConnectionString,
-            ["ConnectionStrings:Valkey"] = "localhost:6379,abortConnect=false",
+            ["ConnectionStrings:Valkey"] = Zaagl.Tests.Shared.TestDatabase.Valkey,
             ["Database:MigrateOnStartup"] = "false",
             ["Jwt:Key"] = "links-tests-jwt-signing-key-0123456789abcdef-0123",
             ["ShortLinks:BaseUrl"] = "http://zaa.test",

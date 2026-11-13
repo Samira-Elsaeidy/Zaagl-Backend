@@ -187,16 +187,18 @@ public sealed class EmailDispatcher(
         var opts = options.Value;
         return row.Kind switch
         {
-            EmailKinds.ConfirmEmail => EmailTemplates.ConfirmEmail(toEmail, BuildFragmentUrl(opts, "/account/confirm-email", row.UserId!.Value, Parse<ConfirmEmailPayload>(row).Token)),
-            EmailKinds.PasswordReset => EmailTemplates.PasswordReset(toEmail, BuildFragmentUrl(opts, "/account/reset-password", row.UserId!.Value, Parse<PasswordResetPayload>(row).Token)),
+            EmailKinds.ConfirmEmail => EmailTemplates.ConfirmEmail(toEmail, BuildFragmentUrl(opts.ApiBaseUrl, "/account/confirm-email", row.UserId!.Value, Parse<ConfirmEmailPayload>(row).Token)),
+            EmailKinds.PasswordReset => EmailTemplates.PasswordReset(toEmail, BuildFragmentUrl(opts.WebBaseUrl, "/reset-password", row.UserId!.Value, Parse<PasswordResetPayload>(row).Token)),
             EmailKinds.AccountExists => EmailTemplates.AccountExists(toEmail),
             EmailKinds.SecurityNotice => EmailTemplates.SecurityNotice(toEmail, Parse<SecurityNoticePayload>(row).Message),
             _ => EmailTemplates.Digest(toEmail, row.Kind, row.Items.Select(i => (i.Slug, i.ExpiresAtSnapshot)).ToList()),
         };
     }
 
-    private static string BuildFragmentUrl(EmailOptions opts, string path, Guid userId, string token) =>
-        $"{opts.ApiBaseUrl.TrimEnd('/')}{path}#u={userId}&t={Uri.EscapeDataString(token)}";
+    /// <summary>Confirm links go to the API page (Hosts:Api/account/confirm-email, spec §7.4); reset links go to the
+    /// website's /reset-password page, which collects the new password. Either way the token is in the fragment only.</summary>
+    internal static string BuildFragmentUrl(string baseUrl, string path, Guid userId, string token) =>
+        $"{baseUrl.TrimEnd('/')}{path}#u={userId}&t={Uri.EscapeDataString(token)}";
 
     private static T Parse<T>(EmailOutbox row) => JsonSerializer.Deserialize<T>(row.PayloadJson)
         ?? throw new InvalidOperationException($"Outbox row {row.Id} has an unreadable payload for kind {row.Kind}.");

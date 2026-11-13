@@ -8,15 +8,13 @@ using Microsoft.AspNetCore.Http;
 namespace Zaagl.Api.Tests.Harness;
 
 /// <summary>
-/// The shared dev PostgreSQL (spec says tests should own their DB - QA-002 - but that harness does not exist
-/// yet). Override with ZAAGL_TEST_PG. Every row this project creates carries a unique name; nothing here
+/// The tests' own PostgreSQL database (zaagl_test, created and migrated on first use; never the dev
+/// zaagl database - see tests/Shared/TestDatabase.cs). Override with ZAAGL_TEST_PG. Every row this project creates carries a unique name; nothing here
 /// deletes rows it did not create.
 /// </summary>
 public static class TestDb
 {
-    public static string ConnectionString =>
-        Environment.GetEnvironmentVariable("ZAAGL_TEST_PG")
-        ?? "Host=localhost;Port=5433;Database=zaagl;Username=zaagl;Password=zaagl_dev";
+    public static string ConnectionString => Zaagl.Tests.Shared.TestDatabaseMigrator.ConnectionString;
 }
 
 /// <summary>

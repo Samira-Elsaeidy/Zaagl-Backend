@@ -140,6 +140,19 @@ public sealed partial class LinkService(
                             : Result<LinkDto>.Ok(stored.Dto!);
                 }
 
+                // The Free plan's monthly cap, authoritative here: the count above (Phase B) is only a fast refusal, and
+                // concurrent creations could all pass it. A per-owner advisory lock held to commit serialises them, so
+                // count + insert are atomic. Re-taken on every allocation attempt (each attempt is its own transaction).
+                if (limits.MonthlyLinks is { } monthlyCap)
+                {
+                    var lockKey = $"zaagl.monthly-links:{userId}";
+                    await db.Database.ExecuteSqlInterpolatedAsync($"SELECT pg_advisory_xact_lock(hashtextextended({lockKey}, 0))", c);
+                    var nowInTx = DateTime.UtcNow;
+                    var monthStartInTx = new DateTime(nowInTx.Year, nowInTx.Month, 1, 0, 0, 0, DateTimeKind.Utc);
+                    if (await db.Links.CountAsync(l => l.OwnerId == userId && l.CreatedAt >= monthStartInTx, c) >= monthlyCap)
+                        return Error.PlanRequired($"The Free plan allows {monthlyCap} links per month. Upgrade to Starter for unlimited links.");
+                }
+
                 // Spec §11 rule 37: checked inside this transaction, not in Phase B.
                 if (await BlockedUrlErrorAsync(n, c) is { } blocked) return blocked;
                 return null;
@@ -485,6 +498,12 @@ public sealed partial class LinkService(
         // Same plan cap as create and renew (a null Policy keeps the current expiry, so it is not checked).
         if (input.Policy is { } requestedPolicy)
         {
+            // Same rule as create: a NEW expiry must be in the future. Sending back the current one unchanged (even if it
+            // has passed, e.g. editing the title of an expired link) still passes; "unchanged" uses PlanExpiry's own
+            // one-second tolerance because the stored value round-trips through JSON.
+            if (requestedPolicy.ExpiresAt is { } requestedExpiry && requestedExpiry.ToUniversalTime() <= DateTime.UtcNow
+                && !(link.Policy?.ExpiresAt is { } currentExpiry && Math.Abs((currentExpiry - requestedExpiry.ToUniversalTime()).TotalSeconds) < 1))
+                return Error.Validation("The expiry date must be in the future.");
             var planExpiry = PlanExpiry(requestedPolicy.ExpiresAt, link.Policy?.ExpiresAt, limits, time.GetUtcNow().UtcDateTime);
             if (!planExpiry.IsSuccess) return planExpiry.Error!;
             input = input with { Policy = requestedPolicy with { ExpiresAt = planExpiry.Value } };
@@ -930,6 +949,14 @@ public sealed partial class LinkService(
         if (n.Fallback is { } fallback
             && await blocklist.IsBlockedAsync(new Uri(fallback).IdnHost.TrimEnd('.').ToLowerInvariant(), fallback, ct))
             return Error.Validation("fallback-blocked: this fallback URL is not allowed.");
+        // Every routing-rule URL (device, country, A/B split) is a destination too: a blocked host or URL prefix (and the
+        // shortener hosts the blocklist carries) must not be reachable by hiding it in a rule (pen test F12).
+        foreach (var ruleUrl in n.Rules.Select(r => r.Url).Distinct(StringComparer.Ordinal))
+        {
+            if (string.Equals(ruleUrl, n.Destination, StringComparison.Ordinal)) continue;
+            if (await blocklist.IsBlockedAsync(new Uri(ruleUrl).IdnHost.TrimEnd('.').ToLowerInvariant(), ruleUrl, ct))
+                return Error.Validation("destination-blocked: a routing rule URL is not allowed.");
+        }
         return null;
     }
 

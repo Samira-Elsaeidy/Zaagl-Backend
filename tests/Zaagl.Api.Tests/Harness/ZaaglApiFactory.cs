@@ -61,7 +61,7 @@ public class ZaaglApiFactory : WebApplicationFactory<Program>, IAsyncLifetime
         var settings = new Dictionary<string, string>
         {
             ["ConnectionStrings:Postgres"] = TestDb.ConnectionString,
-            ["ConnectionStrings:Valkey"] = "localhost:6379,abortConnect=false",
+            ["ConnectionStrings:Valkey"] = Zaagl.Tests.Shared.TestDatabase.Valkey,
             ["Database:MigrateOnStartup"] = "false",
             ["Jwt:Key"] = JwtKey,
             ["ShortLinks:BaseUrl"] = $"http://{ShortHost}",

@@ -15,7 +15,7 @@ namespace Zaagl.Links.Tests;
 /// </summary>
 public sealed class IdentityServiceTests : IDisposable
 {
-    private static readonly string ConnectionString = Environment.GetEnvironmentVariable("ZAAGL_TEST_PG") ?? "Host=localhost;Port=5433;Database=zaagl;Username=zaagl;Password=zaagl_dev";
+    private static readonly string ConnectionString = Zaagl.Tests.Shared.TestDatabaseMigrator.ConnectionString;
     private readonly IdentityDbContext _db;
     private readonly IdentityService _identity;
 
@@ -280,6 +280,174 @@ public sealed class IdentityServiceTests : IDisposable
         Assert.False(result.IsSuccess);
         Assert.Equal("plan_required", result.Error!.Code);
     }
+
+    // ---- Pen test round 2 ------------------------------------------------------------------------------------------------
+
+    [Fact]
+    public async Task F2_pre_hijack_the_victims_old_confirm_link_dies_when_the_address_is_registered_again()
+    {
+        // Victim registers and does not confirm yet; attacker re-registers the same address with their own password.
+        var email = RandomEmail();
+        var victim = await _identity.RegisterAsync(new(email, "victim-password-1", null), default);
+        var attacker = await _identity.RegisterAsync(new(email, "attacker-password-2", null), default);
+        var userId = await _db.Users.Where(u => u.Email == email).Select(u => u.Id).FirstAsync();
+
+        // The victim's original link must no longer confirm the account (it used to, with the attacker's password in force).
+        var oldLink = await _identity.ConfirmEmailAsync(userId, victim.DevOnlyConfirmToken!, default);
+        Assert.False(oldLink.IsSuccess);
+        Assert.False(await _db.Users.Where(u => u.Id == userId).Select(u => u.EmailConfirmed).SingleAsync());
+
+        // Only the newest link works.
+        Assert.True((await _identity.ConfirmEmailAsync(userId, attacker.DevOnlyConfirmToken!, default)).IsSuccess);
+    }
+
+    [Fact]
+    public async Task F2_resend_confirmation_invalidates_the_previous_link()
+    {
+        var email = RandomEmail();
+        var first = await _identity.RegisterAsync(new(email, "password123", null), default);
+        var resent = await _identity.ResendConfirmationAsync(email, default);
+        Assert.NotNull(resent);
+        var userId = await _db.Users.Where(u => u.Email == email).Select(u => u.Id).FirstAsync();
+        Assert.False((await _identity.ConfirmEmailAsync(userId, first.DevOnlyConfirmToken!, default)).IsSuccess);
+        Assert.True((await _identity.ConfirmEmailAsync(userId, resent!, default)).IsSuccess);
+    }
+
+    [Fact]
+    public async Task F9_confirmation_emails_to_one_address_are_capped_at_three_per_day_with_the_same_response()
+    {
+        var email = RandomEmail();
+        var first = await _identity.RegisterAsync(new(email, "password123", null), default);
+        var second = await _identity.ResendConfirmationAsync(email, default);
+        var third = await _identity.RegisterAsync(new(email, "password456", null), default);
+        var fourth = await _identity.RegisterAsync(new(email, "password789", null), default);
+        var fifth = await _identity.ResendConfirmationAsync(email, default);
+
+        Assert.NotNull(first.DevOnlyConfirmToken);
+        Assert.NotNull(second);
+        Assert.NotNull(third.DevOnlyConfirmToken);
+        // Over the cap: same (error-free) outcome, but nothing queued and nothing changed.
+        Assert.Null(fourth.Error);
+        Assert.Null(fourth.DevOnlyConfirmToken);
+        Assert.Null(fifth);
+
+        var userId = await _db.Users.Where(u => u.Email == email).Select(u => u.Id).FirstAsync();
+        Assert.Equal(3, await _db.EmailOutbox.CountAsync(o => o.UserId == userId && o.Kind == "confirm-email"));
+        // The capped re-register did not replace the password: the third one is still in force once confirmed.
+        Assert.True((await _identity.ConfirmEmailAsync(userId, third.DevOnlyConfirmToken!, default)).IsSuccess);
+        Assert.Null((await _identity.LoginAsync(new(email, "password456", null), $"v4:{RandomPartition()}", default)).Error);
+    }
+
+    [Fact]
+    public async Task F9_concurrent_resends_never_exceed_the_cap()
+    {
+        var email = RandomEmail();
+        await _identity.RegisterAsync(new(email, "password123", null), default);
+        var results = await Task.WhenAll(Enumerable.Range(0, 8).Select(_ => NewIdentityService().ResendConfirmationAsync(email, default)));
+        Assert.Equal(2, results.Count(r => r is not null)); // 1 from register + 2 resends = the 3-per-day cap
+        var userId = await _db.Users.Where(u => u.Email == email).Select(u => u.Id).FirstAsync();
+        Assert.Equal(3, await _db.EmailOutbox.CountAsync(o => o.UserId == userId && o.Kind == "confirm-email"));
+    }
+
+    [Fact]
+    public async Task F5_concurrent_forgot_password_requests_send_at_most_three_reset_emails()
+    {
+        var email = RandomEmail();
+        var registered = await _identity.RegisterAsync(new(email, "password123", null), default);
+        var userId = await ConfirmAsync(email, registered.DevOnlyConfirmToken!);
+
+        var results = await Task.WhenAll(Enumerable.Range(0, 9).Select(_ => NewIdentityService().ForgotPasswordAsync(email, default)));
+        Assert.Equal(3, results.Count(r => r is not null));
+        Assert.Equal(3, await _db.EmailOutbox.CountAsync(o => o.UserId == userId && o.Kind == "password-reset"));
+    }
+
+    [Theory]
+    [InlineData("          ")]
+    [InlineData("\t\t\t\t\t\t\t\t\t\t\t")]
+    public async Task F8_whitespace_only_passwords_are_refused_on_register_and_reset(string password)
+    {
+        var refused = await _identity.RegisterAsync(new(RandomEmail(), password, null), default);
+        Assert.Equal("validation", refused.Error?.Code ?? "none", ignoreCase: true);
+
+        var email = RandomEmail();
+        var registered = await _identity.RegisterAsync(new(email, "password123", null), default);
+        var userId = await ConfirmAsync(email, registered.DevOnlyConfirmToken!);
+        var token = await _identity.ForgotPasswordAsync(email, default);
+        var reset = await _identity.ResetPasswordAsync(userId, token!, password, default);
+        Assert.False(reset.IsSuccess);
+
+        // Spaces inside a password stay allowed.
+        var spaced = await _identity.ResetPasswordAsync(userId, token!, "correct horse battery", default);
+        Assert.True(spaced.IsSuccess);
+    }
+
+    [Fact]
+    public async Task F3_unknown_addresses_accumulate_failures_and_lock_like_real_accounts()
+    {
+        var partition = $"v4:{RandomPartition()}";
+        var unknown = RandomEmail(); // never registered
+        for (var i = 0; i < 5; i++)
+            Assert.Equal("unauthorized", (await _identity.LoginAsync(new(unknown, "wrong-password", null), partition, default)).Error!.Code);
+
+        var subject = IdentityService.UnknownLoginSubject(unknown);
+        Assert.Equal(5, await _db.LoginFailures.CountAsync(f => f.UserId == subject && f.IpPartition == partition));
+
+        // Locked pair: the same answer, after the same bcrypt + progressive delay (>= 5 s with 5 recent failures).
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+        var locked = await _identity.LoginAsync(new(unknown, "wrong-password", null), partition, default);
+        sw.Stop();
+        Assert.Equal("unauthorized", locked.Error!.Code);
+        Assert.True(sw.Elapsed >= TimeSpan.FromSeconds(4.5), $"locked unknown pair answered in {sw.Elapsed}");
+    }
+
+    [Fact]
+    public async Task F3_a_locked_known_pair_pays_the_progressive_delay_instead_of_answering_fast()
+    {
+        var email = RandomEmail();
+        var registered = await _identity.RegisterAsync(new(email, "password123", null), default);
+        await ConfirmAsync(email, registered.DevOnlyConfirmToken!);
+        var partition = $"v4:{RandomPartition()}";
+        for (var i = 0; i < 5; i++) await _identity.LoginAsync(new(email, "wrong-password", null), partition, default);
+
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+        var locked = await _identity.LoginAsync(new(email, "wrong-password", null), partition, default);
+        sw.Stop();
+        Assert.Equal("unauthorized", locked.Error!.Code);
+        Assert.True(sw.Elapsed >= TimeSpan.FromSeconds(4.5), $"locked known pair answered in {sw.Elapsed}");
+    }
+
+    [Fact]
+    public async Task I2_refreshing_a_token_revoked_by_logout_everywhere_says_signed_out_not_reuse()
+    {
+        var email = RandomEmail();
+        var registered = await _identity.RegisterAsync(new(email, "password123", null), default);
+        var userId = await ConfirmAsync(email, registered.DevOnlyConfirmToken!);
+        var session = (await _identity.LoginAsync(new(email, "password123", null), $"v4:{RandomPartition()}", default)).Session!;
+
+        await _identity.LogoutEverywhereAsync(userId, default);
+
+        var refreshed = await _identity.RefreshAsync(session.RefreshToken, default);
+        Assert.Equal("unauthorized", refreshed.Error!.Code);
+        Assert.DoesNotContain("already been used", refreshed.Error.Message);
+        Assert.Contains("signed out", refreshed.Error.Message);
+    }
+
+    [Fact]
+    public async Task I2_a_replayed_used_token_is_still_treated_as_reuse()
+    {
+        var session = await RegisterConfirmAndLoginAsync();
+        var rotated = await _identity.RefreshAsync(session.RefreshToken, default);
+        Assert.Null(rotated.Error);
+        await _db.Database.ExecuteSqlInterpolatedAsync(
+            $"UPDATE identity.refresh_tokens SET used_at = {DateTime.UtcNow.AddMinutes(-5)} WHERE token_hash = {Hash(session.RefreshToken)}");
+
+        var replay = await _identity.RefreshAsync(session.RefreshToken, default);
+        Assert.Contains("already been used", replay.Error!.Message);
+        Assert.NotNull((await _identity.RefreshAsync(rotated.Value!.RefreshToken, default)).Error); // family revoked
+    }
+
+    private static string RandomPartition() =>
+        $"10.{System.Security.Cryptography.RandomNumberGenerator.GetInt32(256)}.{System.Security.Cryptography.RandomNumberGenerator.GetInt32(256)}.{System.Security.Cryptography.RandomNumberGenerator.GetInt32(1, 255)}";
 
     private async Task<Guid> ConfirmAsync(string email, string token)
     {

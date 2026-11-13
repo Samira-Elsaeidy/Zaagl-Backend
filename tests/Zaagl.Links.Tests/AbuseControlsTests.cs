@@ -12,7 +12,7 @@ namespace Zaagl.Links.Tests;
 /// <summary>Spec §7.15. Real local dev Postgres, same convention as PurgeJobTests/GuestCreationTests.</summary>
 public sealed class AbuseControlsTests : IDisposable
 {
-    private static readonly string ConnectionString = Environment.GetEnvironmentVariable("ZAAGL_TEST_PG") ?? "Host=localhost;Port=5433;Database=zaagl;Username=zaagl;Password=zaagl_dev";
+    private static readonly string ConnectionString = Zaagl.Tests.Shared.TestDatabaseMigrator.ConnectionString;
     private readonly ServiceProvider _services;
     private readonly LinksDbContext _db;
 
@@ -224,5 +224,79 @@ public sealed class CaptchaTests
     {
         var result = await new NoOpCaptchaVerifier().VerifyAsync(null, "guest-link", "app.zaa.gl", default);
         Assert.True(result.IsSuccess);
+    }
+}
+
+/// <summary>CAPTCHA pen test C3/C4: TurnstileVerifier against a scripted siteverify endpoint (no network).</summary>
+public sealed class TurnstileVerifierTests
+{
+    private const string RealSecret = "0x4AAAAAAA-real-looking-secret-value";
+
+    private sealed class StubHandler(Func<HttpResponseMessage> respond) : HttpMessageHandler
+    {
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken) =>
+            Task.FromResult(respond());
+    }
+
+    private static TurnstileVerifier Verifier(Func<HttpResponseMessage> respond, string secret = RealSecret) =>
+        new(new HttpClient(new StubHandler(respond)),
+            Options.Create(new CaptchaOptions { Enabled = true, Secret = secret }),
+            NullLogger<TurnstileVerifier>.Instance);
+
+    private static HttpResponseMessage Json(string body) =>
+        new(System.Net.HttpStatusCode.OK) { Content = new StringContent(body, System.Text.Encoding.UTF8, "application/json") };
+
+    private static string Now() => DateTimeOffset.UtcNow.ToString("O");
+
+    [Fact]
+    public async Task A_fresh_matching_token_passes()
+    {
+        var result = await Verifier(() => Json($$"""{"success":true,"action":"register","hostname":"app.zaa.gl","challenge_ts":"{{Now()}}"}"""))
+            .VerifyAsync("tok", "register", "app.zaa.gl", default);
+        Assert.True(result.IsSuccess);
+    }
+
+    [Fact]
+    public async Task C3_a_missing_challenge_ts_is_invalid_for_a_real_secret()
+    {
+        var result = await Verifier(() => Json("""{"success":true,"action":"register","hostname":"app.zaa.gl"}"""))
+            .VerifyAsync("tok", "register", "app.zaa.gl", default);
+        Assert.Equal("captcha-invalid", result.Error!.Message);
+    }
+
+    [Fact]
+    public async Task C3_an_old_challenge_ts_is_invalid()
+    {
+        var old = DateTimeOffset.UtcNow.AddMinutes(-6).ToString("O");
+        var result = await Verifier(() => Json($$"""{"success":true,"action":"register","hostname":"app.zaa.gl","challenge_ts":"{{old}}"}"""))
+            .VerifyAsync("tok", "register", "app.zaa.gl", default);
+        Assert.Equal("captcha-invalid", result.Error!.Message);
+    }
+
+    [Theory]
+    [InlineData("")]
+    [InlineData("null")]
+    [InlineData("not json at all")]
+    [InlineData("{\"success\":")]
+    public async Task C4_an_unreadable_200_body_is_a_503_not_a_500(string body)
+    {
+        var result = await Verifier(() => Json(body)).VerifyAsync("tok", "register", "app.zaa.gl", default);
+        Assert.False(result.IsSuccess);
+        Assert.Equal("service_unavailable", result.Error!.Code);
+    }
+
+    [Fact]
+    public async Task An_http_error_is_a_503()
+    {
+        var result = await Verifier(() => new HttpResponseMessage(System.Net.HttpStatusCode.BadGateway)).VerifyAsync("tok", "register", "app.zaa.gl", default);
+        Assert.Equal("service_unavailable", result.Error!.Code);
+    }
+
+    [Fact]
+    public async Task A_wrong_action_is_invalid()
+    {
+        var result = await Verifier(() => Json($$"""{"success":true,"action":"sign-up","hostname":"app.zaa.gl","challenge_ts":"{{Now()}}"}"""))
+            .VerifyAsync("tok", "register", "app.zaa.gl", default);
+        Assert.Equal("captcha-invalid", result.Error!.Message);
     }
 }

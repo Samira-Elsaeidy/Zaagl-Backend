@@ -36,6 +36,11 @@ public sealed class EmailOptions
     /// <summary>Where /account/confirm-email and /account/reset-password are actually served (spec §1.2:
     /// Hosts:Api) - used to build the fragment URL put in confirm/reset emails.</summary>
     public string ApiBaseUrl { get; set; } = "https://api.zaa.gl";
+
+    /// <summary>The website (Frontend:BaseUrl unless set here). Password-reset emails link to its
+    /// <c>/reset-password#u=…&amp;t=…</c> page, which asks for the new password and posts all three to
+    /// /api/auth/reset-password (the API page only ever posted userId + token, so every reset failed).</summary>
+    public string WebBaseUrl { get; set; } = "";
 }
 
 /// <summary>Real SMTP delivery via the BCL's SmtpClient - no external mail library dependency needed for
@@ -53,11 +58,13 @@ public sealed class SmtpEmailSender(IOptions<EmailOptions> options) : IEmailSend
         {
             From = new MailAddress(opts.From, opts.FromName),
             Subject = message.Subject,
-            Body = message.HtmlBody,
-            IsBodyHtml = true,
+            // Plain text as the main body and the HTML as a text/html alternative. Setting the HTML as Body with a
+            // text alternative made .NET label the HTML part text/plain, so clients showed the raw <p><a> tags.
+            Body = message.TextBody,
+            IsBodyHtml = false,
         };
         mail.To.Add(message.ToEmail);
-        mail.AlternateViews.Add(AlternateView.CreateAlternateViewFromString(message.TextBody, null, "text/plain"));
+        mail.AlternateViews.Add(AlternateView.CreateAlternateViewFromString(message.HtmlBody, System.Text.Encoding.UTF8, "text/html"));
 
         try
         {

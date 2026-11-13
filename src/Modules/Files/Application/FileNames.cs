@@ -103,6 +103,8 @@ public static class FileNames
                 }
                 catch (FormatException) { return null; }
                 catch (ArgumentException) { return null; }
+                // PostgreSQL text cannot hold U+0000: a NUL in filename/filetype used to reach the insert and become a 500.
+                if (value.Contains('\0')) return null;
             }
             if (!result.TryAdd(key, value)) return null; // a duplicated key is refused (tus 1.0)
         }

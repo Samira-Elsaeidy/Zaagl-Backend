@@ -85,5 +85,7 @@ public sealed class UploadPrimitivesTests
         Assert.Equal("", parsed["empty"]);
         Assert.Null(FileNames.ParseTusMetadata("filename !!!notbase64"));
         Assert.Null(FileNames.ParseTusMetadata("kind bWVkaWE=,kind bWVkaWE="));
+        // Pen test round 2 F7: a NUL in a value (PostgreSQL text cannot hold it) is refused as malformed.
+        Assert.Null(FileNames.ParseTusMetadata($"filename {Convert.ToBase64String(Encoding.UTF8.GetBytes("a\0b.png"))}"));
     }
 }

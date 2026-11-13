@@ -208,6 +208,9 @@ public static class FilesEndpoints
                             if (kind is not ("file" or "media"))
                                 return Problem(http, Error.Validation("The kind part (file or media) must come before the file part."), admission);
                             var filename = disposition?.FileName.Value ?? disposition?.FileNameStar.Value;
+                            // PostgreSQL text cannot hold U+0000: refuse it here instead of a 500 at the insert.
+                            if ((filename?.Contains('\0') ?? false) || (section.ContentType?.Contains('\0') ?? false))
+                                return Problem(http, Error.Validation("The file name and content type cannot contain NUL (U+0000) characters."), admission);
                             var headerParts = new List<string> { $"kind {Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes(kind))}" };
                             if (!string.IsNullOrEmpty(filename)) headerParts.Add($"filename {Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes(filename.Trim('"')))}");
                             if (!string.IsNullOrEmpty(section.ContentType)) headerParts.Add($"filetype {Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes(section.ContentType))}");

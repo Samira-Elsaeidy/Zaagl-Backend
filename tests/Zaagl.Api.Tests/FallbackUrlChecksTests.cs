@@ -88,6 +88,51 @@ public sealed class FallbackUrlChecksTests(FallbackChecksApiFactory api) : IClas
         var r = await client.PostAsJsonAsync("/api/links", new LinkInput(Safe(), Policy: new PolicyInput(FallbackUrl: Safe())), TestPrincipals.Json);
         Assert.True(r.StatusCode == HttpStatusCode.Created, $"safe fallback -> {(int)r.StatusCode} {await r.Content.ReadAsStringAsync()}");
     }
+
+    // ---- Pen test round 2 F12: routing-rule URLs get the blocklist check too ------------------------------------------------
+
+    public static TheoryData<string> RuleKindsUnderTest => new() { "device", "country", "split" };
+
+    private static RuleInput[] RulesWith(string kind, string url) => kind switch
+    {
+        "device" => [new RuleInput("device", "ios", url)],
+        "country" => [new RuleInput("country", "DE", url)],
+        _ => [new RuleInput("split", null, Safe(), 50), new RuleInput("split", null, url, 50)],
+    };
+
+    [Theory]
+    [MemberData(nameof(RuleKindsUnderTest))]
+    public async Task F12_create_with_a_blocked_rule_url_is_refused(string kind)
+    {
+        var owner = await api.Principals.CreateUserAsync(tag: "f12-create");
+        using var client = api.ApiClient(bearer: owner.AccessToken);
+        var r = await client.PostAsJsonAsync("/api/links", new LinkInput(Safe(), Rules: RulesWith(kind, Blocked())), TestPrincipals.Json);
+        await AssertRefused(r, "blocked", $"create with a blocked {kind} rule URL");
+    }
+
+    [Theory]
+    [MemberData(nameof(RuleKindsUnderTest))]
+    public async Task F12_update_to_a_blocked_rule_url_is_refused_and_the_rules_are_unchanged(string kind)
+    {
+        var owner = await api.Principals.CreateUserAsync(tag: "f12-update");
+        var destination = Safe();
+        var link = await api.Principals.CreateLinkAsync(owner, new LinkInput(destination));
+        using var client = api.ApiClient(bearer: owner.AccessToken);
+        var r = await client.PutAsJsonAsync($"/api/links/{link.Id}", new LinkInput(destination, Rules: RulesWith(kind, Blocked())), TestPrincipals.Json);
+        await AssertRefused(r, "blocked", $"update to a blocked {kind} rule URL");
+
+        var after = await client.GetFromJsonAsync<LinkDto>($"/api/links/{link.Id}", TestPrincipals.Json);
+        Assert.Empty(after!.Rules);
+    }
+
+    [Fact]
+    public async Task F12_safe_rule_urls_are_accepted()
+    {
+        var owner = await api.Principals.CreateUserAsync(tag: "f12-ok");
+        using var client = api.ApiClient(bearer: owner.AccessToken);
+        var r = await client.PostAsJsonAsync("/api/links", new LinkInput(Safe(), Rules: RulesWith("device", Safe())), TestPrincipals.Json);
+        Assert.True(r.StatusCode == HttpStatusCode.Created, $"safe rule -> {(int)r.StatusCode} {await r.Content.ReadAsStringAsync()}");
+    }
 }
 
 /// <summary>Own host: one extra blocklisted host via configuration, and a fake Web Risk checker.</summary>

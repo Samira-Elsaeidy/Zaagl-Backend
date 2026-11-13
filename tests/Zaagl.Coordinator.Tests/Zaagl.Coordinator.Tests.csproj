@@ -25,4 +25,9 @@
     <ProjectReference Include="..\..\src\Zaagl.SharedKernel\Zaagl.SharedKernel.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <!-- Test database isolation: never the dev zaagl database (tests/Shared/TestDatabase.cs). -->
+    <Compile Include="../Shared/TestDatabase.cs" Link="Shared/TestDatabase.cs" />
+  </ItemGroup>
+
 </Project>

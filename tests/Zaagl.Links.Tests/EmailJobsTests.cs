@@ -17,7 +17,7 @@ namespace Zaagl.Links.Tests;
 /// suites in this project).</summary>
 public sealed class EmailJobsTests : IDisposable
 {
-    private static readonly string ConnectionString = Environment.GetEnvironmentVariable("ZAAGL_TEST_PG") ?? "Host=localhost;Port=5433;Database=zaagl;Username=zaagl;Password=zaagl_dev";
+    private static readonly string ConnectionString = Zaagl.Tests.Shared.TestDatabaseMigrator.ConnectionString;
     private readonly ServiceProvider _services;
     private readonly IdentityDbContext _db;
 
@@ -55,8 +55,23 @@ public sealed class EmailJobsTests : IDisposable
         var sp = sc.BuildServiceProvider();
         return new EmailDispatcher(
             sp.GetRequiredService<IServiceScopeFactory>(), sender,
-            Options.Create(new EmailOptions { ApiBaseUrl = "http://localhost:5084" }),
+            Options.Create(new EmailOptions { ApiBaseUrl = "http://localhost:5084", WebBaseUrl = "http://localhost:3007" }),
             time ?? TimeProvider.System, NullLogger<EmailDispatcher>.Instance);
+    }
+
+    /// <summary>Runs the dispatcher until this user's outbox rows are no longer due. The test database keeps every
+    /// outbox row other tests queue (nothing else dispatches there), and one run only takes the oldest 50, so a single
+    /// run could miss this test's row.</summary>
+    private async Task DrainAsync(EmailDispatcher dispatcher, Guid userId)
+    {
+        for (var i = 0; i < 200; i++)
+        {
+            var now = DateTime.UtcNow;
+            var due = await _db.EmailOutbox.AsNoTracking().AnyAsync(e => e.UserId == userId
+                && ((e.Status == EmailOutboxStatuses.Pending && e.SendAfter <= now) || e.Status == EmailOutboxStatuses.Sending));
+            if (!due) return;
+            await dispatcher.RunOnceAsync(default);
+        }
     }
 
     private async Task<User> CreateConfirmedUserAsync()
@@ -81,7 +96,7 @@ public sealed class EmailJobsTests : IDisposable
             new { Token = "abc123" }, null, default);
 
         var sender = new RecordingEmailSender();
-        await MakeDispatcher(sender).RunOnceAsync(default);
+        await DrainAsync(MakeDispatcher(sender), user.Id);
 
         // Filtered rather than Assert.Single(sender.Sent): other tests in this class share the same
         // Postgres instance and outbox table and may run concurrently (xUnit parallelises by class).
@@ -94,6 +109,23 @@ public sealed class EmailJobsTests : IDisposable
     }
 
     [Fact]
+    public async Task F1_password_reset_email_links_to_the_website_reset_page_with_the_token_in_the_fragment()
+    {
+        var user = await CreateConfirmedUserAsync();
+        await EmailQueue.QueueAccountEmailAsync(_db, user.Id, EmailKinds.PasswordReset, new PasswordResetPayload("reset-tok_1"), null, default);
+
+        var sender = new RecordingEmailSender();
+        await DrainAsync(MakeDispatcher(sender), user.Id);
+
+        var sent = Assert.Single(sender.Sent, m => m.ToEmail == user.Email);
+        var body = sent.TextBody + sent.HtmlBody;
+        // The website page asks for the new password; the old API page could only post userId + token, so it always failed.
+        Assert.Contains($"http://localhost:3007/reset-password#u={user.Id}&t=reset-tok_1", body);
+        Assert.DoesNotContain("/account/reset-password", body);
+        Assert.DoesNotContain("?t=", body);
+    }
+
+    [Fact]
     public async Task Suppressed_address_is_cancelled_without_calling_the_sender()
     {
         var user = await CreateConfirmedUserAsync();
@@ -102,7 +134,7 @@ public sealed class EmailJobsTests : IDisposable
         await _db.SaveChangesAsync();
 
         var sender = new RecordingEmailSender();
-        await MakeDispatcher(sender).RunOnceAsync(default);
+        await DrainAsync(MakeDispatcher(sender), user.Id);
 
         Assert.DoesNotContain(sender.Sent, m => m.ToEmail == user.Email);
         var row = await _db.EmailOutbox.AsNoTracking().FirstAsync(e => e.UserId == user.Id && e.Kind == EmailKinds.ConfirmEmail);
@@ -120,7 +152,7 @@ public sealed class EmailJobsTests : IDisposable
         await EmailQueue.QueueAccountEmailAsync(_db, user.Id, EmailKinds.SecurityNotice, new { Message = "notice" }, user.Email, default);
 
         var sender = new RecordingEmailSender();
-        await MakeDispatcher(sender).RunOnceAsync(default);
+        await DrainAsync(MakeDispatcher(sender), user.Id);
 
         Assert.Single(sender.Sent, m => m.ToEmail == user.Email); // only the security-notice, filtered by recipient
         var confirmRow = await _db.EmailOutbox.AsNoTracking().FirstAsync(e => e.UserId == user.Id && e.Kind == EmailKinds.ConfirmEmail);
@@ -138,7 +170,7 @@ public sealed class EmailJobsTests : IDisposable
         await EmailQueue.QueueAccountEmailAsync(_db, user.Id, EmailKinds.ConfirmEmail, new { Token = "x" }, null, default);
 
         var sender = new RecordingEmailSender { ThrowOnSend = new InvalidOperationException("smtp down") };
-        await MakeDispatcher(sender).RunOnceAsync(default); // real-time TimeProvider - no frozen-clock precision trap
+        await DrainAsync(MakeDispatcher(sender), user.Id); // real-time TimeProvider - no frozen-clock precision trap
 
         var row = await _db.EmailOutbox.AsNoTracking().FirstAsync(e => e.UserId == user.Id && e.Kind == EmailKinds.ConfirmEmail);
         Assert.Equal(EmailOutboxStatuses.Pending, row.Status);
@@ -153,7 +185,7 @@ public sealed class EmailJobsTests : IDisposable
         await EmailQueue.QueueAccountEmailAsync(_db, user.Id, EmailKinds.ConfirmEmail, new { Token = "y" }, null, default);
 
         var permanentSender = new RecordingEmailSender { ThrowOnSend = new EmailPermanentFailureException("bounced") };
-        await MakeDispatcher(permanentSender).RunOnceAsync(default);
+        await DrainAsync(MakeDispatcher(permanentSender), user.Id);
 
         var row = await _db.EmailOutbox.AsNoTracking().FirstAsync(e => e.UserId == user.Id && e.Kind == EmailKinds.ConfirmEmail);
         Assert.Equal(EmailOutboxStatuses.Failed, row.Status);

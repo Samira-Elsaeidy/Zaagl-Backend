@@ -12,7 +12,7 @@ namespace Zaagl.Links.Tests;
 /// </summary>
 public sealed class AnalyticsPhase4Tests : IDisposable
 {
-    private static readonly string ConnectionString = Environment.GetEnvironmentVariable("ZAAGL_TEST_PG") ?? "Host=localhost;Port=5433;Database=zaagl;Username=zaagl;Password=zaagl_dev";
+    private static readonly string ConnectionString = Zaagl.Tests.Shared.TestDatabaseMigrator.ConnectionString;
     private readonly AnalyticsDbContext _db;
 
     public AnalyticsPhase4Tests()

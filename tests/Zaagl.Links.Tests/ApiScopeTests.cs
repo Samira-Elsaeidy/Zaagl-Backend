@@ -44,7 +44,7 @@ public sealed class ApiScopeTests(RealApiFactory real) : IAsyncLifetime, IClassF
         ["* /health/ready"] = "infrastructure",
         ["GET /health/issuer"] = "infrastructure",
         ["GET /account/confirm-email"] = "static fragment page",
-        ["GET /account/reset-password"] = "static fragment page",
+        ["GET /account/reset-password"] = "redirect to the website reset page (fragment kept)",
         ["POST /api/auth/register"] = "sign-up",
         ["POST /api/auth/resend-confirmation"] = "sign-up",
         ["POST /api/auth/confirm-email"] = "token in body",

@@ -253,8 +253,9 @@ public sealed class ReportService(LinksDbContext db, TimeProvider time)
 }
 
 // ---- CAPTCHA (spec §7.12, §7.15): shared seam for guest creation, registration, resend-confirmation,
-// forgot-password and abuse reports. Wired into guest creation now; the Identity-side call sites are a
-// separate phase (see docs/TRACEABILITY.md).
+// forgot-password and abuse reports. Wired into guest creation, and into register / resend-confirmation /
+// forgot-password at the endpoint layer (Zaagl.Api CaptchaGate, so Identity does not reference this module).
+// Abuse reports are still pending (see docs/TRACEABILITY.md).
 
 public sealed class CaptchaOptions
 {
@@ -299,7 +300,10 @@ public sealed class TurnstileVerifier(HttpClient http, IOptions<CaptchaOptions> 
             response.EnsureSuccessStatusCode();
             var body = await response.Content.ReadFromJsonAsync<SiteverifyResponse>(ct);
 
-            if (body is null || !body.Success) return Error.Validation("captcha-invalid");
+            // A 200 with an empty, "null" or non-JSON body is the verifier failing, not the token: fail closed with a
+            // 503 like an HTTP error or a timeout (an unreadable body used to throw JsonException and become a 500).
+            if (body is null) return VerifierDown(null);
+            if (!body.Success) return Error.Validation("captcha-invalid");
 
             // Cloudflare's own documented sandbox secrets (spec §7.12: "test and development environments
             // use Turnstile's documented test keys") return a canned response with no real action/hostname
@@ -308,17 +312,23 @@ public sealed class TurnstileVerifier(HttpClient http, IOptions<CaptchaOptions> 
             {
                 if (!string.Equals(body.Action, expectedAction, StringComparison.Ordinal)) return Error.Validation("captcha-invalid");
                 if (!string.Equals(body.Hostname, expectedHostname, StringComparison.OrdinalIgnoreCase)) return Error.Validation("captcha-invalid");
-                if (body.ChallengeTimestamp is { } ts && (DateTimeOffset.UtcNow - ts) > TimeSpan.FromSeconds(300)) return Error.Validation("captcha-invalid");
+                // A real secret always gets challenge_ts back; without one the 300 s freshness cannot be proven.
+                if (body.ChallengeTimestamp is not { } ts || (DateTimeOffset.UtcNow - ts) > TimeSpan.FromSeconds(300)) return Error.Validation("captcha-invalid");
             }
 
             return Result<bool>.Ok(true);
         }
-        catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException)
+        catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException or System.Text.Json.JsonException or NotSupportedException)
         {
             if (ct.IsCancellationRequested) throw;
-            logger.LogError(ex, "Turnstile siteverify call failed");
-            return Error.ServiceUnavailable("Could not verify the CAPTCHA right now. Try again shortly.");
+            return VerifierDown(ex);
         }
+    }
+
+    private Error VerifierDown(Exception? ex)
+    {
+        logger.LogError(ex, "Turnstile siteverify call failed or returned an unreadable body");
+        return Error.ServiceUnavailable("Could not verify the CAPTCHA right now. Try again shortly.");
     }
 
     private static readonly string[] DocumentedTestSecrets =
@@ -328,5 +338,17 @@ public sealed class TurnstileVerifier(HttpClient http, IOptions<CaptchaOptions> 
         "3x0000000000000000000000000000000AA", // always errors
     ];
 
-    private static bool IsDocumentedTestSecret(string secret) => DocumentedTestSecrets.Contains(secret);
+    /// <summary>Cloudflare's documented test SITE keys (always pass, always block, force an interactive challenge).</summary>
+    private static readonly string[] DocumentedTestSiteKeys =
+    [
+        "1x00000000000000000000AA", "2x00000000000000000000AB", "1x00000000000000000000BB",
+        "2x00000000000000000000BB", "3x00000000000000000000FF",
+    ];
+
+    /// <summary>True for a Cloudflare documented test secret: siteverify then accepts any token and the action, hostname
+    /// and age checks are skipped. Program refuses to start with one outside Development/Testing.</summary>
+    public static bool IsDocumentedTestSecret(string? secret) => secret is not null && DocumentedTestSecrets.Contains(secret.Trim());
+
+    /// <summary>True for a Cloudflare documented test site key (the widget hands out a dummy token).</summary>
+    public static bool IsDocumentedTestSiteKey(string? siteKey) => siteKey is not null && DocumentedTestSiteKeys.Contains(siteKey.Trim());
 }

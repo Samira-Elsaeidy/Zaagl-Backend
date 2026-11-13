@@ -353,7 +353,11 @@ public sealed class UploadService(
                 if (session.CompleteBodyHash is null || !session.CompleteBodyHash.AsSpan().SequenceEqual(bodyHash))
                     return Error.Of(ErrorCodes.IdempotencyMismatch, "This Idempotency-Key was used with a different request.");
                 if (session.CompleteResponse is { } stored && JsonSerializer.Deserialize<CompleteUploadResponse>(stored, Json) is { } replay)
-                    return replay with { LinkKey = null }; // ARC-002 Q1 (OPEN): the key is returned once.
+                    // By design (addendum: the server stores only SHA-256 of the link key, the plain key is returned once):
+                    // a replay cannot return it, and keeping the raw key just for replays would defeat that. The website
+                    // keeps its Idempotency-Key across its own retries (uploadKeys.ts) and flags keyMissing when a replay
+                    // answers (Uploader.tsx files.share.keyUnavailable); the owner can still open the file from the library.
+                    return replay with { LinkKey = null };
                 return Error.Of(ErrorCodes.AlreadyFinalized, "This upload was already finished.");
         }
 

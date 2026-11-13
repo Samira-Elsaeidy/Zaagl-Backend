@@ -445,6 +445,42 @@ public sealed class FileUploadTests(FilesS2Factory api) : S2Support(api), IClass
         Assert.Equal("file", (await BodyAsync(pngDetail)).GetProperty("kind").GetString());
     }
 
+    // ---- Pen test round 2 F7: a NUL in a filename or content type is a 400, never a 500 ----------------------------------
+
+    [Theory]
+    [InlineData("filename")]
+    [InlineData("filetype")]
+    public async Task F7_simple_upload_with_a_nul_in_the_file_part_headers_is_a_400(string where)
+    {
+        var owner = await P.CreateUserAsync(starter: true, "r2-f7-simple");
+        using var client = api.ApiClient(bearer: owner.AccessToken);
+        var filename = where == "filename" ? "a\0b.txt" : "ab.txt";
+        var contentType = where == "filetype" ? "text/pl\0ain" : "text/plain";
+        var raw = "--zb\r\nContent-Disposition: form-data; name=\"kind\"\r\n\r\nfile\r\n" +
+                  $"--zb\r\nContent-Disposition: form-data; name=\"file\"; filename=\"{filename}\"\r\nContent-Type: {contentType}\r\n\r\nhello world\r\n--zb--\r\n";
+        var content = new ByteArrayContent(Encoding.UTF8.GetBytes(raw));
+        content.Headers.TryAddWithoutValidation("Content-Type", "multipart/form-data; boundary=zb");
+        using var request = new HttpRequestMessage(HttpMethod.Post, "/api/uploads/simple") { Content = content };
+        request.Headers.Add("Idempotency-Key", "f7-" + TestIps.UniqueSuffix());
+        using var response = await client.SendAsync(request);
+        Assert.True(response.StatusCode == HttpStatusCode.BadRequest, $"{where}: {(int)response.StatusCode} {await response.Content.ReadAsStringAsync()}");
+    }
+
+    [Theory]
+    [InlineData("filename")]
+    [InlineData("filetype")]
+    public async Task F7_tus_create_with_a_nul_in_base64_metadata_is_a_400(string key)
+    {
+        var owner = await P.CreateUserAsync(starter: true, "r2-f7-tus");
+        using var client = api.ApiClient(bearer: owner.AccessToken);
+        using var request = new HttpRequestMessage(HttpMethod.Post, "/api/uploads");
+        request.Headers.Add("Tus-Resumable", "1.0.0");
+        request.Headers.Add("Upload-Length", "100");
+        request.Headers.Add("Upload-Metadata", $"kind {Convert.ToBase64String("file"u8.ToArray())},{key} {Convert.ToBase64String(Encoding.UTF8.GetBytes("x\0y"))}");
+        using var response = await client.SendAsync(request);
+        Assert.True(response.StatusCode == HttpStatusCode.BadRequest, $"{key}: {(int)response.StatusCode} {await response.Content.ReadAsStringAsync()}");
+    }
+
     private static MultipartFormDataContent Multipart(byte[] data, string kind, string filename, object? metadata = null, bool fileFirst = false)
     {
         var form = new MultipartFormDataContent("zaagl-boundary");

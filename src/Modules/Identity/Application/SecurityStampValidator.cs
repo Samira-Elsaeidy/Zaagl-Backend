@@ -13,8 +13,12 @@ public sealed class SecurityStampValidator(IServiceScopeFactory scopes, IMemoryC
     public async Task<bool> IsCurrentAsync(Guid userId, string tokenStamp, CancellationToken ct)
     {
         var cacheKey = $"sstamp:{userId}";
-        if (cache.TryGetValue(cacheKey, out string? cached))
-            return string.Equals(cached, tokenStamp, StringComparison.Ordinal);
+        // A match is trusted from the cache. A mismatch is re-read once: right after a password reset or
+        // logout-everywhere the cache still holds the OLD stamp for up to 60 s, which rejected every freshly issued
+        // token (the new sign-in bounced straight back to the sign-in page) while old tokens kept working. Re-reading
+        // refreshes the cache, so the new token passes and old tokens fail from then on.
+        if (cache.TryGetValue(cacheKey, out string? cached) && string.Equals(cached, tokenStamp, StringComparison.Ordinal))
+            return true;
 
         using var scope = scopes.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<IdentityDbContext>();

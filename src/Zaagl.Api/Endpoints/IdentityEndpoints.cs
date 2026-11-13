@@ -30,8 +30,11 @@ public static class IdentityEndpoints
         var auth = app.MapGroup("/api/auth").WithTags("Auth");
 
         // ---- Registration: always the same response shape (spec §7.4, §11 #25) -------------------
-        auth.MapPost("/register", async (RegisterRequest request, IdentityService identity, IHostEnvironment env, CancellationToken ct) =>
+        // The CAPTCHA (action "register") is checked before any account work, so a missing or bad token never
+        // reveals whether the address exists.
+        auth.MapPost("/register", async (RegisterRequest request, HttpContext http, IdentityService identity, IHostEnvironment env, CancellationToken ct) =>
             {
+                if (await CaptchaGate.CheckAsync(http, CaptchaGate.Register, ct) is { } refused) return refused;
                 var outcome = await identity.RegisterAsync(request, ct);
                 if (outcome.Error is { } error) return ApiResults.Problem(error);
                 // Dev-mode shortcut (see IdentityService's doc comment): surface the token only in
@@ -43,8 +46,9 @@ public static class IdentityEndpoints
             })
             .RequireRateLimiting("auth");
 
-        auth.MapPost("/resend-confirmation", async (ResendConfirmationRequest request, IdentityService identity, IHostEnvironment env, CancellationToken ct) =>
+        auth.MapPost("/resend-confirmation", async (ResendConfirmationRequest request, HttpContext http, IdentityService identity, IHostEnvironment env, CancellationToken ct) =>
             {
+                if (await CaptchaGate.CheckAsync(http, CaptchaGate.ResendConfirmation, ct) is { } refused) return refused;
                 var token = await identity.ResendConfirmationAsync(request.Email, ct);
                 var body = new RegisterAcceptedResponse("If that address has an unconfirmed account, a new confirmation email was sent.");
                 return env.IsDevelopment() && token is not null
@@ -57,14 +61,24 @@ public static class IdentityEndpoints
         // the server in this request, so it never reaches a server/proxy log (spec §7.4, §11 #30).
         // Mapped on the app directly (not the /api/auth group) since they live at /account/*.
         app.MapGet("/account/confirm-email", (HttpContext http) => AccountPage(http, "/api/auth/confirm-email"));
-        app.MapGet("/account/reset-password", (HttpContext http) => AccountPage(http, "/api/auth/reset-password"));
+        // Reset emails now link to the website's /reset-password page, which asks for the new password (this API page
+        // could only post userId + token, so every reset through it failed). Links already sent still work: a redirect
+        // without a fragment keeps the browser's #u=…&t=… fragment, which never reaches this server.
+        app.MapGet("/account/reset-password", (HttpContext http, IConfiguration config) =>
+        {
+            var web = (config["Frontend:BaseUrl"] ?? "https://zaa.gl").TrimEnd('/');
+            http.Response.Headers["Referrer-Policy"] = "no-referrer";
+            http.Response.Headers.CacheControl = "no-store";
+            return Results.Redirect($"{web}/reset-password");
+        });
 
         auth.MapPost("/confirm-email", async (ConfirmEmailRequest request, IdentityService identity, CancellationToken ct) =>
             ApiResults.From(await identity.ConfirmEmailAsync(request.UserId, request.Token, ct), _ => Results.NoContent()));
 
         // ---- Password reset ------------------------------------------------------------------------
-        auth.MapPost("/forgot-password", async (ForgotPasswordRequest request, IdentityService identity, IHostEnvironment env, CancellationToken ct) =>
+        auth.MapPost("/forgot-password", async (ForgotPasswordRequest request, HttpContext http, IdentityService identity, IHostEnvironment env, CancellationToken ct) =>
             {
+                if (await CaptchaGate.CheckAsync(http, CaptchaGate.ForgotPassword, ct) is { } refused) return refused;
                 var token = await identity.ForgotPasswordAsync(request.Email, ct);
                 var body = new RegisterAcceptedResponse("If that address has a confirmed account, a password reset email was sent.");
                 return env.IsDevelopment() && token is not null

@@ -25,6 +25,10 @@ public static class IdentityModule
         services.Configure<JwtOptions>(configuration.GetSection(JwtOptions.Section));
         services.Configure<AdminBootstrapOptions>(configuration.GetSection(AdminBootstrapOptions.Section));
         services.Configure<EmailOptions>(configuration.GetSection(EmailOptions.Section));
+        services.PostConfigure<EmailOptions>(o =>
+        {
+            if (string.IsNullOrWhiteSpace(o.WebBaseUrl)) o.WebBaseUrl = configuration["Frontend:BaseUrl"] ?? "https://zaa.gl";
+        });
         services.AddDbContext<IdentityDbContext>(o => Configure(o, connection));
         services.AddMemoryCache();
         services.AddSingleton<TokenService>();

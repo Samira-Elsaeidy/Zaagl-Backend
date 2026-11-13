@@ -27,4 +27,10 @@
     <ProjectReference Include="..\..\src\Zaagl.Api\Zaagl.Api.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <!-- Test database isolation: never the dev zaagl database (tests/Shared/TestDatabase.cs). -->
+    <Compile Include="../Shared/TestDatabase.cs" Link="Shared/TestDatabase.cs" />
+    <Compile Include="../Shared/TestDatabaseMigrator.cs" Link="Shared/TestDatabaseMigrator.cs" />
+  </ItemGroup>
+
 </Project>

@@ -13,7 +13,12 @@ public sealed class BulkLinkImporter(LinkService links)
     {
         List<List<string>> table;
         using (var reader = new StreamReader(csv, Encoding.UTF8, detectEncodingFromByteOrderMarks: true))
-            table = ParseCsv(await reader.ReadToEndAsync(ct));
+        {
+            var text = await reader.ReadToEndAsync(ct);
+            // PostgreSQL text cannot hold U+0000: a NUL in any cell (title, slug, tags) used to become a 500 on insert.
+            if (text.Contains('\0')) return Error.Validation("The CSV file cannot contain NUL (U+0000) characters.");
+            table = ParseCsv(text);
+        }
 
         if (table.Count == 0) return Error.Validation("The CSV file is empty.");
 

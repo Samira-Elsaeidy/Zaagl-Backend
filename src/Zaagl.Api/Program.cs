@@ -47,6 +47,12 @@ if (!builder.Environment.IsDevelopment() && !builder.Environment.IsEnvironment("
 {
     if (config.GetValue("Captcha:Enabled", true) && string.IsNullOrWhiteSpace(config["Captcha:Secret"]))
         throw new InvalidOperationException("Captcha:Secret is empty: guest CAPTCHA would be off. Set it, or set Captcha:Enabled=false on purpose.");
+    // Cloudflare's documented test secrets accept ANY token (and the verifier skips the action/hostname/age binding for
+    // them): a deployment running one has no CAPTCHA at all. Same for a test site key, which only ever yields dummy tokens.
+    if (config.GetValue("Captcha:Enabled", true) && Zaagl.Modules.Links.Application.TurnstileVerifier.IsDocumentedTestSecret(config["Captcha:Secret"]))
+        throw new InvalidOperationException("Captcha:Secret is one of Cloudflare's documented TEST secrets, which accept any token. Set the real Turnstile secret.");
+    if (config.GetValue("Captcha:Enabled", true) && Zaagl.Modules.Links.Application.TurnstileVerifier.IsDocumentedTestSiteKey(config["Captcha:SiteKey"]))
+        throw new InvalidOperationException("Captcha:SiteKey is one of Cloudflare's documented TEST site keys. Set the real Turnstile site key.");
     if (!config.GetSection("Admin:AllowedNetworks").GetChildren().Any() && !config.GetValue("Admin:AllowAnyNetwork", false))
         throw new InvalidOperationException("Admin:AllowedNetworks is empty: /api/admin would be open to every IP. Set it, or set Admin:AllowAnyNetwork=true on purpose.");
 }
@@ -318,8 +324,26 @@ else
 }
 
 app.UseCors("web");
-app.UseRateLimiter();
+// Authentication runs BEFORE the rate limiter so the per-user policies (link-write, content-write, device-activate)
+// see the caller's `sub`. In the old order c.User was always empty there and every one of them fell back to the IP
+// partition: two users behind one NAT shared a bucket, and anonymous traffic from that IP drained a user's. Anonymous
+// or failed credentials still partition by IP; the IP-only policies (auth, unlock, content-read...) are unaffected.
 app.UseAuthentication();
+// Private API responses (/api/me/export, /api/me/sessions, /api/links, /api/billing/me...) must never be kept by a
+// browser or shared cache: every authenticated /api/* response gets `private, no-store` unless the endpoint set its own
+// Cache-Control (delivery and redirect hosts never serve /api/*, so their caching rules are untouched).
+app.Use(async (http, next) =>
+{
+    if (http.Request.Path.StartsWithSegments("/api", StringComparison.OrdinalIgnoreCase) && http.User.Identity?.IsAuthenticated == true)
+        http.Response.OnStarting(() =>
+        {
+            if (!http.Response.Headers.ContainsKey(Microsoft.Net.Http.Headers.HeaderNames.CacheControl))
+                http.Response.Headers.CacheControl = "private, no-store";
+            return Task.CompletedTask;
+        });
+    await next();
+});
+app.UseRateLimiter();
 app.UseAuthorization();
 
 // Spec MUST-NOT #33: a non-no-op IFailpoints implementation must never run outside the Testing environment.
