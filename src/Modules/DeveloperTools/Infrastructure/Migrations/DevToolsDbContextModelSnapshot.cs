@@ -23,6 +23,190 @@ namespace Zaagl.Modules.DeveloperTools.Infrastructure.Migrations
 
             NpgsqlModelBuilderExtensions.UseIdentityByDefaultColumns(modelBuilder);
 
+            modelBuilder.Entity("Zaagl.Modules.DeveloperTools.Domain.HookRequestRow", b =>
+                {
+                    b.Property<long>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bigint")
+                        .HasColumnName("id");
+
+                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<long>("Id"));
+
+                    b.Property<byte[]>("Body")
+                        .HasColumnType("bytea")
+                        .HasColumnName("body");
+
+                    b.Property<long>("BodyBytesTotal")
+                        .HasColumnType("bigint")
+                        .HasColumnName("body_bytes_total");
+
+                    b.Property<bool>("BodyTruncated")
+                        .HasColumnType("boolean")
+                        .HasColumnName("body_truncated");
+
+                    b.Property<string>("ContentType")
+                        .HasMaxLength(256)
+                        .HasColumnType("character varying(256)")
+                        .HasColumnName("content_type");
+
+                    b.Property<string>("Headers")
+                        .IsRequired()
+                        .HasColumnType("jsonb")
+                        .HasColumnName("headers");
+
+                    b.Property<Guid>("HookId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("hook_id");
+
+                    b.Property<string>("Method")
+                        .IsRequired()
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)")
+                        .HasColumnName("method");
+
+                    b.Property<string>("Path")
+                        .IsRequired()
+                        .HasMaxLength(2048)
+                        .HasColumnType("character varying(2048)")
+                        .HasColumnName("path");
+
+                    b.Property<string>("Query")
+                        .IsRequired()
+                        .HasMaxLength(8192)
+                        .HasColumnType("character varying(8192)")
+                        .HasColumnName("query");
+
+                    b.Property<DateTime>("ReceivedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("received_at");
+
+                    b.Property<string>("SourceFingerprint")
+                        .IsRequired()
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)")
+                        .HasColumnName("source_fingerprint");
+
+                    b.Property<int>("StoredBytes")
+                        .HasColumnType("integer")
+                        .HasColumnName("stored_bytes");
+
+                    b.HasKey("Id")
+                        .HasName("pk_hook_requests");
+
+                    b.HasIndex("HookId", "Id")
+                        .HasDatabaseName("ix_hook_requests_hook");
+
+                    b.ToTable("hook_requests", "devtools", t =>
+                        {
+                            t.HasCheckConstraint("ck_hook_requests_sizes", "body_bytes_total >= 0 AND stored_bytes >= 0 AND (body IS NULL OR octet_length(body) <= 1048576)");
+                        });
+                });
+
+            modelBuilder.Entity("Zaagl.Modules.DeveloperTools.Domain.HookRow", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at");
+
+                    b.Property<DateTime>("ExpiresAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("expires_at");
+
+                    b.Property<int>("IngestPerMinute")
+                        .HasColumnType("integer")
+                        .HasColumnName("ingest_per_minute");
+
+                    b.Property<string>("Label")
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)")
+                        .HasColumnName("label");
+
+                    b.Property<DateTime?>("LastReceivedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("last_received_at");
+
+                    b.Property<int>("MaxBodyBytes")
+                        .HasColumnType("integer")
+                        .HasColumnName("max_body_bytes");
+
+                    b.Property<int>("MaxRequests")
+                        .HasColumnType("integer")
+                        .HasColumnName("max_requests");
+
+                    b.Property<long>("MaxStoredBytes")
+                        .HasColumnType("bigint")
+                        .HasColumnName("max_stored_bytes");
+
+                    b.Property<Guid>("OwnerId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("owner_id");
+
+                    b.Property<DateTime>("PurgeAfter")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("purge_after");
+
+                    b.Property<long>("ReceivedTotal")
+                        .HasColumnType("bigint")
+                        .HasColumnName("received_total");
+
+                    b.Property<short>("ResponseStatus")
+                        .HasColumnType("smallint")
+                        .HasColumnName("response_status");
+
+                    b.Property<long>("StoredBytes")
+                        .HasColumnType("bigint")
+                        .HasColumnName("stored_bytes");
+
+                    b.Property<int>("StoredCount")
+                        .HasColumnType("integer")
+                        .HasColumnName("stored_count");
+
+                    b.Property<string>("Token")
+                        .IsRequired()
+                        .HasMaxLength(22)
+                        .HasColumnType("character varying(22)")
+                        .HasColumnName("token")
+                        .UseCollation("C");
+
+                    b.Property<int>("WindowCount")
+                        .HasColumnType("integer")
+                        .HasColumnName("window_count");
+
+                    b.Property<DateTime?>("WindowStart")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("window_start");
+
+                    b.HasKey("Id")
+                        .HasName("pk_hooks");
+
+                    b.HasIndex("PurgeAfter")
+                        .HasDatabaseName("ix_hooks_purge_after");
+
+                    b.HasIndex("Token")
+                        .IsUnique()
+                        .HasDatabaseName("uq_hooks_token");
+
+                    b.HasIndex("OwnerId", "ExpiresAt")
+                        .HasDatabaseName("ix_hooks_owner_expiry");
+
+                    b.ToTable("hooks", "devtools", t =>
+                        {
+                            t.HasCheckConstraint("ck_hooks_counters", "window_count >= 0 AND received_total >= 0 AND stored_count >= 0 AND stored_bytes >= 0");
+
+                            t.HasCheckConstraint("ck_hooks_dates", "expires_at > created_at AND purge_after >= expires_at");
+
+                            t.HasCheckConstraint("ck_hooks_limits", "max_requests BETWEEN 1 AND 10000 AND max_body_bytes BETWEEN 0 AND 1048576 AND max_stored_bytes >= 0 AND ingest_per_minute >= 1");
+
+                            t.HasCheckConstraint("ck_hooks_response_status", "response_status BETWEEN 200 AND 299 OR response_status BETWEEN 400 AND 599");
+
+                            t.HasCheckConstraint("ck_hooks_token", "token ~ '^[A-Za-z0-9_-]{22}$'");
+                        });
+                });
+
             modelBuilder.Entity("Zaagl.Modules.DeveloperTools.Domain.SecretEventRow", b =>
                 {
                     b.Property<long>("Id")
@@ -144,6 +328,16 @@ namespace Zaagl.Modules.DeveloperTools.Infrastructure.Migrations
 
                             t.HasCheckConstraint("ck_secrets_wiped", "(ciphertext IS NULL) = (wiped_at IS NOT NULL)");
                         });
+                });
+
+            modelBuilder.Entity("Zaagl.Modules.DeveloperTools.Domain.HookRequestRow", b =>
+                {
+                    b.HasOne("Zaagl.Modules.DeveloperTools.Domain.HookRow", null)
+                        .WithMany()
+                        .HasForeignKey("HookId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired()
+                        .HasConstraintName("fk_hook_requests_hooks_hook_id");
                 });
 #pragma warning restore 612, 618
         }

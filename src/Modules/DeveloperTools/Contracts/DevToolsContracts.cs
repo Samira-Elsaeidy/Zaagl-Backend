@@ -95,3 +95,63 @@ public sealed record OwnerSecretDto(
     DateTime? WipedAt,
     string? WipeReason,
     IReadOnlyList<SecretEventDto>? Events);
+
+// ---- Webhook catcher -----------------------------------------------------------------------------------------------
+
+/// <param name="ResponseStatus">200-299 or 400-599 (1xx and 3xx refused: no redirects from zaa.gl). Default 200.</param>
+/// <param name="LifetimeHours">Default and maximum: the plan's <c>HookLifetimeHours</c>.</param>
+public sealed record CreateHookCommand(string? Label, int? ResponseStatus, int? LifetimeHours);
+
+public sealed record UpdateHookCommand(string? Label, bool LabelSet, int? ResponseStatus);
+
+/// <summary>Owner view of a catcher. <paramref name="State"/>: <c>live</c> (accepting), <c>read-only</c> (expired, kept until
+/// <paramref name="PurgeAfter"/>).</summary>
+public sealed record HookDto(
+    Guid Id,
+    string? Label,
+    string IngestUrl,
+    string State,
+    int ResponseStatus,
+    DateTime CreatedAt,
+    DateTime ExpiresAt,
+    DateTime PurgeAfter,
+    int MaxRequests,
+    int MaxBodyBytes,
+    long MaxStoredBytes,
+    int IngestPerMinute,
+    long ReceivedTotal,
+    int StoredCount,
+    long StoredBytes,
+    DateTime? LastReceivedAt);
+
+/// <summary>A capture without its body (lists and the live stream).</summary>
+public sealed record HookRequestSummaryDto(
+    long Id,
+    DateTime ReceivedAt,
+    string Method,
+    string Path,
+    string Query,
+    string? ContentType,
+    long BodyBytes,
+    bool BodyTruncated,
+    string SourceFingerprint);
+
+/// <param name="Headers">Name/value pairs in arrival order.</param>
+/// <param name="BodyBase64">The stored body (standard base64), at most the catcher's <c>maxBodyBytes</c>.</param>
+/// <param name="BodyText">The same body as text when it is valid UTF-8 without control characters other than tab, CR and LF;
+/// otherwise null. Data only: the UI must render it escaped.</param>
+public sealed record HookRequestDto(
+    long Id,
+    DateTime ReceivedAt,
+    string Method,
+    string Path,
+    string Query,
+    IReadOnlyList<string[]> Headers,
+    string? ContentType,
+    long BodyBytes,
+    bool BodyTruncated,
+    string SourceFingerprint,
+    string? BodyBase64,
+    string? BodyText);
+
+public sealed record HookRequestPage(IReadOnlyList<HookRequestSummaryDto> Items, long? NextBefore);

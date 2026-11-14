@@ -48,6 +48,7 @@ public sealed class PlanToolOptions
     public int? CapsuleMaxLogBytes { get; set; }
     public bool? CommentsEnabled { get; set; }
     public bool? ApprovalEnabled { get; set; }
+    public long? HookMaxStoredBytes { get; set; }
 
     public ToolLimits Resolve(ToolLimits d) => new(
         VaultEnabled ?? d.VaultEnabled,
@@ -62,7 +63,8 @@ public sealed class PlanToolOptions
         CapsulesEnabled ?? d.CapsulesEnabled,
         Clamp(CapsuleMaxLogBytes ?? d.CapsuleMaxLogBytes, 0, ToolCeilings.CapsuleLogBytes),
         CommentsEnabled ?? d.CommentsEnabled,
-        ApprovalEnabled ?? d.ApprovalEnabled);
+        ApprovalEnabled ?? d.ApprovalEnabled,
+        Math.Min(Math.Max(HookMaxStoredBytes ?? d.HookMaxStoredBytes, 0), ToolCeilings.HookStoredBytes));
 
     private static int Clamp(int value, int min, int max) => Math.Min(Math.Max(value, min), max);
 }
@@ -74,6 +76,7 @@ public static class ToolCeilings
     public const int VaultViews = 100;
     public const int HookRequests = 10_000;
     public const int HookBodyBytes = 1024 * 1024;
+    public const long HookStoredBytes = 1024L * 1024 * 1024;
     public const int CapsuleLogBytes = 4 * 1024 * 1024;
 }
 

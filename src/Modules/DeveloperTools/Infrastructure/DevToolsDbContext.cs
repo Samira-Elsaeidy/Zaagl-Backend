@@ -11,6 +11,8 @@ public sealed class DevToolsDbContext(DbContextOptions<DevToolsDbContext> option
 
     public DbSet<SecretRow> Secrets => Set<SecretRow>();
     public DbSet<SecretEventRow> SecretEvents => Set<SecretEventRow>();
+    public DbSet<HookRow> Hooks => Set<HookRow>();
+    public DbSet<HookRequestRow> HookRequests => Set<HookRequestRow>();
 
     protected override void OnModelCreating(ModelBuilder b)
     {
@@ -46,6 +48,43 @@ public sealed class DevToolsDbContext(DbContextOptions<DevToolsDbContext> option
             e.Property(x => x.Id).ValueGeneratedOnAdd();
             e.Property(x => x.Kind).HasMaxLength(16).IsRequired();
             e.HasIndex(x => new { x.ResourceId, x.Id });
+        });
+
+        b.Entity<HookRow>(e =>
+        {
+            e.ToTable("hooks", t =>
+            {
+                t.HasCheckConstraint("ck_hooks_token", "token ~ '^[A-Za-z0-9_-]{22}$'");
+                t.HasCheckConstraint("ck_hooks_response_status", "response_status BETWEEN 200 AND 299 OR response_status BETWEEN 400 AND 599");
+                t.HasCheckConstraint("ck_hooks_dates", "expires_at > created_at AND purge_after >= expires_at");
+                t.HasCheckConstraint("ck_hooks_limits", "max_requests BETWEEN 1 AND 10000 AND max_body_bytes BETWEEN 0 AND 1048576 AND max_stored_bytes >= 0 AND ingest_per_minute >= 1");
+                t.HasCheckConstraint("ck_hooks_counters", "window_count >= 0 AND received_total >= 0 AND stored_count >= 0 AND stored_bytes >= 0");
+            });
+            e.HasKey(x => x.Id);
+            e.Property(x => x.Id).ValueGeneratedNever();
+            e.Property(x => x.Token).HasMaxLength(22).UseCollation("C").IsRequired();
+            e.HasIndex(x => x.Token).IsUnique().HasDatabaseName("uq_hooks_token");
+            e.Property(x => x.Label).HasMaxLength(100);
+            e.HasIndex(x => new { x.OwnerId, x.ExpiresAt }).HasDatabaseName("ix_hooks_owner_expiry");
+            e.HasIndex(x => x.PurgeAfter).HasDatabaseName("ix_hooks_purge_after");
+        });
+
+        b.Entity<HookRequestRow>(e =>
+        {
+            e.ToTable("hook_requests", t =>
+            {
+                t.HasCheckConstraint("ck_hook_requests_sizes", "body_bytes_total >= 0 AND stored_bytes >= 0 AND (body IS NULL OR octet_length(body) <= 1048576)");
+            });
+            e.HasKey(x => x.Id);
+            e.Property(x => x.Id).ValueGeneratedOnAdd();
+            e.Property(x => x.Method).HasMaxLength(16).IsRequired();
+            e.Property(x => x.Path).HasMaxLength(2048).IsRequired();
+            e.Property(x => x.Query).HasMaxLength(8192).IsRequired();
+            e.Property(x => x.Headers).HasColumnType("jsonb").IsRequired();
+            e.Property(x => x.ContentType).HasMaxLength(256);
+            e.Property(x => x.SourceFingerprint).HasMaxLength(16).IsRequired();
+            e.HasOne<HookRow>().WithMany().HasForeignKey(x => x.HookId).OnDelete(DeleteBehavior.Cascade);
+            e.HasIndex(x => new { x.HookId, x.Id }).HasDatabaseName("ix_hook_requests_hook");
         });
     }
 }

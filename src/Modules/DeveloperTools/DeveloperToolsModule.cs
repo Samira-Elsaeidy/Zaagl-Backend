@@ -32,11 +32,14 @@ public static class DeveloperToolsModule
         services.AddScoped<SecretLifecycle>();
         services.AddScoped<IResourceKindHandler>(sp => sp.GetRequiredService<SecretLifecycle>());
         services.AddScoped<IDevToolsSweep, VaultExpirySweep>();
+        services.AddScoped<IDevToolsSweep, HookPurgeSweep>();
         services.AddSingleton<DevToolsSweeper>();
         if (workerOnly) return services;
 
         services.AddScoped<ILinkLifecycleHandler>(sp => sp.GetRequiredService<SecretLifecycle>());
         services.AddScoped<VaultService>();
+        services.Configure<HookOptions>(configuration.GetSection(HookOptions.Section));
+        services.AddScoped<HookService>();
         services.AddSingleton<IModuleMigrator>(sp =>
             new ModuleMigrator<DevToolsDbContext>("devtools", sp.GetRequiredService<IServiceScopeFactory>()));
         return services;

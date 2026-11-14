@@ -134,6 +134,10 @@ builder.Services.AddRateLimiter(o =>
     // ARC-003 §4.1 (ARC-013 values OPEN, technical defaults): the content API partitions by IP and code.
     o.AddPolicy("content-read", c => Fixed($"cread:{Ip(c)}:{Code(c)}", rateLimits.ContentReadPerMinute, TimeSpan.FromMinutes(1)));
     o.AddPolicy("content-write", c => Fixed($"cwrite:{c.User.FindFirst("sub")?.Value ?? Ip(c)}", rateLimits.ContentWritePerMinute, TimeSpan.FromMinutes(1)));
+    // Phase 2 (docs/phase2): webhook ingest per IP partition across all catchers (each catcher has its own plan window too), and
+    // pinned comments per IP partition (signed-in or not: the limit is about the network, the per-user budget is in the service).
+    o.AddPolicy("hook-ingest", c => Fixed($"hook:{Ip(c)}", rateLimits.HookIngestPerMinute, TimeSpan.FromMinutes(1)));
+    o.AddPolicy("comment-write", c => Fixed($"cmt:{Ip(c)}", rateLimits.CommentWritePerMinute, TimeSpan.FromMinutes(1)));
 });
 
 // ---- Authentication -------------------------------------------------------
@@ -381,6 +385,7 @@ app.MapFiles();     // BE-011/BE-012: tus uploads and /complete
 app.MapResources(); // F-12: owner library, status, patch, delete, owner tickets, /api/me/storage
 app.MapPublicContent();
 app.MapDeveloperTools(); // Phase 2 E2.1 (docs/phase2)
+app.MapWebhooks();       // Phase 2 E2.1: zaa.gl/hook/{token} ingest (short host) and /api/hooks
 app.MapDelivery();
 // Resolution owns the catch-all /{slug} route, so it is mapped last.
 app.MapResolution();
