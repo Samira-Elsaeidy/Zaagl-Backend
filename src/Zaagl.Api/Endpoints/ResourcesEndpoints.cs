@@ -32,7 +32,9 @@ public sealed record MediaBlockDto(
     int? Orientation,
     bool BrowserPlayable,
     bool? HasLocationData,
-    IReadOnlyList<MediaDerivativeDto> Derivatives);
+    IReadOnlyList<MediaDerivativeDto> Derivatives,
+    /// <summary>Phase 2 (docs/phase2/palette-and-comments.md): up to 6 dominant colours, largest share first; null until computed.</summary>
+    IReadOnlyList<PaletteColor>? Palette = null);
 
 /// <summary>openapi MediaDerivativeDto. <c>url</c> is a Preview ticket (15 minutes), only for a ready derivative of a non-burn file.</summary>
 public sealed record MediaDerivativeDto(string Kind, string Status, int? Width, int? Height, string? Url);
@@ -297,7 +299,8 @@ public static class ResourcesEndpoints
         new(meta?.Animated == true ? "animatedImage" : "image", detectedMime, meta?.Width, meta?.Height, null, meta?.FrameCount, meta?.HasAlpha, null, null,
             meta?.Orientation, BrowserPlayable: true, HasLocationData: null,
             Derivatives: meta?.Derivatives.Select(d => new MediaDerivativeDto(d.Kind, d.Status, d.Width, d.Height,
-                d.Kind == MediaPreviewTaskHandler.DerivativeKindThumb ? thumbnailUrl : null)).ToList() ?? []);
+                d.Kind == MediaPreviewTaskHandler.DerivativeKindThumb ? thumbnailUrl : null)).ToList() ?? [],
+            Palette: meta?.Palette);
 
     private static Result<ResourcePatch> ParsePatch(JsonElement body)
     {

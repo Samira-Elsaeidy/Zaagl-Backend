@@ -1,6 +1,7 @@
 using System.Security.Claims;
 using Microsoft.Extensions.Options;
 using Zaagl.Api.Infrastructure;
+using Zaagl.Modules.Access.Application;
 using Zaagl.Modules.Access.Contracts;
 using Zaagl.Modules.Collaboration.Application;
 using Zaagl.Modules.Collaboration.Contracts;
@@ -8,6 +9,7 @@ using Zaagl.Modules.Links.Application;
 using Zaagl.Modules.Links.Contracts;
 using Zaagl.Modules.Resources.Contracts;
 using Zaagl.SharedKernel;
+using Zaagl.SharedKernel.Net;
 using LinkOptions = Zaagl.Modules.Links.Application.LinkOptions;
 
 namespace Zaagl.Api.Endpoints;
@@ -27,15 +29,159 @@ public sealed record CompareCreateRequest(
 /// <summary>openapi CompareUpdateRequest: a label sent as "" clears it; absent leaves it unchanged.</summary>
 public sealed record CompareUpdateRequest(string? BeforeLabel = null, string? AfterLabel = null, bool Swap = false);
 
+/// <summary>openapi CommentPostRequest (docs/phase2/palette-and-comments.md).</summary>
+public sealed record CommentPostRequest(double X, double Y, string? Body, string? Side = null, string? AuthorName = null);
+
+/// <summary>openapi CommentSettingsRequest.</summary>
+public sealed record CommentSettingsRequest(bool Enabled, bool AllowAnonymous = false);
+
 /// <summary>
 /// Phase 2 E2.2 artist and designer tools on <c>api.zaa.gl</c> (docs/phase2). Owner routes are owner only (404 otherwise, PD-40),
 /// <c>private, no-store</c>; public routes run <see cref="IAccessGate"/> on every call.
 /// </summary>
 public static class CollaborationEndpoints
 {
+    /// <summary>Spec §7.12 action name for anonymous comments (shared with the website's CAPTCHA widget).</summary>
+    public const string GuestCommentAction = "guest-comment";
+
     public static void MapCollaboration(this IEndpointRouteBuilder app)
     {
         MapCompare(app);
+        MapComments(app);
+    }
+
+    private static void MapComments(IEndpointRouteBuilder app)
+    {
+        // ---- Link holders: the gate of the image's, comparison's or approval's own link (state, key, password grant) ----
+        var open = app.MapGroup("/api/public/comments").WithTags("Pinned comments (public)").AllowAnonymous();
+
+        open.MapGet("/{code}", async (string code, ClaimsPrincipal user, HttpContext http, IAccessGate gate, IResourceRegistry registry,
+                CommentService comments, CancellationToken ct) =>
+            {
+                DeveloperToolsEndpoints.NoStore(http);
+                var target = await CommentTargetAsync(http, gate, registry, code, ct);
+                if (target.Refusal is not null) return target.Refusal;
+                var viewer = user.Identity?.IsAuthenticated == true ? user.GetUserId() : (Guid?)null;
+                return ApiResults.From(await comments.ListAsync(target.ResourceId, viewer, ct));
+            })
+            .RejectFailedCredentials()
+            .RequireRateLimiting("content-read")
+            .WithSummary("The pinned comments of an image, comparison or approval draft, for anyone holding its link.")
+            .Produces<CommentThreadDto>().ProducesProblem(StatusCodes.Status404NotFound).ProducesProblem(StatusCodes.Status410Gone);
+
+        open.MapPost("/{code}", async (string code, CommentPostRequest request, ClaimsPrincipal user, HttpContext http, IAccessGate gate,
+                IResourceRegistry registry, CommentService comments, IOptions<GuestOptions> guests, GuestRateLimiter limiter, CancellationToken ct) =>
+            {
+                DeveloperToolsEndpoints.NoStore(http);
+                var target = await CommentTargetAsync(http, gate, registry, code, ct);
+                if (target.Refusal is not null) return target.Refusal;
+                Guid? author = null;
+                if (user.Identity?.IsAuthenticated == true)
+                {
+                    author = user.GetUserId();
+                }
+                else
+                {
+                    // Anonymous visitors: the spec §7.12 CAPTCHA and the in-memory brake, like every other guest write.
+                    var captcha = await CaptchaGate.CheckAsync(http, GuestCommentAction, ct);
+                    if (captcha is not null) return captcha;
+                    var partition = IpPartition.Key(http.Connection.RemoteIpAddress);
+                    if (!limiter.TryPerMinute("cmt:" + partition, guests.Value.PerMinute))
+                        return ApiResults.Problem(Error.TooManyRequests("Too many comments. Try again in a minute."));
+                }
+                var posted = await comments.PostAsync(target.ResourceId, target.OwnerId, target.Kind, new CommentAuthor(author),
+                    new PostCommentCommand(request.X, request.Y, request.Side, request.Body, request.AuthorName), ct);
+                return ApiResults.From(posted, c => Results.Created($"/api/public/comments/{code}/{c.Id}", c));
+            })
+            .RejectFailedCredentials()
+            .RequireRateLimiting("comment-write")
+            .WithRequestBodyLimit(16 * 1024)
+            .WithSummary("Pin a comment at a normalised point (x, y in 0..1). Anonymous visitors need the Captcha-Token header.")
+            .Produces<CommentDto>(StatusCodes.Status201Created).ProducesProblem(StatusCodes.Status400BadRequest)
+            .ProducesProblem(StatusCodes.Status401Unauthorized).ProducesProblem(StatusCodes.Status403Forbidden)
+            .ProducesProblem(StatusCodes.Status409Conflict).ProducesProblem(StatusCodes.Status429TooManyRequests);
+
+        open.MapDelete("/{code}/{commentId:long}", async (string code, long commentId, ClaimsPrincipal user, HttpContext http, IAccessGate gate,
+                IResourceRegistry registry, CommentService comments, CancellationToken ct) =>
+            {
+                DeveloperToolsEndpoints.NoStore(http);
+                if (user.Identity?.IsAuthenticated != true) return ApiResults.Problem(Error.Unauthorized("Sign in to delete your comment."));
+                var target = await CommentTargetAsync(http, gate, registry, code, ct);
+                if (target.Refusal is not null) return target.Refusal;
+                var deleted = await comments.AuthorDeleteAsync(target.ResourceId, user.GetUserId(), commentId, ct);
+                return deleted.IsSuccess ? Results.NoContent() : ApiResults.Problem(deleted.Error!);
+            })
+            .RejectFailedCredentials()
+            .RequireRateLimiting("comment-write")
+            .WithSummary("A signed-in author deletes their own comment.")
+            .Produces(StatusCodes.Status204NoContent).ProducesProblem(StatusCodes.Status404NotFound);
+
+        // ---- Owner moderation ----
+        var owner = app.MapGroup("/api/resources/{id:guid}/comments").WithTags("Pinned comments");
+
+        owner.MapPut("/settings", async (Guid id, CommentSettingsRequest request, ClaimsPrincipal user, HttpContext http, CommentService comments, CancellationToken ct) =>
+            {
+                http.Response.Headers.CacheControl = "private, no-store";
+                return ApiResults.From(await comments.SetSettingsAsync(id, user.GetUserId(), request.Enabled, request.AllowAnonymous, ct));
+            })
+            .RequireScope(ApiScopes.ToolsWrite)
+            .WithSummary("Turn pinned comments on or off for one of your images, comparisons or approval drafts.")
+            .Produces<CommentSettingsDto>().ProducesProblem(StatusCodes.Status402PaymentRequired).ProducesProblem(StatusCodes.Status404NotFound);
+
+        owner.MapGet("", async (Guid id, ClaimsPrincipal user, HttpContext http, CommentService comments, CancellationToken ct) =>
+            {
+                http.Response.Headers.CacheControl = "private, no-store";
+                return ApiResults.From(await comments.OwnerListAsync(id, user.GetUserId(), ct));
+            })
+            .RequireScope(ApiScopes.ResourcesRead)
+            .Produces<CommentThreadDto>().ProducesProblem(StatusCodes.Status404NotFound);
+
+        owner.MapPost("/{commentId:long}/resolve", async (Guid id, long commentId, ClaimsPrincipal user, HttpContext http, CommentService comments, CancellationToken ct) =>
+            {
+                http.Response.Headers.CacheControl = "private, no-store";
+                return ApiResults.From(await comments.SetStatusAsync(id, user.GetUserId(), commentId, resolved: true, ct));
+            })
+            .RequireScope(ApiScopes.ToolsWrite)
+            .Produces<CommentDto>().ProducesProblem(StatusCodes.Status404NotFound);
+
+        owner.MapPost("/{commentId:long}/reopen", async (Guid id, long commentId, ClaimsPrincipal user, HttpContext http, CommentService comments, CancellationToken ct) =>
+            {
+                http.Response.Headers.CacheControl = "private, no-store";
+                return ApiResults.From(await comments.SetStatusAsync(id, user.GetUserId(), commentId, resolved: false, ct));
+            })
+            .RequireScope(ApiScopes.ToolsWrite)
+            .Produces<CommentDto>().ProducesProblem(StatusCodes.Status404NotFound);
+
+        owner.MapDelete("/{commentId:long}", async (Guid id, long commentId, ClaimsPrincipal user, HttpContext http, CommentService comments, CancellationToken ct) =>
+            {
+                http.Response.Headers.CacheControl = "private, no-store";
+                var deleted = await comments.OwnerDeleteAsync(id, user.GetUserId(), commentId, ct);
+                return deleted.IsSuccess ? Results.NoContent() : ApiResults.Problem(deleted.Error!);
+            })
+            .RequireScope(ApiScopes.ToolsWrite)
+            .Produces(StatusCodes.Status204NoContent).ProducesProblem(StatusCodes.Status404NotFound);
+    }
+
+    private readonly record struct CommentTarget(IResult? Refusal, Guid ResourceId, Guid OwnerId, ResourceKind Kind);
+
+    /// <summary>The gate for purpose View on the code, then: a resource kind that can carry comments, owned by an account (guest content
+    /// has no owner to moderate it), and ready. Anything else answers like an unknown code or a closed one.</summary>
+    private static async Task<CommentTarget> CommentTargetAsync(HttpContext http, IAccessGate gate, IResourceRegistry registry, string code, CancellationToken ct)
+    {
+        var credentials = new AccessCredentials(DeveloperToolsEndpoints.Header(http, AccessWireNames.LinkKeyHeader),
+            DeveloperToolsEndpoints.Header(http, AccessWireNames.GrantHeader));
+        var gated = await gate.EvaluateAsync(code, credentials, AccessPurpose.View, ct);
+        if (gated.Outcome != AccessGateOutcome.Allowed)
+            return new(ApiResults.Problem(ContentAccessGate.ToError(gated)), default, default, default);
+        if (gated.ResourceId is not { } resourceId || await registry.GetAsync(resourceId, ct) is not { } resource
+            || !CommentService.Targets.Contains(resource.Kind) || resource.Owner.UserId is not { } ownerId)
+            return new(ApiResults.NotFound(), default, default, default);
+        var state = ResourceStateCalculator.Compute(gated.LinkState, resource.Processing, resource.BurnClaimedAt, null);
+        if (state != ResourceState.Ready)
+            return new(ApiResults.Problem(state == ResourceState.Processing
+                ? Error.Of(ErrorCodes.Processing, "This content is not ready.")
+                : Error.Of(ErrorCodes.Expired, "This content is not available.")), default, default, default);
+        return new(null, resourceId, ownerId, resource.Kind);
     }
 
     private static void MapCompare(IEndpointRouteBuilder app)

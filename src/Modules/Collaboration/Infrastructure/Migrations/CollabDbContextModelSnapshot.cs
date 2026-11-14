@@ -23,6 +23,125 @@ namespace Zaagl.Modules.Collaboration.Infrastructure.Migrations
 
             NpgsqlModelBuilderExtensions.UseIdentityByDefaultColumns(modelBuilder);
 
+            modelBuilder.Entity("Zaagl.Modules.Collaboration.Domain.CommentRow", b =>
+                {
+                    b.Property<long>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bigint")
+                        .HasColumnName("id");
+
+                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<long>("Id"));
+
+                    b.Property<short>("AuthorKind")
+                        .HasColumnType("smallint")
+                        .HasColumnName("author_kind");
+
+                    b.Property<string>("AuthorName")
+                        .HasMaxLength(60)
+                        .HasColumnType("character varying(60)")
+                        .HasColumnName("author_name");
+
+                    b.Property<Guid?>("AuthorUserId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("author_user_id");
+
+                    b.Property<string>("Body")
+                        .IsRequired()
+                        .HasMaxLength(1000)
+                        .HasColumnType("character varying(1000)")
+                        .HasColumnName("body");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at");
+
+                    b.Property<DateTime?>("ResolvedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("resolved_at");
+
+                    b.Property<Guid>("ResourceId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("resource_id");
+
+                    b.Property<short?>("Side")
+                        .HasColumnType("smallint")
+                        .HasColumnName("side");
+
+                    b.Property<short>("Status")
+                        .HasColumnType("smallint")
+                        .HasColumnName("status");
+
+                    b.Property<double>("X")
+                        .HasColumnType("double precision")
+                        .HasColumnName("x");
+
+                    b.Property<double>("Y")
+                        .HasColumnType("double precision")
+                        .HasColumnName("y");
+
+                    b.HasKey("Id")
+                        .HasName("pk_comments");
+
+                    b.HasIndex("AuthorUserId")
+                        .HasDatabaseName("ix_comments_author")
+                        .HasFilter("author_user_id IS NOT NULL");
+
+                    b.HasIndex("ResourceId", "Id")
+                        .HasDatabaseName("ix_comments_resource");
+
+                    b.ToTable("comments", "collab", t =>
+                        {
+                            t.HasCheckConstraint("ck_comments_author", "author_kind IN (0, 1, 2) AND ((author_kind = 2) = (author_user_id IS NULL))");
+
+                            t.HasCheckConstraint("ck_comments_body", "char_length(body) BETWEEN 1 AND 1000");
+
+                            t.HasCheckConstraint("ck_comments_point", "x BETWEEN 0 AND 1 AND y BETWEEN 0 AND 1");
+
+                            t.HasCheckConstraint("ck_comments_side", "side IS NULL OR side IN (0, 1)");
+
+                            t.HasCheckConstraint("ck_comments_status", "status IN (0, 1) AND ((status = 1) = (resolved_at IS NOT NULL))");
+                        });
+                });
+
+            modelBuilder.Entity("Zaagl.Modules.Collaboration.Domain.CommentSettingsRow", b =>
+                {
+                    b.Property<Guid>("ResourceId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("resource_id");
+
+                    b.Property<bool>("AllowAnonymous")
+                        .HasColumnType("boolean")
+                        .HasColumnName("allow_anonymous");
+
+                    b.Property<int>("CommentCount")
+                        .HasColumnType("integer")
+                        .HasColumnName("comment_count");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at");
+
+                    b.Property<bool>("Enabled")
+                        .HasColumnType("boolean")
+                        .HasColumnName("enabled");
+
+                    b.Property<Guid>("OwnerId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("owner_id");
+
+                    b.Property<DateTime>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("updated_at");
+
+                    b.HasKey("ResourceId")
+                        .HasName("pk_comment_settings");
+
+                    b.ToTable("comment_settings", "collab", t =>
+                        {
+                            t.HasCheckConstraint("ck_comment_settings_count", "comment_count BETWEEN 0 AND 10000");
+                        });
+                });
+
             modelBuilder.Entity("Zaagl.Modules.Collaboration.Domain.ComparisonRow", b =>
                 {
                     b.Property<Guid>("ResourceId")
@@ -67,6 +186,16 @@ namespace Zaagl.Modules.Collaboration.Infrastructure.Migrations
 
                             t.HasCheckConstraint("ck_comparisons_labels", "(before_label IS NULL OR char_length(before_label) <= 40) AND (after_label IS NULL OR char_length(after_label) <= 40)");
                         });
+                });
+
+            modelBuilder.Entity("Zaagl.Modules.Collaboration.Domain.CommentRow", b =>
+                {
+                    b.HasOne("Zaagl.Modules.Collaboration.Domain.CommentSettingsRow", null)
+                        .WithMany()
+                        .HasForeignKey("ResourceId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired()
+                        .HasConstraintName("fk_comments_comment_settings_resource_id");
                 });
 #pragma warning restore 612, 618
         }

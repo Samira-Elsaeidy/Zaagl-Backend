@@ -136,6 +136,10 @@ namespace Zaagl.Modules.Files.Infrastructure.Migrations
                         .HasColumnType("smallint")
                         .HasColumnName("orientation");
 
+                    b.Property<string>("Palette")
+                        .HasColumnType("jsonb")
+                        .HasColumnName("palette");
+
                     b.Property<DateTime>("ProbedAt")
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("probed_at");

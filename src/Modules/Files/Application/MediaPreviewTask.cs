@@ -63,6 +63,7 @@ public sealed class MediaPreviewTaskHandler(
         await gate.Slots.WaitAsync(ct);
         ImageHeader? header = null;
         ThumbnailResult thumb;
+        IReadOnlyList<PaletteColor>? palette = null;
         try
         {
             // Probe and decode run on the thread pool with a wall-clock limit; a decoder that hangs is abandoned, never awaited forever.
@@ -70,11 +71,13 @@ public sealed class MediaPreviewTaskHandler(
             {
                 var h = ImageProbe.Read(path);
                 var t = h is null ? ThumbnailResult.Fail("unprobeable") : ImageThumbnailer.Create(path, h, o);
-                return (h, t);
+                // Phase 2: the palette from the thumbnail just made (small, already bounded decode), never from the original.
+                var p = t.Outcome == ThumbnailOutcome.Created && t.Bytes is { } tb ? PaletteExtractor.FromEncoded(tb) : null;
+                return (h, t, p);
             }, CancellationToken.None);
             try
             {
-                (header, thumb) = await work.WaitAsync(TimeSpan.FromSeconds(Math.Max(1, o.TimeoutSeconds)), ct);
+                (header, thumb, palette) = await work.WaitAsync(TimeSpan.FromSeconds(Math.Max(1, o.TimeoutSeconds)), ct);
             }
             catch (TimeoutException)
             {
@@ -101,6 +104,7 @@ public sealed class MediaPreviewTaskHandler(
                 FrameCount = header?.FrameCount,
                 HasAlpha = header?.HasAlpha,
                 ProbedAt = now,
+                Palette = palette is null ? null : JsonSerializer.Serialize(palette, MediaMetadata.PaletteJson),
             });
         }
 
@@ -170,6 +174,8 @@ public sealed class MediaPreviewTaskHandler(
 /// <summary>Reads for the owner and public descriptors (<see cref="IMediaMetadata"/>).</summary>
 public sealed class MediaMetadata(FilesDbContext db) : IMediaMetadata
 {
+    internal static readonly JsonSerializerOptions PaletteJson = new(JsonSerializerDefaults.Web);
+
     public async Task<IReadOnlyDictionary<Guid, StoredMedia>> GetAsync(IReadOnlyCollection<Guid> resourceIds, CancellationToken ct)
     {
         if (resourceIds.Count == 0) return new Dictionary<Guid, StoredMedia>();
@@ -181,7 +187,8 @@ public sealed class MediaMetadata(FilesDbContext db) : IMediaMetadata
             var swap = m.Orientation is >= 5;
             return new StoredMedia(
                 m.ResourceId, m.MediaType == 1, swap ? m.Height : m.Width, swap ? m.Width : m.Height, m.Orientation, m.FrameCount, m.HasAlpha,
-                derivatives[m.ResourceId].OrderBy(d => d.Kind, StringComparer.Ordinal).Select(ToDerivative).ToList());
+                derivatives[m.ResourceId].OrderBy(d => d.Kind, StringComparer.Ordinal).Select(ToDerivative).ToList(),
+                m.Palette is null ? null : JsonSerializer.Deserialize<List<PaletteColor>>(m.Palette, PaletteJson));
         });
     }
 

@@ -51,3 +51,31 @@ public sealed record OwnerComparisonDto(
     ImagePartDto Before,
     ImagePartDto After,
     DateTime CreatedAt);
+
+// ---- Pinned comments ------------------------------------------------------------------------------------------------
+
+/// <param name="X">Normalised horizontal position 0..1 from the left edge of the displayed (EXIF-oriented) image.</param>
+/// <param name="Y">Normalised vertical position 0..1 from the top edge.</param>
+/// <param name="Side">Comparisons only: <c>before</c> or <c>after</c>.</param>
+/// <param name="AuthorName">Optional display name for a visitor (at most 60 characters); ignored for the owner.</param>
+public sealed record PostCommentCommand(double X, double Y, string? Side, string? Body, string? AuthorName);
+
+/// <param name="Author"><c>owner</c>, <c>visitor</c> (signed in) or <c>anonymous</c>.</param>
+/// <param name="Mine">True when the signed-in caller wrote it (the UI may offer delete).</param>
+public sealed record CommentDto(
+    long Id,
+    double X,
+    double Y,
+    string? Side,
+    string Body,
+    string Author,
+    string? AuthorName,
+    string Status,
+    DateTime CreatedAt,
+    DateTime? ResolvedAt,
+    bool Mine);
+
+/// <param name="Enabled">False: the owner has not turned comments on (the list is empty and posting is refused).</param>
+public sealed record CommentThreadDto(bool Enabled, bool AllowAnonymous, int Count, int MaxComments, IReadOnlyList<CommentDto> Items);
+
+public sealed record CommentSettingsDto(bool Enabled, bool AllowAnonymous, int Count, int MaxComments);

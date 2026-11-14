@@ -179,7 +179,11 @@ public sealed record StoredDerivative(Guid Id, string Kind, string Status, int? 
 /// <param name="Animated">GIF, APNG or animated WebP with more than one frame.</param>
 public sealed record StoredMedia(
     Guid ResourceId, bool Animated, int? Width, int? Height, int? Orientation, int? FrameCount, bool? HasAlpha,
-    IReadOnlyList<StoredDerivative> Derivatives);
+    IReadOnlyList<StoredDerivative> Derivatives, IReadOnlyList<PaletteColor>? Palette = null);
+
+/// <summary>Phase 2 (docs/phase2/palette-and-comments.md): one dominant colour; <paramref name="Share"/> is the fraction (0..1) of the
+/// sampled opaque pixels closest to it. Colours are ordered by share, largest first.</summary>
+public sealed record PaletteColor(string Hex, int R, int G, int B, double Share);
 
 /// <summary>Batch read of the probe result and the derivatives written by the <c>media-preview</c> task.</summary>
 public interface IMediaMetadata

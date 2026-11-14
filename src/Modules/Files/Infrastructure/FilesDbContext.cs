@@ -69,6 +69,7 @@ public sealed class FilesDbContext(DbContextOptions<FilesDbContext> options) : D
         {
             e.ToTable("media_items", t => t.HasCheckConstraint("ck_media_items_orientation", "orientation IS NULL OR orientation BETWEEN 1 AND 8"));
             e.HasKey(x => x.ResourceId);
+            e.Property(x => x.Palette).HasColumnType("jsonb");
             e.Property(x => x.ResourceId).ValueGeneratedNever();
         });
 

@@ -76,6 +76,8 @@ public sealed class MediaItemRow
     public int? FrameCount { get; set; }
     public bool? HasAlpha { get; set; }
     public DateTime ProbedAt { get; set; }
+    /// <summary>Phase 2: the dominant colours (JSON array of PaletteColor), computed from the thumbnail; null when there is none.</summary>
+    public string? Palette { get; set; }
 }
 
 /// <summary><c>files.media_derivatives</c>: one row per (resource, kind). The id is the storage object id of the derivative file in
