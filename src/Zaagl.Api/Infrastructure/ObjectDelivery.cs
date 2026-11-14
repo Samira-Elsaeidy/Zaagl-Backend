@@ -185,6 +185,7 @@ public sealed partial class ObjectDelivery(
     {
         "model/gltf-binary", "model/gltf+json", "application/json",
         "audio/mpeg", "audio/wav", "audio/flac", "audio/ogg", "audio/aac", "audio/mp4",
+        "video/mp4", "video/webm",
     };
 
     internal static string ContentDispositionFor(bool inline, string displayName)

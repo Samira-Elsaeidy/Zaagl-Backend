@@ -95,3 +95,19 @@ public sealed class HookRequestRow
     public string SourceFingerprint { get; set; } = "";
     public int StoredBytes { get; set; }
 }
+
+/// <summary><c>devtools.capsules</c> (docs/phase2/bug-capsules.md): a screen recording (a separate video resource of the same owner)
+/// bundled with the console and network log document. <see cref="Logs"/> is the validated, redacted JSON (jsonb).</summary>
+public sealed class CapsuleRow
+{
+    public Guid ResourceId { get; set; }
+    public Guid OwnerId { get; set; }
+    public Guid? RecordingResourceId { get; set; }
+    public string Logs { get; set; } = "{}";
+    public int LogsBytes { get; set; }
+    public int ConsoleCount { get; set; }
+    public int ErrorCount { get; set; }
+    public int NetworkCount { get; set; }
+    public int FailedRequestCount { get; set; }
+    public DateTime CreatedAt { get; set; }
+}

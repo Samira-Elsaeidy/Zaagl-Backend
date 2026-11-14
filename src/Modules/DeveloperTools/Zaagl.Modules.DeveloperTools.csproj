@@ -7,6 +7,8 @@
     <ProjectReference Include="..\Resources\Zaagl.Modules.Resources.csproj" />
     <ProjectReference Include="..\Links\Zaagl.Modules.Links.csproj" />
     <ProjectReference Include="..\Billing\Zaagl.Modules.Billing.csproj" />
+    <!-- Bug capsules: Files.Contracts (stored object summaries) for the recording check. -->
+    <ProjectReference Include="..\Files\Zaagl.Modules.Files.csproj" />
   </ItemGroup>
 
   <ItemGroup>

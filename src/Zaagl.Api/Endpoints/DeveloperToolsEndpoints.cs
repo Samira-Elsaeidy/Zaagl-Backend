@@ -22,6 +22,16 @@ public sealed record SecretCreateRequest(
     string? Password = null,
     string? CustomSlug = null);
 
+/// <summary>openapi CapsuleCreateRequest (docs/phase2/bug-capsules.md). <c>logs</c> follows the log schema version 1.</summary>
+public sealed record CapsuleCreateRequest(
+    System.Text.Json.JsonElement Logs,
+    Guid? RecordingResourceId = null,
+    string? Title = null,
+    DateTime? ExpiresAt = null,
+    string? Password = null,
+    string? CustomSlug = null,
+    bool Public = false);
+
 /// <summary>
 /// Phase 2 E2.1 developer tools on <c>api.zaa.gl</c> (docs/phase2). Owner routes are owner only (404 otherwise, PD-40) and
 /// <c>private, no-store</c>; public routes run <see cref="IAccessGate"/> on every call and only a POST consumes anything.
@@ -34,9 +44,68 @@ public static class DeveloperToolsEndpoints
     /// <summary>The largest vault envelope (1 MiB) as base64url plus JSON overhead.</summary>
     private const long VaultBodyBytes = 2 * 1024 * 1024;
 
+    /// <summary>The largest capsule log document (4 MiB) plus JSON overhead.</summary>
+    private const long CapsuleBodyBytes = 5 * 1024 * 1024;
+
     public static void MapDeveloperTools(this IEndpointRouteBuilder app)
     {
         MapVault(app);
+        MapCapsules(app);
+    }
+
+    private static void MapCapsules(IEndpointRouteBuilder app)
+    {
+        var capsules = app.MapGroup("/api/capsules").WithTags("Bug capsules");
+
+        capsules.MapPost("", async (CapsuleCreateRequest request, ClaimsPrincipal user, HttpContext http, CapsuleService service, CancellationToken ct) =>
+            {
+                http.Response.Headers.CacheControl = "private, no-store";
+                var created = await service.CreateAsync(user.GetUserId(), SnippetsEndpoints.CreatedViaFor(user), new CreateCapsuleCommand(
+                    request.RecordingResourceId, request.Logs, request.Title, request.ExpiresAt, request.Password, request.CustomSlug, request.Public), ct);
+                return ApiResults.From(created, dto => Results.Created($"/api/capsules/{dto.ResourceId}", dto));
+            })
+            .RequireScope(ApiScopes.ToolsWrite)
+            .RequireRateLimiting("content-write")
+            .WithRequestBodyLimit(CapsuleBodyBytes)
+            .WithSummary("Create a bug capsule: an optional screen recording (one of your MP4/WebM uploads) plus console and network logs (schema v1).")
+            .Produces<CapsuleCreatedDto>(StatusCodes.Status201Created)
+            .ProducesProblem(StatusCodes.Status400BadRequest).ProducesProblem(StatusCodes.Status402PaymentRequired)
+            .ProducesProblem(StatusCodes.Status413PayloadTooLarge).ProducesProblem(StatusCodes.Status422UnprocessableEntity);
+
+        capsules.MapGet("/{id:guid}", async (Guid id, ClaimsPrincipal user, HttpContext http, CapsuleService service, IOptions<LinkOptions> links, CancellationToken ct) =>
+            {
+                http.Response.Headers.CacheControl = "private, no-store";
+                return ApiResults.From(await service.GetOwnedAsync(id, user.GetUserId(), links.Value.BaseUrl, ct));
+            })
+            .RequireScope(ApiScopes.ResourcesRead)
+            .Produces<OwnerCapsuleDto>().ProducesProblem(StatusCodes.Status404NotFound);
+
+        capsules.MapDelete("/{id:guid}", async (Guid id, ClaimsPrincipal user, HttpContext http, CapsuleService service, CancellationToken ct) =>
+            {
+                http.Response.Headers.CacheControl = "private, no-store";
+                var deleted = await service.DeleteAsync(id, user.GetUserId(), ct);
+                return deleted.IsSuccess ? Results.NoContent() : ApiResults.Problem(deleted.Error!);
+            })
+            .RequireScope(ApiScopes.ToolsWrite)
+            .WithSummary("Delete the capsule link (410). The recording upload is not touched.")
+            .Produces(StatusCodes.Status204NoContent).ProducesProblem(StatusCodes.Status404NotFound);
+
+        app.MapGet("/api/public/capsules/{code}", async (string code, HttpContext http, IAccessGate gate, ILinkResolver links,
+                Zaagl.Modules.Resources.Contracts.IResourceRegistry registry, CapsuleService service, CancellationToken ct) =>
+            {
+                NoStore(http);
+                var gated = await GateAsync(http, gate, code, LinkTargetKind.Capsule, ct);
+                if (gated.Refusal is not null) return gated.Refusal;
+                var link = await links.GetSnapshotAsync(SlugRules.Key(code), ct);
+                var resource = await registry.GetAsync(gated.ResourceId, ct);
+                if (link is null || resource is null) return ApiResults.NotFound();
+                return ApiResults.From(await service.DescribeAsync(gated.ResourceId, link, resource.Title, ct));
+            })
+            .WithTags("Bug capsules (public)").AllowAnonymous()
+            .RequireRateLimiting("content-read")
+            .WithSummary("Capsule descriptor for a link holder: the recording's inline ticket, the log summary and the logs (data, never markup).")
+            .Produces<CapsuleDescriptorDto>().ProducesProblem(StatusCodes.Status401Unauthorized)
+            .ProducesProblem(StatusCodes.Status404NotFound).ProducesProblem(StatusCodes.Status410Gone);
     }
 
     private static void MapVault(IEndpointRouteBuilder app)

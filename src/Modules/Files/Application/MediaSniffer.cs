@@ -43,6 +43,11 @@ public static class MediaSniffer
     public static readonly IReadOnlySet<string> AudioTypes =
         new HashSet<string>(StringComparer.Ordinal) { "audio/mpeg", "audio/wav", "audio/flac", "audio/ogg", "audio/aac", "audio/mp4" };
 
+    /// <summary>Video containers recognised by their header (screen recordings of bug capsules). Addendum 4.4 allows video inline.</summary>
+    public static readonly IReadOnlySet<string> VideoTypes = new HashSet<string>(StringComparer.Ordinal) { "video/mp4", "video/webm" };
+
+    private static readonly string[] Mp4Brands = ["isom", "iso2", "iso4", "iso5", "iso6", "mp41", "mp42", "avc1", "dash", "M4V ", "MSNV"];
+
     /// <summary>
     /// Candidate viewer types from the first 64 KB. A candidate is not trusted yet: the scan task runs <see cref="ViewerValidator"/>
     /// on the whole file and rejects or downgrades it. The declared type and the name are never inputs.
@@ -63,6 +68,13 @@ public static class MediaSniffer
         if (head.Length >= 12 && head.Slice(4, 4).SequenceEqual("ftyp"u8)
             && (head.Slice(8, 4).SequenceEqual("M4A "u8) || head.Slice(8, 4).SequenceEqual("M4B "u8)))
             return new DetectedType("audio/mp4", ".m4a");
+        if (head.Length >= 12 && head.Slice(4, 4).SequenceEqual("ftyp"u8)
+            && Mp4Brands.Contains(System.Text.Encoding.ASCII.GetString(head.Slice(8, 4)), StringComparer.Ordinal))
+            return new DetectedType("video/mp4", ".mp4");
+        // WebM: an EBML header whose DocType is "webm" (Matroska proper is not accepted).
+        if (head.Length >= 4 && head[0] == 0x1A && head[1] == 0x45 && head[2] == 0xDF && head[3] == 0xA3
+            && head[..Math.Min(head.Length, 64)].IndexOf("webm"u8) > 0)
+            return new DetectedType("video/webm", ".webm");
         if (head.Length >= 7 && head[0] == 0xFF && (head[1] & 0xF6) == 0xF0) return new DetectedType("audio/aac", ".aac"); // ADTS
         if (IsMpegAudioFrame(head)) return new DetectedType("audio/mpeg", ".mp3");
 

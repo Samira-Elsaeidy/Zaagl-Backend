@@ -9,6 +9,8 @@ public enum ViewerKind : short
     Model3d = 1,
     Lottie = 2,
     Audio = 3,
+    /// <summary>Screen recordings and other MP4/WebM video (bug capsules, docs/phase2/bug-capsules.md).</summary>
+    Video = 4,
 }
 
 /// <summary>Configuration section <c>Viewers</c>.</summary>
@@ -40,11 +42,13 @@ public static class ViewerValidator
     private static readonly JsonDocumentOptions JsonOptions = new() { MaxDepth = 128, CommentHandling = JsonCommentHandling.Disallow };
 
     public static bool IsCandidate(string? mime) =>
-        mime is MediaSniffer.GlbMime or MediaSniffer.GltfJsonMime or MediaSniffer.LottieMime || (mime is not null && MediaSniffer.AudioTypes.Contains(mime));
+        mime is MediaSniffer.GlbMime or MediaSniffer.GltfJsonMime or MediaSniffer.LottieMime
+        || (mime is not null && (MediaSniffer.AudioTypes.Contains(mime) || MediaSniffer.VideoTypes.Contains(mime)));
 
     public static async Task<ViewerVerdict> ValidateAsync(string path, string mime, long size, int maxJsonBytes, CancellationToken ct)
     {
         if (MediaSniffer.AudioTypes.Contains(mime)) return new(ViewerKind.Audio, false, true, null);
+        if (MediaSniffer.VideoTypes.Contains(mime)) return new(ViewerKind.Video, false, true, null);
         await using var file = new FileStream(path, new FileStreamOptions
         {
             Mode = FileMode.Open, Access = FileAccess.Read, Share = FileShare.Read | FileShare.Delete, Options = FileOptions.Asynchronous,

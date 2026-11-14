@@ -13,6 +13,7 @@ public sealed class DevToolsDbContext(DbContextOptions<DevToolsDbContext> option
     public DbSet<SecretEventRow> SecretEvents => Set<SecretEventRow>();
     public DbSet<HookRow> Hooks => Set<HookRow>();
     public DbSet<HookRequestRow> HookRequests => Set<HookRequestRow>();
+    public DbSet<CapsuleRow> Capsules => Set<CapsuleRow>();
 
     protected override void OnModelCreating(ModelBuilder b)
     {
@@ -85,6 +86,19 @@ public sealed class DevToolsDbContext(DbContextOptions<DevToolsDbContext> option
             e.Property(x => x.SourceFingerprint).HasMaxLength(16).IsRequired();
             e.HasOne<HookRow>().WithMany().HasForeignKey(x => x.HookId).OnDelete(DeleteBehavior.Cascade);
             e.HasIndex(x => new { x.HookId, x.Id }).HasDatabaseName("ix_hook_requests_hook");
+        });
+
+        b.Entity<CapsuleRow>(e =>
+        {
+            e.ToTable("capsules", t =>
+            {
+                t.HasCheckConstraint("ck_capsules_logs_bytes", "logs_bytes BETWEEN 0 AND 4194304");
+                t.HasCheckConstraint("ck_capsules_counts", "console_count >= 0 AND error_count >= 0 AND network_count >= 0 AND failed_request_count >= 0");
+            });
+            e.HasKey(x => x.ResourceId);
+            e.Property(x => x.ResourceId).ValueGeneratedNever();
+            e.Property(x => x.Logs).HasColumnType("jsonb").IsRequired();
+            e.HasIndex(x => x.RecordingResourceId).HasFilter("recording_resource_id IS NOT NULL").HasDatabaseName("ix_capsules_recording");
         });
     }
 }

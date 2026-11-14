@@ -33,6 +33,7 @@ public static class DeveloperToolsModule
         services.AddScoped<IResourceKindHandler>(sp => sp.GetRequiredService<SecretLifecycle>());
         services.AddScoped<IDevToolsSweep, VaultExpirySweep>();
         services.AddScoped<IDevToolsSweep, HookPurgeSweep>();
+        services.AddScoped<IResourceKindHandler, CapsuleKindHandler>();
         services.AddSingleton<DevToolsSweeper>();
         if (workerOnly) return services;
 
@@ -40,6 +41,7 @@ public static class DeveloperToolsModule
         services.AddScoped<VaultService>();
         services.Configure<HookOptions>(configuration.GetSection(HookOptions.Section));
         services.AddScoped<HookService>();
+        services.AddScoped<CapsuleService>();
         services.AddSingleton<IModuleMigrator>(sp =>
             new ModuleMigrator<DevToolsDbContext>("devtools", sp.GetRequiredService<IServiceScopeFactory>()));
         return services;

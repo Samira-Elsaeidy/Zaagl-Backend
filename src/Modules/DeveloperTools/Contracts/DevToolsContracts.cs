@@ -155,3 +155,47 @@ public sealed record HookRequestDto(
     string? BodyText);
 
 public sealed record HookRequestPage(IReadOnlyList<HookRequestSummaryDto> Items, long? NextBefore);
+
+// ---- Bug capsules ----------------------------------------------------------------------------------------------------
+
+/// <param name="RecordingResourceId">Optional: one of the caller's ready video uploads (MP4 or WebM).</param>
+/// <param name="Logs">The log document, schema version 1 (docs/phase2/bug-capsules.md).</param>
+public sealed record CreateCapsuleCommand(
+    Guid? RecordingResourceId,
+    System.Text.Json.JsonElement Logs,
+    string? Title,
+    DateTime? ExpiresAt,
+    string? Password,
+    string? CustomSlug,
+    bool Public);
+
+public sealed record CapsuleCreatedDto(Guid ResourceId, string Code, string ShortUrl, string? LinkKey, DateTime ExpiresAt);
+
+/// <param name="State"><c>ready</c>, or <c>unavailable</c> (deleted, expired, taken down): then the URL is null.</param>
+public sealed record CapsuleRecordingDto(string State, string? Mime, long? SizeBytes, string? InlineUrl);
+
+public sealed record CapsuleSummaryDto(int ConsoleCount, int ErrorCount, int NetworkCount, int FailedRequestCount, int LogsBytes);
+
+/// <summary>Public descriptor. <paramref name="Logs"/> is data (render escaped, never as markup).</summary>
+public sealed record CapsuleDescriptorDto(
+    string Kind,
+    string? Title,
+    DateTime ExpiresAt,
+    bool HasPassword,
+    CapsuleRecordingDto? Recording,
+    CapsuleSummaryDto Summary,
+    System.Text.Json.JsonElement Logs);
+
+public sealed record OwnerCapsuleDto(
+    Guid Id,
+    string Code,
+    string ShortUrl,
+    string? Title,
+    string State,
+    DateTime ExpiresAt,
+    bool IsPublic,
+    bool HasPassword,
+    Guid? RecordingResourceId,
+    CapsuleRecordingDto? Recording,
+    CapsuleSummaryDto Summary,
+    DateTime CreatedAt);

@@ -21,6 +21,10 @@ public sealed class ViewerTypeTests
         Assert.Equal("audio/ogg", Sniff([.. "OggS"u8, 0, 2, 0, 0]));
         Assert.Equal("audio/aac", Sniff([0xFF, 0xF1, 0x50, 0x80, 0x02, 0x1F, 0xFC]));
         Assert.Equal("audio/mp4", Sniff([0, 0, 0, 0x20, .. "ftypM4A "u8, 0, 0, 0, 0]));
+        Assert.Equal("video/mp4", Sniff([0, 0, 0, 0x18, .. "ftypisom"u8, 0, 0, 2, 0]));
+        Assert.Equal("video/webm", Sniff([0x1A, 0x45, 0xDF, 0xA3, 0x9F, 0x42, 0x86, 0x81, 0x01, 0x42, 0x82, 0x84, .. "webm"u8]));
+        Assert.Null(Sniff([0x1A, 0x45, 0xDF, 0xA3, 0x9F, 0x42, 0x86, 0x81, 0x01, 0x42, 0x82, 0x88, .. "matroska"u8]));
+        Assert.Null(Sniff([0, 0, 0, 0x18, .. "ftypqt  "u8, 0, 0, 2, 0]));
 
         // Not candidates: plain JSON, a glTF with the wrong version, a JPEG, an MPEG sync with a reserved bitrate.
         Assert.Null(Sniff("{\"name\":\"package\",\"version\":\"1.0.0\"}"u8.ToArray()));
@@ -93,5 +97,6 @@ public sealed class ViewerTypeTests
     {
         Assert.Equal(ViewerKind.Audio, (await ValidateAsync(ViewerSamples.Wav(), "audio/wav")).Viewer);
         Assert.Equal(ViewerKind.Audio, (await ValidateAsync(ViewerSamples.Mp3Frames(), "audio/mpeg")).Viewer);
+        Assert.Equal(ViewerKind.Video, (await ValidateAsync([0, 0, 0, 0x18, .. "ftypisom"u8, 0, 0, 2, 0], "video/mp4")).Viewer);
     }
 }

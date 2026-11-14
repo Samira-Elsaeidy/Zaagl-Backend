@@ -240,7 +240,7 @@ namespace Zaagl.Modules.Files.Infrastructure.Migrations
 
                             t.HasCheckConstraint("ck_storage_objects_sha256", "sha256 IS NULL OR octet_length(sha256) = 32");
 
-                            t.HasCheckConstraint("ck_storage_objects_viewer", "viewer IS NULL OR viewer IN (1, 2, 3)");
+                            t.HasCheckConstraint("ck_storage_objects_viewer", "viewer IS NULL OR viewer IN (1, 2, 3, 4)");
                         });
                 });
 

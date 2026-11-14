@@ -23,6 +23,64 @@ namespace Zaagl.Modules.DeveloperTools.Infrastructure.Migrations
 
             NpgsqlModelBuilderExtensions.UseIdentityByDefaultColumns(modelBuilder);
 
+            modelBuilder.Entity("Zaagl.Modules.DeveloperTools.Domain.CapsuleRow", b =>
+                {
+                    b.Property<Guid>("ResourceId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("resource_id");
+
+                    b.Property<int>("ConsoleCount")
+                        .HasColumnType("integer")
+                        .HasColumnName("console_count");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at");
+
+                    b.Property<int>("ErrorCount")
+                        .HasColumnType("integer")
+                        .HasColumnName("error_count");
+
+                    b.Property<int>("FailedRequestCount")
+                        .HasColumnType("integer")
+                        .HasColumnName("failed_request_count");
+
+                    b.Property<string>("Logs")
+                        .IsRequired()
+                        .HasColumnType("jsonb")
+                        .HasColumnName("logs");
+
+                    b.Property<int>("LogsBytes")
+                        .HasColumnType("integer")
+                        .HasColumnName("logs_bytes");
+
+                    b.Property<int>("NetworkCount")
+                        .HasColumnType("integer")
+                        .HasColumnName("network_count");
+
+                    b.Property<Guid>("OwnerId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("owner_id");
+
+                    b.Property<Guid?>("RecordingResourceId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("recording_resource_id");
+
+                    b.HasKey("ResourceId")
+                        .HasName("pk_capsules");
+
+                    b.HasIndex("RecordingResourceId")
+                        .HasDatabaseName("ix_capsules_recording")
+                        .HasFilter("recording_resource_id IS NOT NULL");
+
+                    b.ToTable("capsules", "devtools", t =>
+                        {
+                            t.HasCheckConstraint("ck_capsules_counts", "console_count >= 0 AND error_count >= 0 AND network_count >= 0 AND failed_request_count >= 0");
+
+                            t.HasCheckConstraint("ck_capsules_logs_bytes", "logs_bytes BETWEEN 0 AND 4194304");
+                        });
+                });
+
             modelBuilder.Entity("Zaagl.Modules.DeveloperTools.Domain.HookRequestRow", b =>
                 {
                     b.Property<long>("Id")
