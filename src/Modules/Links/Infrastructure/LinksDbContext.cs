@@ -20,6 +20,8 @@ public sealed class LinksDbContext(DbContextOptions<LinksDbContext> options) : D
     public DbSet<AliasDenylistEntry> AliasDenylist => Set<AliasDenylistEntry>();
     public DbSet<AliasFreeze> AliasFreezes => Set<AliasFreeze>();
     public DbSet<LifecycleOutboxRow> LifecycleOutbox => Set<LifecycleOutboxRow>();
+    public DbSet<GuestSettingsRow> GuestSettings => Set<GuestSettingsRow>();
+    public DbSet<GuestSettingsAuditRow> GuestSettingsAudit => Set<GuestSettingsAuditRow>();
 
     protected override void OnModelCreating(ModelBuilder b)
     {
@@ -181,6 +183,27 @@ public sealed class LinksDbContext(DbContextOptions<LinksDbContext> options) : D
             e.Property(x => x.LastError).HasMaxLength(1000);
             e.HasIndex(x => x.OccurredAt).HasFilter("processed_at IS NULL").HasDatabaseName("ix_lifecycle_outbox_pending");
             e.HasIndex(x => x.LinkId);
+        });
+
+        // Guest-creation control panel: one settings row plus an append-only audit trail.
+        b.Entity<GuestSettingsRow>(e =>
+        {
+            e.ToTable("guest_settings", t => t.HasCheckConstraint("ck_guest_settings_single_row", "id = 1"));
+            e.HasKey(x => x.Id);
+            e.Property(x => x.Id).ValueGeneratedNever();
+            e.Property(x => x.UpdatedByEmail).HasMaxLength(255);
+        });
+
+        b.Entity<GuestSettingsAuditRow>(e =>
+        {
+            e.ToTable("guest_settings_audit");
+            e.HasKey(x => x.Id);
+            e.Property(x => x.Id).UseIdentityAlwaysColumn();
+            e.Property(x => x.ActorEmail).HasMaxLength(255);
+            e.Property(x => x.Action).HasMaxLength(20).IsRequired();
+            e.Property(x => x.Changes).HasColumnType("jsonb").IsRequired();
+            e.Property(x => x.Reason).HasMaxLength(500);
+            e.HasIndex(x => x.At);
         });
 
         b.Entity<AliasFreeze>(e =>

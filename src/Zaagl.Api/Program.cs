@@ -133,6 +133,10 @@ builder.Services.AddRateLimiter(o =>
     // ARC-003 §4.1 (ARC-013 values OPEN, technical defaults): the content API partitions by IP and code.
     o.AddPolicy("content-read", c => Fixed($"cread:{Ip(c)}:{Code(c)}", rateLimits.ContentReadPerMinute, TimeSpan.FromMinutes(1)));
     o.AddPolicy("content-write", c => Fixed($"cwrite:{c.User.FindFirst("sub")?.Value ?? Ip(c)}", rateLimits.ContentWritePerMinute, TimeSpan.FromMinutes(1)));
+    // Guest-creation control panel: per admin (anonymous callers by IP; they are refused by the Admin policy anyway).
+    o.AddPolicy("admin", c => Fixed($"admin:{c.User.FindFirst("sub")?.Value ?? Ip(c)}", 120, TimeSpan.FromMinutes(1)));
+    // GET /api/guest-status (public, read before a guest form is shown).
+    o.AddPolicy("guest-status", c => Fixed($"gstatus:{Ip(c)}", 60, TimeSpan.FromMinutes(1)));
 });
 
 // ---- Authentication -------------------------------------------------------
@@ -374,6 +378,7 @@ app.MapArchive();
 app.MapBilling();
 app.MapNotifications();
 app.MapAdministration();
+app.MapGuestControls(); // CAPTCHA / guest-creation control panel (/api/admin/guest-controls) and GET /api/guest-status
 app.MapSnippets();
 app.MapFiles();     // BE-011/BE-012: tus uploads and /complete
 app.MapResources(); // F-12: owner library, status, patch, delete, owner tickets, /api/me/storage

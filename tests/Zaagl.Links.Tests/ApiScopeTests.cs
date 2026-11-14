@@ -63,6 +63,7 @@ public sealed class ApiScopeTests(RealApiFactory real) : IAsyncLifetime, IClassF
         ["POST /api/unlock/{slug}"] = "visitor unlock",
         ["GET /api/public/stats/{slug}"] = "public stats page",
         ["POST /api/reports"] = "abuse report",
+        ["GET /api/guest-status"] = "public guest-creation status (paused / CAPTCHA required), nothing secret",
         // Guest creation: links:write is enforced by RequireScopeWhenAuthenticated and failed credentials get
         // 401 (RejectFailedCredentials); both are tested below and in CredentialRulesTests.
         ["POST /api/links/"] = "guest link creation",

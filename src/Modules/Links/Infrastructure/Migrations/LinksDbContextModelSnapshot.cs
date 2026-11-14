@@ -344,6 +344,129 @@ namespace Zaagl.Modules.Links.Infrastructure.Migrations
                     b.ToTable("folders", "links");
                 });
 
+            modelBuilder.Entity("Zaagl.Modules.Links.Domain.GuestSettingsAuditRow", b =>
+                {
+                    b.Property<long>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bigint")
+                        .HasColumnName("id");
+
+                    NpgsqlPropertyBuilderExtensions.UseIdentityAlwaysColumn(b.Property<long>("Id"));
+
+                    b.Property<string>("Action")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("character varying(20)")
+                        .HasColumnName("action");
+
+                    b.Property<string>("ActorEmail")
+                        .HasMaxLength(255)
+                        .HasColumnType("character varying(255)")
+                        .HasColumnName("actor_email");
+
+                    b.Property<Guid?>("ActorId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("actor_id");
+
+                    b.Property<DateTime>("At")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("at");
+
+                    b.Property<string>("Changes")
+                        .IsRequired()
+                        .HasColumnType("jsonb")
+                        .HasColumnName("changes");
+
+                    b.Property<string>("Reason")
+                        .HasMaxLength(500)
+                        .HasColumnType("character varying(500)")
+                        .HasColumnName("reason");
+
+                    b.HasKey("Id")
+                        .HasName("pk_guest_settings_audit");
+
+                    b.HasIndex("At")
+                        .HasDatabaseName("ix_guest_settings_audit_at");
+
+                    b.ToTable("guest_settings_audit", "links");
+                });
+
+            modelBuilder.Entity("Zaagl.Modules.Links.Domain.GuestSettingsRow", b =>
+                {
+                    b.Property<short>("Id")
+                        .HasColumnType("smallint")
+                        .HasColumnName("id");
+
+                    b.Property<int>("ContentPerDay")
+                        .HasColumnType("integer")
+                        .HasColumnName("content_per_day");
+
+                    b.Property<int>("ContentPerHour")
+                        .HasColumnType("integer")
+                        .HasColumnName("content_per_hour");
+
+                    b.Property<int>("GlobalPerHour")
+                        .HasColumnType("integer")
+                        .HasColumnName("global_per_hour");
+
+                    b.Property<bool>("LinkCaptcha")
+                        .HasColumnType("boolean")
+                        .HasColumnName("link_captcha");
+
+                    b.Property<bool>("LinkEnabled")
+                        .HasColumnType("boolean")
+                        .HasColumnName("link_enabled");
+
+                    b.Property<int>("LinksPerDay")
+                        .HasColumnType("integer")
+                        .HasColumnName("links_per_day");
+
+                    b.Property<int>("PerMinute")
+                        .HasColumnType("integer")
+                        .HasColumnName("per_minute");
+
+                    b.Property<bool>("SnippetCaptcha")
+                        .HasColumnType("boolean")
+                        .HasColumnName("snippet_captcha");
+
+                    b.Property<bool>("SnippetEnabled")
+                        .HasColumnType("boolean")
+                        .HasColumnName("snippet_enabled");
+
+                    b.Property<DateTime>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("updated_at");
+
+                    b.Property<Guid?>("UpdatedBy")
+                        .HasColumnType("uuid")
+                        .HasColumnName("updated_by");
+
+                    b.Property<string>("UpdatedByEmail")
+                        .HasMaxLength(255)
+                        .HasColumnType("character varying(255)")
+                        .HasColumnName("updated_by_email");
+
+                    b.Property<bool>("UploadCaptcha")
+                        .HasColumnType("boolean")
+                        .HasColumnName("upload_captcha");
+
+                    b.Property<bool>("UploadEnabled")
+                        .HasColumnType("boolean")
+                        .HasColumnName("upload_enabled");
+
+                    b.Property<int>("Version")
+                        .HasColumnType("integer")
+                        .HasColumnName("version");
+
+                    b.HasKey("Id")
+                        .HasName("pk_guest_settings");
+
+                    b.ToTable("guest_settings", "links", t =>
+                        {
+                            t.HasCheckConstraint("ck_guest_settings_single_row", "id = 1");
+                        });
+                });
+
             modelBuilder.Entity("Zaagl.Modules.Links.Domain.IdempotencyKey", b =>
                 {
                     b.Property<string>("Scope")

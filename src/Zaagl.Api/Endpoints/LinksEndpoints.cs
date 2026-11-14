@@ -36,7 +36,6 @@ public static class LinksEndpoints
         links.MapPost("", async (
                 LinkInput input, ClaimsPrincipal user, LinkService service, HttpContext http,
                 GuestKeyProvider guestKey, GuestRateLimiter guestLimiter, IOptions<GuestOptions> guestOptions,
-                ICaptchaVerifier captcha, IConfiguration config,
                 CancellationToken ct) =>
             {
                 // Spec §7.2: an Idempotency-Key (1-128 printable ASCII) makes a retried create safe to resend.
@@ -50,25 +49,21 @@ public static class LinksEndpoints
                 }
 
                 // Spec §7.12: no credentials -> a guest link, identified only by its IP partition.
+                // Kill switch, admin pause and (when the panel requires it) the CAPTCHA, action guest-link (GuestGate).
                 var opts = guestOptions.Value;
-                if (!opts.Enabled)
-                    return ApiResults.Problem(Error.ServiceUnavailable("Guest link creation is currently disabled."));
-
-                var captchaToken = http.Request.Headers["Captcha-Token"].ToString();
-                var frontendHost = Uri.TryCreate(config["Frontend:BaseUrl"], UriKind.Absolute, out var frontendUri) ? frontendUri.Host : "";
-                var verified = await captcha.VerifyAsync(
-                    string.IsNullOrEmpty(captchaToken) ? null : captchaToken, "guest-link", frontendHost, ct);
-                if (!verified.IsSuccess) return ApiResults.Problem(verified.Error!);
+                var (settings, refusal) = await GuestGate.AdmitAsync(http, GuestFeatures.Link, ct);
+                if (refusal is not null) return refusal;
+                var limits = settings!.Limits;
 
                 var address = http.Connection.RemoteIpAddress;
                 var partition = IpPartition.Key(address);
-                if (!guestLimiter.TryGlobalCeiling(partition, opts.GlobalPerHour))
+                if (!guestLimiter.TryGlobalCeiling(partition, limits.GlobalPerHour))
                     return ApiResults.Problem(new Error("guest_creation_paused", "Guest link creation is temporarily paused for this network. Try again shortly."));
-                if (!guestLimiter.TryPerMinute(partition, opts.PerMinute))
+                if (!guestLimiter.TryPerMinute(partition, limits.PerMinute))
                     return ApiResults.Problem(Error.TooManyRequests("Too many requests. Try again in a minute."));
 
                 var creatorKey = GuestIdentity.DeriveKey(guestKey.Key, partition);
-                var checks = new List<GuestQuotaCheck> { new("creator-key", creatorKey, opts.LinksPerDay) };
+                var checks = new List<GuestQuotaCheck> { new("creator-key", creatorKey, limits.LinksPerDay) };
                 if (IpPartition.WidePrefixKey(address, 56) is { } prefix56)
                     checks.Add(new("/56", GuestIdentity.DeriveKey(guestKey.Key, prefix56), opts.LinksPerDayPer56));
                 if (IpPartition.WidePrefixKey(address, 48) is { } prefix48)

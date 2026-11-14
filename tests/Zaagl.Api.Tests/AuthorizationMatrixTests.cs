@@ -360,6 +360,15 @@ public static class AuthzOracle
         ["DELETE /api/admin/alias-denylist/{id:guid}"] = new(Access.Admin, Note: "negatives only"),
         ["POST /api/admin/alias-freezes/{id:guid}/end"] = new(Access.Admin, Body: J(new { }), Note: "negatives only"),
         ["POST /api/admin/declare-restore"] = new(Access.Admin, Execute: false, Note: "global alias freeze: never executed against the shared DB"),
+        // Guest-creation control panel: reads run for every principal, writes negatives only (the in-network admin writes
+        // run in GuestControlsTests, which restores the global settings row).
+        ["GET /api/admin/guest-controls/"] = new(Access.Admin),
+        ["GET /api/admin/guest-controls/stats"] = new(Access.Admin),
+        ["GET /api/admin/guest-controls/audit"] = new(Access.Admin),
+        ["PUT /api/admin/guest-controls/"] = new(Access.Admin, Body: J(new { }), Note: "negatives only"),
+        ["POST /api/admin/guest-controls/pause-all"] = new(Access.Admin, Body: J(new { }), Note: "negatives only; would pause guests for every test"),
+        ["POST /api/admin/guest-controls/resume-all"] = new(Access.Admin, Body: J(new { }), Note: "negatives only"),
+        ["GET /api/guest-status"] = new(Access.Anyone),
     };
 
     private static bool IsAdminWrite(string route) => route.Contains("/api/admin/") && !route.StartsWith("GET ");

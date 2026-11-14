@@ -53,6 +53,10 @@ public static class LinksModule
             Console.Error.WriteLine("WARNING: GUEST_KEY is not configured. Using a random key for this run only.");
         services.AddSingleton(new GuestKeyProvider(guestKey));
         services.AddSingleton<GuestRateLimiter>();
+        // Guest-creation control panel: run-time settings (cached briefly), per-instance refusal counters, admin service.
+        services.AddSingleton<GuestSettingsStore>();
+        services.AddSingleton<GuestControlCounters>();
+        services.AddScoped<GuestControlService>();
 
         services.AddDbContext<LinksDbContext>(o => Configure(o, connection));
         services.AddHttpClient<IUrlReputationChecker, WebRiskChecker>(c => c.Timeout = TimeSpan.FromSeconds(3));

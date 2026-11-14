@@ -4,6 +4,7 @@ using Zaagl.Api.Infrastructure;
 using Zaagl.Modules.Files.Application;
 using Zaagl.Modules.Files.Infrastructure;
 using Zaagl.Modules.Links.Application;
+using Zaagl.Modules.Links.Contracts;
 using Zaagl.Modules.Links.Infrastructure;
 using Zaagl.Modules.Resources.Contracts;
 using Zaagl.SharedKernel;
@@ -38,17 +39,16 @@ public static class UploadActors
         var creatorKey = GuestIdentity.DeriveKey(guestKey.Key, partition);
         if (!creating) return (new UploadActor(null, creatorKey, CreatedVia.Web), null);
 
-        var config = services.GetRequiredService<IConfiguration>();
-        var captchaToken = http.Request.Headers["Captcha-Token"].ToString();
-        var frontendHost = Uri.TryCreate(config["Frontend:BaseUrl"], UriKind.Absolute, out var frontendUri) ? frontendUri.Host : "";
-        var verified = await services.GetRequiredService<ICaptchaVerifier>()
-            .VerifyAsync(string.IsNullOrEmpty(captchaToken) ? null : captchaToken, "guest-upload", frontendHost, ct);
-        if (!verified.IsSuccess) return (none, ApiResults.Problem(verified.Error!));
+        // Only a create is gated by the panel: an admin pause stops new sessions, and an upload already admitted may finish.
+        // Kill switch, pause and (when the panel requires it) the CAPTCHA, action guest-upload (GuestGate).
+        var (settings, refusal) = await GuestGate.AdmitAsync(http, GuestFeatures.Upload, ct);
+        if (refusal is not null) return (none, refusal);
+        var limits = settings!.Limits;
 
         var limiter = services.GetRequiredService<GuestRateLimiter>();
-        if (!limiter.TryGlobalCeiling(partition, guestOptions.GlobalPerHour))
+        if (!limiter.TryGlobalCeiling(partition, limits.GlobalPerHour))
             return (none, ApiResults.Problem(new Error(ErrorCodes.GuestCreationPaused, "Guest creation is temporarily paused for this network. Try again shortly.")));
-        if (!limiter.TryPerMinute(partition, guestOptions.PerMinute))
+        if (!limiter.TryPerMinute(partition, limits.PerMinute))
             return (none, ApiResults.Problem(Error.TooManyRequests("Too many requests. Try again in a minute.")));
 
         var linksDb = services.GetRequiredService<LinksDbContext>();
@@ -59,7 +59,7 @@ public static class UploadActors
             async token =>
             {
                 consumedAt = clock.GetUtcNow().UtcDateTime;
-                return await GuestContentQuota.TryConsumeAsync(linksDb, counterKey, guestOptions.ContentPerHour, guestOptions.ContentPerDay, consumedAt, token);
+                return await GuestContentQuota.TryConsumeAsync(linksDb, counterKey, limits.ContentPerHour, limits.ContentPerDay, consumedAt, token);
             },
             () => GuestContentQuota.RefundAsync(linksDb, counterKey, consumedAt)), null);
     }

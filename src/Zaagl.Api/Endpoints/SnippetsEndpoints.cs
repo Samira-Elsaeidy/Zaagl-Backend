@@ -5,6 +5,7 @@ using Microsoft.Extensions.Options;
 using Zaagl.Api.Infrastructure;
 using Zaagl.Modules.Identity.Contracts;
 using Zaagl.Modules.Links.Application;
+using Zaagl.Modules.Links.Contracts;
 using Zaagl.Modules.Links.Infrastructure;
 using Zaagl.Modules.Billing.Contracts;
 using Microsoft.Net.Http.Headers;
@@ -70,8 +71,7 @@ public static class SnippetsEndpoints
         // failing credential 401 -> guest CAPTCHA 401 -> 400 -> idempotency 422/409 -> 413/402/400 -> 429 -> 403 -> 409.
         snippets.MapPost("", async (
                 SnippetCreateRequest request, ClaimsPrincipal user, HttpContext http, SnippetService service,
-                GuestKeyProvider guestKey, GuestRateLimiter guestLimiter, IOptions<GuestOptions> guestOptions,
-                ICaptchaVerifier captcha, IConfiguration config, CancellationToken ct) =>
+                GuestKeyProvider guestKey, GuestRateLimiter guestLimiter, CancellationToken ct) =>
             {
                 var idempotencyKey = IdempotencyKeyFrom(http.Request);
                 if (idempotencyKey is null)
@@ -84,19 +84,16 @@ public static class SnippetsEndpoints
                 }
                 else
                 {
-                    var opts = guestOptions.Value;
-                    if (!opts.Enabled) return ApiResults.Problem(Error.ServiceUnavailable("Guest snippet creation is currently disabled."));
-
-                    var captchaToken = http.Request.Headers["Captcha-Token"].ToString();
-                    var frontendHost = Uri.TryCreate(config["Frontend:BaseUrl"], UriKind.Absolute, out var frontendUri) ? frontendUri.Host : "";
-                    var verified = await captcha.VerifyAsync(string.IsNullOrEmpty(captchaToken) ? null : captchaToken, "guest-snippet", frontendHost, ct);
-                    if (!verified.IsSuccess) return ApiResults.Problem(verified.Error!);
+                    // Kill switch, admin pause and (when the panel requires it) the CAPTCHA, action guest-snippet (GuestGate).
+                    var (settings, refusal) = await GuestGate.AdmitAsync(http, GuestFeatures.Snippet, ct);
+                    if (refusal is not null) return refusal;
+                    var limits = settings!.Limits;
 
                     // The in-memory brakes of spec §7.12. The PD-14 counters are below.
                     var partition = IpPartition.Key(http.Connection.RemoteIpAddress);
-                    if (!guestLimiter.TryGlobalCeiling(partition, opts.GlobalPerHour))
+                    if (!guestLimiter.TryGlobalCeiling(partition, limits.GlobalPerHour))
                         return ApiResults.Problem(new Error(ErrorCodes.GuestCreationPaused, "Guest creation is temporarily paused for this network. Try again shortly."));
-                    if (!guestLimiter.TryPerMinute(partition, opts.PerMinute))
+                    if (!guestLimiter.TryPerMinute(partition, limits.PerMinute))
                         return ApiResults.Problem(Error.TooManyRequests("Too many requests. Try again in a minute."));
 
                     // PD-14 counters (BE-026): 30 per hour and 60 per 24 h per IP partition, shared with uploads.
@@ -109,7 +106,7 @@ public static class SnippetsEndpoints
                         async token =>
                         {
                             consumedAt = clock.GetUtcNow().UtcDateTime;
-                            return await GuestContentQuota.TryConsumeAsync(linksDb, counterKey, opts.ContentPerHour, opts.ContentPerDay, consumedAt, token);
+                            return await GuestContentQuota.TryConsumeAsync(linksDb, counterKey, limits.ContentPerHour, limits.ContentPerDay, consumedAt, token);
                         },
                         () => GuestContentQuota.RefundAsync(linksDb, counterKey, consumedAt));
                     actor = new SnippetActor(null, GuestIdentity.DeriveKey(guestKey.Key, partition), CreatedVia.Web, admission);
