@@ -173,12 +173,20 @@ public static class LinkExportKinds
     public const string Snippet = "snippet";
     public const string File = "file";
     public const string Media = "media";
+    public const string Secret = "secret";
+    public const string Capsule = "capsule";
+    public const string Compare = "compare";
+    public const string Approval = "approval";
 
     public static string For(LinkTargetKind kind) => kind switch
     {
         LinkTargetKind.Snippet => Snippet,
         LinkTargetKind.File => File,
         LinkTargetKind.Media => Media,
+        LinkTargetKind.Secret => Secret,
+        LinkTargetKind.Capsule => Capsule,
+        LinkTargetKind.Compare => Compare,
+        LinkTargetKind.Approval => Approval,
         _ => Url,
     };
 }

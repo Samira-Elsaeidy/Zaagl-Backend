@@ -2,6 +2,18 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\Zaagl.SharedKernel\Zaagl.SharedKernel.csproj" />
+    <!-- Phase 2 (docs/phase2/README.md, contracts.md rule 1): DeveloperTools -> Resources.Contracts (C2), Links.Contracts (C1),
+         Billing.Contracts (C5). Contracts only: no other module's DbContext or Application type is used. -->
+    <ProjectReference Include="..\Resources\Zaagl.Modules.Resources.csproj" />
+    <ProjectReference Include="..\Links\Zaagl.Modules.Links.csproj" />
+    <ProjectReference Include="..\Billing\Zaagl.Modules.Billing.csproj" />
+    <!-- Bug capsules: Files.Contracts (stored object summaries) for the recording check. -->
+    <ProjectReference Include="..\Files\Zaagl.Modules.Files.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="EFCore.NamingConventions" Version="10.0.1" />
+    <PackageReference Include="Npgsql.EntityFrameworkCore.PostgreSQL" Version="10.0.3" />
   </ItemGroup>
 
   <PropertyGroup>
@@ -9,5 +21,9 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
   </PropertyGroup>
+
+  <ItemGroup>
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+  </ItemGroup>
 
 </Project>

@@ -738,7 +738,7 @@ public sealed class ExpiryAndPurgeTests(FilesS2Factory api) : S2Support(api), IC
         api.Clock.Advance(TimeSpan.FromDays(8));
         using (var expired = await Public().GetAsync($"/api/public/content/{accountCode}"))
             Assert.Equal(HttpStatusCode.Gone, expired.StatusCode);
-        await WithLifecycleAsync(l => l.PurgeDueAsync(CancellationToken.None)); // the guest's purge_after is its expiry; the account's is 90 days later
+        await PurgeUntilAsync(guestId); // the guest's purge_after is its expiry; the account's is 90 days later
         Assert.Equal(3, await ScalarAsync<int>("SELECT bytes_state FROM resources.resources WHERE id = @r", ("r", guestId)));
         Assert.Equal(1, await ScalarAsync<int>("SELECT bytes_state FROM resources.resources WHERE id = @r", ("r", accountId)));
         await RunDeleteBytesAsync(guestId);
@@ -749,12 +749,23 @@ public sealed class ExpiryAndPurgeTests(FilesS2Factory api) : S2Support(api), IC
 
         // after purge_after (90 days of quarantine) the bytes go and the quota is released
         api.Clock.Advance(TimeSpan.FromDays(91));
-        await WithLifecycleAsync(l => l.PurgeDueAsync(CancellationToken.None));
+        await PurgeUntilAsync(accountId);
         Assert.Equal(3, await ScalarAsync<int>("SELECT bytes_state FROM resources.resources WHERE id = @r", ("r", accountId)));
         await RunDeleteBytesAsync(accountId);
         Assert.False(File.Exists(AreaPath(StorageArea.Objects, accountObject)));
         Assert.Equal(0, await ScalarAsync<long>("SELECT used_bytes FROM resources.quota_ledger WHERE owner_id = @o", ("o", owner.Id)));
         await WithLifecycleAsync(l => l.PurgeDueAsync(CancellationToken.None)); // idempotent
+    }
+
+    /// <summary>The purge sweep takes the 200 oldest due rows of the whole shared test database per call; after the clock jumps, rows other
+    /// test classes left behind can fill a batch, so sweep until this test's resource is reclaimed (bounded).</summary>
+    private async Task PurgeUntilAsync(Guid resourceId)
+    {
+        for (var i = 0; i < 50; i++)
+        {
+            await WithLifecycleAsync(l => l.PurgeDueAsync(CancellationToken.None));
+            if (await ScalarAsync<int>("SELECT bytes_state FROM resources.resources WHERE id = @r", ("r", resourceId)) == 3) return;
+        }
     }
 
     /// <summary>The download button refuses an expired link; asserts 410.</summary>

@@ -170,7 +170,8 @@ public sealed class ResourceRegistry(
     {
         var ct = cancellationToken;
         if (reason is not (RejectedReasons.Infected or RejectedReasons.TypeNotAllowed or RejectedReasons.TooLarge
-            or RejectedReasons.BlockedHash or RejectedReasons.ScanUnavailable or RejectedReasons.CreateFailed))
+            or RejectedReasons.BlockedHash or RejectedReasons.ScanUnavailable or RejectedReasons.CreateFailed
+            or RejectedReasons.UnsafeContent))
             return Error.Validation("Unknown rejection reason.");
 
         var row = await db.Resources.AsNoTracking().FirstOrDefaultAsync(r => r.Id == resourceId, ct);

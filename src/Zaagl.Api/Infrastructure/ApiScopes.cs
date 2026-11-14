@@ -21,10 +21,14 @@ public static class ApiScopes
     public const string FilesWrite = "files:write";
     public const string ResourcesRead = "resources:read";
 
+    /// <summary>Phase 2 (docs/phase2/README.md): create and manage tool links (vault, webhook catchers, capsules, comparisons,
+    /// approvals, comment moderation). Owner reads use <see cref="ResourcesRead"/>.</summary>
+    public const string ToolsWrite = "tools:write";
+
     public const string ProblemCode = "insufficient-scope";
 
     public static readonly IReadOnlyList<string> All =
-        [LinksRead, LinksWrite, StatsRead, SnippetsWrite, FilesWrite, ResourcesRead];
+        [LinksRead, LinksWrite, StatsRead, SnippetsWrite, FilesWrite, ResourcesRead, ToolsWrite];
 
     public static string Policy(string scope) => "scope:" + scope;
 

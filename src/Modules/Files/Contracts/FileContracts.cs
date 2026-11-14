@@ -159,7 +159,8 @@ public sealed record StoredObjectSummary(
     long SizeBytes,
     string? Sha256,
     ScanVerdict Scan,
-    DateTime? ScannedAt);
+    DateTime? ScannedAt,
+    string? Viewer = null);
 
 /// <summary>Batch read for list pages; ids without an object are simply absent from the result.</summary>
 public interface IStoredObjectSummaries
@@ -178,7 +179,11 @@ public sealed record StoredDerivative(Guid Id, string Kind, string Status, int? 
 /// <param name="Animated">GIF, APNG or animated WebP with more than one frame.</param>
 public sealed record StoredMedia(
     Guid ResourceId, bool Animated, int? Width, int? Height, int? Orientation, int? FrameCount, bool? HasAlpha,
-    IReadOnlyList<StoredDerivative> Derivatives);
+    IReadOnlyList<StoredDerivative> Derivatives, IReadOnlyList<PaletteColor>? Palette = null);
+
+/// <summary>Phase 2 (docs/phase2/palette-and-comments.md): one dominant colour; <paramref name="Share"/> is the fraction (0..1) of the
+/// sampled opaque pixels closest to it. Colours are ordered by share, largest first.</summary>
+public sealed record PaletteColor(string Hex, int R, int G, int B, double Share);
 
 /// <summary>Batch read of the probe result and the derivatives written by the <c>media-preview</c> task.</summary>
 public interface IMediaMetadata
@@ -188,4 +193,20 @@ public interface IMediaMetadata
 
     /// <summary>The ready derivative of <paramref name="kind"/>, or null (not made, failed, skipped, or not yet).</summary>
     Task<StoredDerivative?> GetReadyDerivativeAsync(Guid resourceId, string kind, CancellationToken cancellationToken);
+}
+
+// ---- Phase 2 E2.2: watermarked previews (docs/phase2/approval-gate.md) ----
+
+/// <summary>
+/// Requests a watermarked preview derivative of an image (the approval gate's draft). The original is never modified or served by this:
+/// the worker renders a new, downscaled image with the text burned in and stores it as a derivative of the same resource; it is
+/// served only by a Preview ticket naming <see cref="KindFor"/>.
+/// </summary>
+public interface IWatermarkDerivatives
+{
+    /// <summary>The derivative kind for a watermark text: <c>wm-</c> plus 16 hex characters of SHA-256(text).</summary>
+    string KindFor(string text);
+
+    /// <summary>Queues the render (idempotent per resource and text) and returns the derivative kind.</summary>
+    Task<string> RequestAsync(Guid resourceId, string text, CancellationToken cancellationToken);
 }

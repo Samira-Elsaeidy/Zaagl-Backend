@@ -86,6 +86,16 @@ public static class ErrorCodes
     public const string Busy = "busy";
     /// <summary>507: the server's own storage is full (not the user's quota, which is <see cref="QuotaExceeded"/>).</summary>
     public const string InsufficientStorage = "insufficient-storage";
+
+    // Phase 2 (docs/phase2).
+    /// <summary>413: a vault ciphertext over the plan cap.</summary>
+    public const string SecretTooLarge = "secret-too-large";
+    /// <summary>413: a bug capsule's log document over the plan cap.</summary>
+    public const string LogsTooLarge = "logs-too-large";
+    /// <summary>409: a plan cap on live items (webhook catchers) is reached.</summary>
+    public const string LimitReached = "limit-reached";
+    /// <summary>422: a referenced resource cannot be used (not yours, not an image, not ready, closed).</summary>
+    public const string ResourceUnusable = "resource-unusable";
 }
 
 public readonly record struct Result<T>(T? Value, Error? Error)

@@ -32,7 +32,9 @@ public sealed record MediaBlockDto(
     int? Orientation,
     bool BrowserPlayable,
     bool? HasLocationData,
-    IReadOnlyList<MediaDerivativeDto> Derivatives);
+    IReadOnlyList<MediaDerivativeDto> Derivatives,
+    /// <summary>Phase 2 (docs/phase2/palette-and-comments.md): up to 6 dominant colours, largest share first; null until computed.</summary>
+    IReadOnlyList<PaletteColor>? Palette = null);
 
 /// <summary>openapi MediaDerivativeDto. <c>url</c> is a Preview ticket (15 minutes), only for a ready derivative of a non-burn file.</summary>
 public sealed record MediaDerivativeDto(string Kind, string Status, int? Width, int? Height, string? Url);
@@ -64,7 +66,9 @@ public sealed record ResourceDto(
     string? LinkKey = null,
     ScanDto? Scan = null,
     MediaBlockDto? Media = null,
-    ResourceFileBlockDto? File = null);
+    ResourceFileBlockDto? File = null,
+    /// <summary>Phase 2: <c>model3d</c>, <c>lottie</c> or <c>audio</c> when the file was validated for a browser viewer.</summary>
+    string? Viewer = null);
 
 public sealed record ResourceStatusDto(string State, string ProcessingStatus, string? RejectedReason, IReadOnlyList<MediaDerivativeDto> Derivatives);
 
@@ -276,7 +280,8 @@ public static class ResourcesEndpoints
             r.ResourceId, Lower(r.Kind), r.Title, code, $"{baseUrl.TrimEnd('/')}/{code}", Lower(owned.State), Lower(r.Processing),
             isFile ? stored?.DisplayName : null, isFile ? stored?.DetectedMime : null, thumbnailUrl,
             r.SizeBytes, owned.Link?.ExpiresAt ?? r.ExpiresAt, owned.Link?.PurgeAfter ?? r.PurgeAfter, r.BurnAfterDownload, owned.IsPublic,
-            r.DownloadCount, r.CreatedAt, r.RejectedReason, BurnClaimedAt: r.BurnClaimedAt); // S2: both also in the list summary
+            r.DownloadCount, r.CreatedAt, r.RejectedReason, BurnClaimedAt: r.BurnClaimedAt, // S2: both also in the list summary
+            Viewer: isFile ? stored?.Viewer : null);
         // The list carries the media block only once the probe ran (dimensions and the thumbnail for the library); the detail always has it.
         if (!detail) return media is not null && r.Kind == ResourceKind.Media && stored?.DetectedMime is { } listMime ? dto with { Media = MediaBlock(listMime, media, thumbnailUrl) } : dto;
         return dto with
@@ -294,7 +299,8 @@ public static class ResourcesEndpoints
         new(meta?.Animated == true ? "animatedImage" : "image", detectedMime, meta?.Width, meta?.Height, null, meta?.FrameCount, meta?.HasAlpha, null, null,
             meta?.Orientation, BrowserPlayable: true, HasLocationData: null,
             Derivatives: meta?.Derivatives.Select(d => new MediaDerivativeDto(d.Kind, d.Status, d.Width, d.Height,
-                d.Kind == MediaPreviewTaskHandler.DerivativeKindThumb ? thumbnailUrl : null)).ToList() ?? []);
+                d.Kind == MediaPreviewTaskHandler.DerivativeKindThumb ? thumbnailUrl : null)).ToList() ?? [],
+            Palette: meta?.Palette);
 
     private static Result<ResourcePatch> ParsePatch(JsonElement body)
     {
@@ -350,6 +356,10 @@ public static class ResourcesEndpoints
             "snippet" => (kind = ResourceKind.Snippet) == ResourceKind.Snippet,
             "file" => (kind = ResourceKind.File) == ResourceKind.File,
             "media" => (kind = ResourceKind.Media) == ResourceKind.Media,
+            "secret" => (kind = ResourceKind.Secret) == ResourceKind.Secret,
+            "capsule" => (kind = ResourceKind.Capsule) == ResourceKind.Capsule,
+            "compare" => (kind = ResourceKind.Compare) == ResourceKind.Compare,
+            "approval" => (kind = ResourceKind.Approval) == ResourceKind.Approval,
             _ => false,
         };
     }

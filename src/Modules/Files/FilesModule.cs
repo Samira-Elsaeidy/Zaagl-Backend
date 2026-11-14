@@ -34,6 +34,7 @@ public static class FilesModule
         services.Configure<ScanOptions>(configuration.GetSection(ScanOptions.Section));
         services.Configure<ClamAvOptions>(configuration.GetSection(ClamAvOptions.Section));
         services.Configure<MediaOptions>(configuration.GetSection(MediaOptions.Section));
+        services.Configure<ViewerOptions>(configuration.GetSection(ViewerOptions.Section));
         services.AddSingleton<LocalObjectStorage>();
         services.AddSingleton<IObjectStorage>(sp => sp.GetRequiredService<LocalObjectStorage>());
         services.AddSingleton<TempUploadFiles>();
@@ -46,6 +47,7 @@ public static class FilesModule
         services.AddScoped<IStoredObjects>(sp => sp.GetRequiredService<StoredObjects>());
         services.AddScoped<IStoredObjectSummaries>(sp => sp.GetRequiredService<StoredObjects>());
         services.AddScoped<IMediaMetadata, MediaMetadata>();
+        services.AddScoped<IWatermarkDerivatives, WatermarkRequests>(); // Phase 2 approval gate (docs/phase2/approval-gate.md)
         services.AddScoped<IResourceBytes>(sp => sp.GetRequiredService<StoredObjects>());
         services.AddScoped<IUploadStats>(sp => sp.GetRequiredService<StoredObjects>());
         services.AddScoped<IContentHashBlocklist, ContentHashBlocklist>();
@@ -90,6 +92,7 @@ public static class FilesModule
         services.AddScoped<ITaskHandler<FilesDbContext>, DeleteBytesTaskHandler>();
         services.AddSingleton<MediaConcurrencyGate>();
         services.AddScoped<ITaskHandler<FilesDbContext>, MediaPreviewTaskHandler>();
+        services.AddScoped<ITaskHandler<FilesDbContext>, WatermarkTaskHandler>();
         services.AddScoped<ScanTaskHandler>();
         return services;
     }

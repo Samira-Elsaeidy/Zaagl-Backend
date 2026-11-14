@@ -1,5 +1,7 @@
 using Npgsql;
 using Zaagl.Modules.Billing;
+using Zaagl.Modules.Collaboration;
+using Zaagl.Modules.DeveloperTools;
 using Zaagl.Modules.Files;
 using Zaagl.Modules.Links;
 using Zaagl.Modules.Resources;
@@ -31,7 +33,11 @@ builder.Services
     .AddResourcesModule(config, workerOnly: true)
     .AddFilesModule(config)
     .AddResourceJobs()
-    .AddFilesTaskRunner(config, builder.Environment.IsDevelopment());
+    .AddFilesTaskRunner(config, builder.Environment.IsDevelopment())
+    // Phase 2 (docs/phase2): the tool kinds' purge handlers (called by the resource purge above) and the DeveloperTools sweeps.
+    .AddDeveloperToolsModule(config, workerOnly: true)
+    .AddDeveloperToolsJobs()
+    .AddCollaborationModule(config, workerOnly: true);
 
 builder.Services.AddHostedService<LivenessFile>();
 

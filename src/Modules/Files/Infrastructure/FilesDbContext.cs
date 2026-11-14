@@ -49,6 +49,7 @@ public sealed class FilesDbContext(DbContextOptions<FilesDbContext> options) : D
             {
                 t.HasCheckConstraint("ck_storage_objects_sha256", "sha256 IS NULL OR octet_length(sha256) = 32");
                 t.HasCheckConstraint("ck_storage_objects_area", "area IN (0, 1, 2, 3, 4)");
+                t.HasCheckConstraint("ck_storage_objects_viewer", "viewer IS NULL OR viewer IN (1, 2, 3, 4)");
                 t.HasCheckConstraint("ck_storage_objects_scan", "scan_status IN (0, 1, 2, 3)");
             });
             e.HasKey(x => x.Id);
@@ -68,6 +69,7 @@ public sealed class FilesDbContext(DbContextOptions<FilesDbContext> options) : D
         {
             e.ToTable("media_items", t => t.HasCheckConstraint("ck_media_items_orientation", "orientation IS NULL OR orientation BETWEEN 1 AND 8"));
             e.HasKey(x => x.ResourceId);
+            e.Property(x => x.Palette).HasColumnType("jsonb");
             e.Property(x => x.ResourceId).ValueGeneratedNever();
         });
 

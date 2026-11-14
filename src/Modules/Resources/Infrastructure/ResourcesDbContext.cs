@@ -23,7 +23,7 @@ public sealed class ResourcesDbContext(DbContextOptions<ResourcesDbContext> opti
         {
             e.ToTable("resources", t =>
             {
-                t.HasCheckConstraint("ck_resources_kind", "kind IN (1, 2, 3)");
+                t.HasCheckConstraint("ck_resources_kind", "kind IN (1, 2, 3, 4, 5, 6, 7)");
                 t.HasCheckConstraint("ck_resources_owner_xor_guest", "(owner_id IS NULL) <> (guest_creator_key IS NULL)");
                 t.HasCheckConstraint("ck_resources_declared_size", "declared_size_bytes >= 0");
                 t.HasCheckConstraint("ck_resources_size", "size_bytes IS NULL OR size_bytes >= 0");

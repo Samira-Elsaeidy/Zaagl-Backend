@@ -25,7 +25,8 @@ public static class ApiResults
         ErrorCodes.NotFound => StatusCodes.Status404NotFound,
         ErrorCodes.Conflict or ErrorCodes.UploadOffsetMismatch or ErrorCodes.UploadIncomplete or ErrorCodes.AlreadyFinalized
             or ErrorCodes.Processing or ErrorCodes.BurnAlreadyClaimed or ErrorCodes.NotActive
-            or ErrorCodes.ContentLink or ErrorCodes.VersionConflict or ErrorCodes.VersionLimit => StatusCodes.Status409Conflict,
+            or ErrorCodes.ContentLink or ErrorCodes.VersionConflict or ErrorCodes.VersionLimit
+            or ErrorCodes.LimitReached => StatusCodes.Status409Conflict,
         // Spec §7.4: a parallel refresh from the same session; the caller retries with its newer token.
         ErrorCodes.RefreshRaced => StatusCodes.Status409Conflict,
         ErrorCodes.Expired or ErrorCodes.UploadExpired or ErrorCodes.Burned or ErrorCodes.Deleted or ErrorCodes.Disabled
@@ -34,9 +35,9 @@ public static class ApiResults
         ErrorCodes.RangeRequired => StatusCodes.Status416RangeNotSatisfiable,
         ErrorCodes.InsufficientStorage => StatusCodes.Status507InsufficientStorage,
         ErrorCodes.FileTooLarge or ErrorCodes.ChunkTooLarge or ErrorCodes.SnippetTooLarge
-            or ErrorCodes.DiffTooLarge => StatusCodes.Status413PayloadTooLarge,
+            or ErrorCodes.DiffTooLarge or ErrorCodes.SecretTooLarge or ErrorCodes.LogsTooLarge => StatusCodes.Status413PayloadTooLarge,
         ErrorCodes.UnsupportedMediaType => StatusCodes.Status415UnsupportedMediaType,
-        ErrorCodes.IdempotencyMismatch or ErrorCodes.ContentRejected => StatusCodes.Status422UnprocessableEntity,
+        ErrorCodes.IdempotencyMismatch or ErrorCodes.ContentRejected or ErrorCodes.ResourceUnusable => StatusCodes.Status422UnprocessableEntity,
         ErrorCodes.TooManyRequests or ErrorCodes.Quota or ErrorCodes.RateLimit => StatusCodes.Status429TooManyRequests,
         ErrorCodes.ChecksumMismatch => Status460ChecksumMismatch,
         ErrorCodes.ServiceUnavailable or ErrorCodes.GuestCreationPaused or ErrorCodes.Busy => StatusCodes.Status503ServiceUnavailable,

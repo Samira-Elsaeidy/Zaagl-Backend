@@ -771,7 +771,7 @@ namespace Zaagl.Modules.Links.Infrastructure.Migrations
 
                             t.HasCheckConstraint("ck_links_target_destination", "(target_kind = 0) = (destination_url IS NOT NULL AND target_host IS NOT NULL)");
 
-                            t.HasCheckConstraint("ck_links_target_kind", "target_kind IN (0, 1, 2, 3)");
+                            t.HasCheckConstraint("ck_links_target_kind", "target_kind IN (0, 1, 2, 3, 4, 5, 6, 7)");
 
                             t.HasCheckConstraint("ck_links_target_resource", "(target_kind = 0) = (resource_id IS NULL)");
                         });

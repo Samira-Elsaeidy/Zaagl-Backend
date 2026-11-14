@@ -32,6 +32,9 @@ public static class FileTypePolicy
         if (IsEncryptedArchive(head)) return new(null, FileClass.EncryptedArchive);
         var media = MediaSniffer.Detect(head);
         if (media is not null) return new(media, FileClass.Other);
+        // Phase 2 viewer types (3D, Lottie, audio): candidates only, validated in full by the scan task (ViewerValidator).
+        var viewer = MediaSniffer.DetectViewerType(head);
+        if (viewer is not null) return new(viewer, FileClass.Other);
         if (head.Length >= 5 && head[..5].SequenceEqual("%PDF-"u8)) return new(new("application/pdf", ".pdf"), FileClass.Other);
         if (head.Length >= 4 && head[0] == 0x50 && head[1] == 0x4B && head[2] == 0x03 && head[3] == 0x04) return new(new("application/zip", ".zip"), FileClass.Other);
         if (head.Length >= 3 && head[0] == 0x1F && head[1] == 0x8B && head[2] == 0x08) return new(new("application/gzip", ".gz"), FileClass.Other);

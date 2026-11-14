@@ -136,6 +136,10 @@ namespace Zaagl.Modules.Files.Infrastructure.Migrations
                         .HasColumnType("smallint")
                         .HasColumnName("orientation");
 
+                    b.Property<string>("Palette")
+                        .HasColumnType("jsonb")
+                        .HasColumnName("palette");
+
                     b.Property<DateTime>("ProbedAt")
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("probed_at");
@@ -213,6 +217,10 @@ namespace Zaagl.Modules.Files.Infrastructure.Migrations
                         .HasColumnType("bigint")
                         .HasColumnName("size_bytes");
 
+                    b.Property<short?>("Viewer")
+                        .HasColumnType("smallint")
+                        .HasColumnName("viewer");
+
                     b.HasKey("Id")
                         .HasName("pk_storage_objects");
 
@@ -231,6 +239,8 @@ namespace Zaagl.Modules.Files.Infrastructure.Migrations
                             t.HasCheckConstraint("ck_storage_objects_scan", "scan_status IN (0, 1, 2, 3)");
 
                             t.HasCheckConstraint("ck_storage_objects_sha256", "sha256 IS NULL OR octet_length(sha256) = 32");
+
+                            t.HasCheckConstraint("ck_storage_objects_viewer", "viewer IS NULL OR viewer IN (1, 2, 3, 4)");
                         });
                 });
 

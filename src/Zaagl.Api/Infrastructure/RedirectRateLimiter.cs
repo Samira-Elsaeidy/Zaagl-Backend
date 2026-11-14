@@ -22,6 +22,11 @@ public sealed class RateLimitOptions
     public int ContentReadPerMinute { get; set; } = 120;
     /// <summary>Content create/edit per principal (ARC-013 OPEN, technical default 60).</summary>
     public int ContentWritePerMinute { get; set; } = 60;
+    /// <summary>Phase 2 webhook ingest (zaa.gl/hook/*) per IP partition, across all catchers (technical default 600). Each catcher also
+    /// has its own plan window (docs/phase2/webhook-catcher.md).</summary>
+    public int HookIngestPerMinute { get; set; } = 600;
+    /// <summary>Phase 2 pinned comments posted per IP partition (technical default 20).</summary>
+    public int CommentWritePerMinute { get; set; } = 20;
 }
 
 /// <summary>Spec §7.3 redirect limits (BE-031), per minute. Defaults are the spec's numbers.</summary>

@@ -11,6 +11,14 @@ public enum ResourceKind : short
     Snippet = 1,
     File = 2,
     Media = 3,
+    /// <summary>Phase 2: rows in <c>devtools.secrets</c> (ciphertext only).</summary>
+    Secret = 4,
+    /// <summary>Phase 2: rows in <c>devtools.capsules</c> (references a recording resource + logs).</summary>
+    Capsule = 5,
+    /// <summary>Phase 2: rows in <c>collab.comparisons</c> (references two image resources).</summary>
+    Compare = 6,
+    /// <summary>Phase 2: rows in <c>collab.approvals</c> (references one image resource).</summary>
+    Approval = 7,
 }
 
 /// <summary>Stored processing status (<c>resources.resources.processing_status</c>).</summary>
@@ -34,6 +42,9 @@ public static class RejectedReasons
     /// <summary>Stage 2 (BE-008): a create flow failed after the resource was registered (for example an alias
     /// conflict). The resource never gets a link, so it stays unreachable; the reservation is released.</summary>
     public const string CreateFailed = "create-failed";
+    /// <summary>Phase 2 (docs/phase2/viewers-3d-lottie-audio.md): a 3D or Lottie file that references external content or carries
+    /// Lottie expressions (script). Never served.</summary>
+    public const string UnsafeContent = "unsafe-content";
 }
 
 /// <summary>

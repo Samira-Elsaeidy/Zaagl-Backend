@@ -122,12 +122,7 @@ public sealed partial class ResolutionService(
             case AccessOutcome.Expired: return new(ResolveKind.Expired); // never a fallback URL (addendum §17)
         }
 
-        var segment = link.TargetKind switch
-        {
-            LinkTargetKind.Snippet => ViewerPathSegments.Snippet,
-            LinkTargetKind.Media => ViewerPathSegments.Media,
-            _ => ViewerPathSegments.File,
-        };
+        var segment = ViewerPathSegments.For(link.TargetKind);
         // GET records one Redirect event (owner analytics) or, for guest content, only the guest counter; HEAD nothing.
         if (countsAsClick) Record(link, client, request, now);
         return new(ResolveKind.Content, $"/{segment}/{Uri.EscapeDataString(link.Slug)}");
