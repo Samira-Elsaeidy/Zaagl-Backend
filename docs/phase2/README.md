@@ -75,6 +75,47 @@ Hard ceilings no configuration can exceed are in `Billing/Application/ContentPla
   conditional `UPDATE` or a row lock (`FOR UPDATE`), never read-then-write.
 - Time comes from `TimeProvider`; nothing reads `DateTime.UtcNow`.
 
+## Endpoint index
+| Feature | Owner / creator (`api.zaa.gl`) | Link holder (`api.zaa.gl`, gated) |
+|---|---|---|
+| Vault | `POST/GET /api/vault/secrets`, `GET/DELETE /api/vault/secrets/{id}` | `GET /api/public/vault/{code}`, `POST .../reveal` |
+| Webhook catcher | `POST/GET /api/hooks`, `GET/PATCH/DELETE /api/hooks/{id}`, `GET/DELETE /api/hooks/{id}/requests`, `GET/DELETE /api/hooks/{id}/requests/{rid}`, `GET /api/hooks/{id}/stream` (SSE) | ingest `ANY zaa.gl/hook/{token}[/…]` (short host) |
+| Before/after | `POST /api/compare`, `GET/PATCH/DELETE /api/compare/{id}` | `GET /api/public/compare/{code}` |
+| Viewers | (normal uploads) | `GET /api/public/content/{code}` gains `file.viewer` + `inlineUrl` |
+| Palette | (computed) | `media.palette` in owner and public descriptors |
+| Pinned comments | `PUT /api/resources/{id}/comments/settings`, `GET /api/resources/{id}/comments`, `POST .../{cid}/resolve`, `.../reopen`, `DELETE .../{cid}` | `GET/POST /api/public/comments/{code}`, `DELETE /api/public/comments/{code}/{cid}` |
+| Bug capsules | `POST /api/capsules`, `GET/DELETE /api/capsules/{id}` | `GET /api/public/capsules/{code}` |
+| Approval gate | `POST /api/approvals`, `GET/DELETE /api/approvals/{id}`, `POST /api/approvals/{id}/release` | `GET /api/public/approvals/{code}`, `POST .../approve`, `POST .../download` |
+Owner library for every tool link: `GET /api/resources?kind=secret|capsule|compare|approval`; title, renewal, public and password
+through `PATCH /api/resources/{id}` (vault: never public, no renewal once closed).
+
+New configuration (all optional, defaults in code): `Plans:<Guest|Free|Starter>:Tools:*`, `Hooks:*` (`ReadOnlyGraceHours`,
+`StreamMaxMinutes`, `MaxStreamsPerUser`, `IngestBaseUrl`), `Comments:*` (`MaxPerResource`, `MaxBodyLength`), `Viewers:MaxJsonBytes`,
+`RateLimits:HookIngestPerMinute`, `RateLimits:CommentWritePerMinute`. New CAPTCHA actions: `guest-vault`, `guest-comment`,
+`guest-approve`. New API scope: `tools:write`. New error codes: `secret-too-large`, `logs-too-large` (413), `limit-reached` (409),
+`resource-unusable` (422).
+
+## Migrations (expand-only, one set per owning module)
+- Links: `WidenTargetKindForPhase2Tools` (NOT VALID) + `ValidatePhase2TargetKind`.
+- Resources: `WidenResourceKindForPhase2Tools` (NOT VALID) + `ValidatePhase2ResourceKind`.
+- Files: `AddViewerKind` + `ValidateViewerKind`, `AddMediaPalette`, `WidenViewerKindForVideo` + `ValidateViewerKindForVideo`.
+- DeveloperTools (new schema `devtools`): `Vault`, `WebhookCatcher`, `BugCapsules`.
+- Collaboration (new schema `collab`): `Comparisons`, `PinnedComments`, `ApprovalGate`.
+Every VALIDATE runs in its own migration outside a transaction (SHARE UPDATE EXCLUSIVE only), like `ValidateLinkTargetKindChecks`.
+
+## Known gaps (not built in this slice)
+1. **Account deletion and export (spec §7.14)**: tool links follow the Phase 1 path (links soft-deleted → C10 → wipe/purge), but
+   webhook catchers are not links and stay until their own purge (at most lifetime + 24 h, ≤ 8 days); comments written on other
+   people's content keep `author_user_id`; the data export does not list secrets' metadata, catchers or comments. Identity calls
+   only the Links eraser today (`src/Modules/Identity/Application/IdentityService.cs:689`).
+2. **Admin actions** (`/api/admin/*`) for catchers and comments: none; takedown of tool links works through the normal link takedown.
+3. **Idempotency-Key** is not supported on the Phase 2 create routes (retries create a second item; guest retries use another slot).
+4. **Palette backfill** for images processed before this release.
+5. Observation outside this scope: the scan task overwrites the type detected at `/complete` with the image/viewer sniff only
+   (`src/Modules/Files/Application/ScanTaskHandler.cs:139` with `:252`), so PDF/ZIP/GZ/7z files end with `detected_mime = null`
+   (served as octet-stream attachments, which is safe) even though `/complete` detected them
+   (`src/Modules/Files/Application/UploadService.cs:425`). Left unchanged to keep Phase 1 behaviour; worth a Phase 1 ticket.
+
 ## Open questions for the owner (all features)
 Collected in each note; the cross-cutting ones:
 1. Approve or change the plan table above (the PRD's Pro tier does not exist in Phase 1).
