@@ -85,6 +85,34 @@ public sealed class ApiScopeTests(RealApiFactory real) : IAsyncLifetime, IClassF
         ["POST /api/public/content/{code}/download"] = "visitor download button, gate: key and grant",
         ["GET /internal/delivery/{ticket}"] = "user-content host only, ticket",
         ["HEAD /internal/delivery/{ticket}"] = "user-content host only, ticket",
+        // Phase 2 (docs/phase2). Guest-capable create: tools:write enforced by RequireScopeWhenAuthenticated, failed credentials 401
+        // (VaultApiTests). Visitor routes are gated by the link key and grant; comments and approvals by the gate plus CAPTCHA for
+        // anonymous callers. Webhook ingest is the short host only, gated by its 128-bit token.
+        ["POST /api/vault/secrets/"] = "guest secret creation",
+        ["GET /api/public/vault/{code}"] = "visitor read, gate: key and grant",
+        ["POST /api/public/vault/{code}/reveal"] = "visitor reveal, gate: key and grant",
+        ["GET /api/public/compare/{code}"] = "visitor read, gate: key and grant",
+        ["GET /api/public/capsules/{code}"] = "visitor read, gate: key and grant",
+        ["GET /api/public/comments/{code}"] = "visitor read, gate: key and grant",
+        ["POST /api/public/comments/{code}"] = "visitor comment, gate plus CAPTCHA when anonymous",
+        ["DELETE /api/public/comments/{code}/{commentId:long}"] = "signed-in author deletes own comment, gate",
+        ["GET /api/public/approvals/{code}"] = "visitor read, gate: key and grant",
+        ["POST /api/public/approvals/{code}/approve"] = "visitor approval, gate plus CAPTCHA when anonymous",
+        ["POST /api/public/approvals/{code}/download"] = "visitor download after release, gate",
+        ["GET /hook/{token}"] = "webhook ingest, short host, token",
+        ["HEAD /hook/{token}"] = "webhook ingest, short host, token",
+        ["POST /hook/{token}"] = "webhook ingest, short host, token",
+        ["PUT /hook/{token}"] = "webhook ingest, short host, token",
+        ["PATCH /hook/{token}"] = "webhook ingest, short host, token",
+        ["DELETE /hook/{token}"] = "webhook ingest, short host, token",
+        ["OPTIONS /hook/{token}"] = "webhook ingest, short host, token",
+        ["GET /hook/{token}/{**rest}"] = "webhook ingest, short host, token",
+        ["HEAD /hook/{token}/{**rest}"] = "webhook ingest, short host, token",
+        ["POST /hook/{token}/{**rest}"] = "webhook ingest, short host, token",
+        ["PUT /hook/{token}/{**rest}"] = "webhook ingest, short host, token",
+        ["PATCH /hook/{token}/{**rest}"] = "webhook ingest, short host, token",
+        ["DELETE /hook/{token}/{**rest}"] = "webhook ingest, short host, token",
+        ["OPTIONS /hook/{token}/{**rest}"] = "webhook ingest, short host, token",
     };
 
     private WebApplication _host = null!;
@@ -106,6 +134,11 @@ public sealed class ApiScopeTests(RealApiFactory real) : IAsyncLifetime, IClassF
                              typeof(Zaagl.Modules.Resources.Application.OwnerResources), typeof(Zaagl.Modules.Files.Contracts.IStoredObjectSummaries),
                              typeof(Zaagl.Modules.Resources.Contracts.IContentQuota), typeof(Zaagl.Modules.Billing.Contracts.IContentPlanProvider),
                              typeof(Zaagl.Modules.Files.Contracts.IUploadStats), typeof(Zaagl.Modules.Files.Contracts.IMediaMetadata),
+                             // Phase 2 (docs/phase2)
+                             typeof(Zaagl.Modules.DeveloperTools.Application.VaultService), typeof(Zaagl.Modules.DeveloperTools.Application.HookService),
+                             typeof(Zaagl.Modules.DeveloperTools.Application.CapsuleService), typeof(Zaagl.Modules.Collaboration.Application.CompareService),
+                             typeof(Zaagl.Modules.Collaboration.Application.CommentService), typeof(Zaagl.Modules.Collaboration.Application.ApprovalService),
+                             typeof(Zaagl.Modules.Access.Contracts.IAccessGate), typeof(ILinkResolver),
                          })
                     services.AddPlaceholder(type);
             },
@@ -116,6 +149,9 @@ public sealed class ApiScopeTests(RealApiFactory real) : IAsyncLifetime, IClassF
                 app.MapArchive();
                 app.MapSnippets();
                 app.MapResources();
+                app.MapDeveloperTools();
+                app.MapWebhooks();
+                app.MapCollaboration();
             });
         _client = _host.GetTestClient();
     }
@@ -300,7 +336,7 @@ public sealed class ApiScopeTests(RealApiFactory real) : IAsyncLifetime, IClassF
 
     private async Task<HttpResponseMessage> SendAsync(string method, string pattern, string? principal)
     {
-        var path = Regex.Replace(pattern.Replace("{n:int}", "1"), @"\{[^}]+\}", _ => Guid.NewGuid().ToString());
+        var path = Regex.Replace(pattern.Replace("{n:int}", "1").Replace("{requestId:long}", "1").Replace("{commentId:long}", "1"), @"\{[^}]+\}", _ => Guid.NewGuid().ToString());
         var request = new HttpRequestMessage(new HttpMethod(method), path);
         if (principal is not null) request.Headers.Add(ApiTestHost.PrincipalHeader, principal);
         if (path.EndsWith("/bulk", StringComparison.Ordinal))
