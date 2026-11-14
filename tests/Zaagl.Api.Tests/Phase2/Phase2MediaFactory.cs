@@ -38,6 +38,7 @@ public class Phase2MediaFactory : FilesApiFactory
             services.AddScoped<ITaskHandler<FilesDbContext>, MediaPreviewTaskHandler>();
             services.AddScoped<MediaPreviewTaskHandler>();
             services.AddScoped<DeleteBytesTaskHandler>();
+            services.AddScoped<WatermarkTaskHandler>();
         });
     }
 }
@@ -98,6 +99,7 @@ public static class MediaHelper
         if (row.Kind == ScanTaskHandler.TaskKind) await scope.ServiceProvider.GetRequiredService<ScanTaskHandler>().HandleAsync(claimed, CancellationToken.None);
         else if (row.Kind == MediaPreviewTaskHandler.TaskKind) await scope.ServiceProvider.GetRequiredService<MediaPreviewTaskHandler>().HandleAsync(claimed, CancellationToken.None);
         else if (row.Kind == DeleteBytesTaskHandler.TaskKind) await scope.ServiceProvider.GetRequiredService<DeleteBytesTaskHandler>().HandleAsync(claimed, CancellationToken.None);
+        else if (row.Kind == WatermarkTaskHandler.TaskKind) await scope.ServiceProvider.GetRequiredService<WatermarkTaskHandler>().HandleAsync(claimed, CancellationToken.None);
         else throw new InvalidOperationException(row.Kind);
     }
 

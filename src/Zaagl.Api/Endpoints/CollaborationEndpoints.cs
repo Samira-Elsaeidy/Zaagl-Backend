@@ -35,6 +35,20 @@ public sealed record CommentPostRequest(double X, double Y, string? Body, string
 /// <summary>openapi CommentSettingsRequest.</summary>
 public sealed record CommentSettingsRequest(bool Enabled, bool AllowAnonymous = false);
 
+/// <summary>openapi ApprovalCreateRequest (docs/phase2/approval-gate.md).</summary>
+public sealed record ApprovalCreateRequest(
+    Guid DraftResourceId,
+    string? WatermarkText = null,
+    bool ReleaseOnApproval = true,
+    string? Title = null,
+    DateTime? ExpiresAt = null,
+    string? Password = null,
+    string? CustomSlug = null,
+    bool Public = false);
+
+/// <summary>openapi ApproveRequest.</summary>
+public sealed record ApproveRequest(string? Name = null, string? Email = null, string? Note = null);
+
 /// <summary>
 /// Phase 2 E2.2 artist and designer tools on <c>api.zaa.gl</c> (docs/phase2). Owner routes are owner only (404 otherwise, PD-40),
 /// <c>private, no-store</c>; public routes run <see cref="IAccessGate"/> on every call.
@@ -44,10 +58,117 @@ public static class CollaborationEndpoints
     /// <summary>Spec §7.12 action name for anonymous comments (shared with the website's CAPTCHA widget).</summary>
     public const string GuestCommentAction = "guest-comment";
 
+    /// <summary>Spec §7.12 action name for an approval by a visitor without an account.</summary>
+    public const string GuestApproveAction = "guest-approve";
+
     public static void MapCollaboration(this IEndpointRouteBuilder app)
     {
         MapCompare(app);
         MapComments(app);
+        MapApprovals(app);
+    }
+
+    private static void MapApprovals(IEndpointRouteBuilder app)
+    {
+        var approvals = app.MapGroup("/api/approvals").WithTags("Approval gate");
+
+        approvals.MapPost("", async (ApprovalCreateRequest request, ClaimsPrincipal user, HttpContext http, ApprovalService service, CancellationToken ct) =>
+            {
+                http.Response.Headers.CacheControl = "private, no-store";
+                var created = await service.CreateAsync(user.GetUserId(), SnippetsEndpoints.CreatedViaFor(user), new CreateApprovalCommand(
+                    request.DraftResourceId, request.WatermarkText, request.ReleaseOnApproval, request.Title, request.ExpiresAt,
+                    request.Password, request.CustomSlug, request.Public), ct);
+                return ApiResults.From(created, dto => Results.Created($"/api/approvals/{dto.ResourceId}", dto));
+            })
+            .RequireScope(ApiScopes.ToolsWrite)
+            .RequireRateLimiting("content-write")
+            .WithSummary("Create a watermarked approval link for one of your ready images (Starter).")
+            .Produces<ToolLinkCreatedDto>(StatusCodes.Status201Created)
+            .ProducesProblem(StatusCodes.Status400BadRequest).ProducesProblem(StatusCodes.Status402PaymentRequired)
+            .ProducesProblem(StatusCodes.Status422UnprocessableEntity);
+
+        approvals.MapGet("/{id:guid}", async (Guid id, ClaimsPrincipal user, HttpContext http, ApprovalService service, IOptions<LinkOptions> links, CancellationToken ct) =>
+            {
+                http.Response.Headers.CacheControl = "private, no-store";
+                return ApiResults.From(await service.GetOwnedAsync(id, user.GetUserId(), links.Value.BaseUrl, ct));
+            })
+            .RequireScope(ApiScopes.ResourcesRead)
+            .Produces<OwnerApprovalDto>().ProducesProblem(StatusCodes.Status404NotFound);
+
+        approvals.MapPost("/{id:guid}/release", async (Guid id, ClaimsPrincipal user, HttpContext http, ApprovalService service, CancellationToken ct) =>
+            {
+                http.Response.Headers.CacheControl = "private, no-store";
+                return ApiResults.From(await service.ReleaseAsync(id, user.GetUserId(), ct));
+            })
+            .RequireScope(ApiScopes.ToolsWrite)
+            .WithSummary("Release the original of an approved (or paid) draft when release-on-approval is off.")
+            .Produces<ApprovalInfoDto>().ProducesProblem(StatusCodes.Status404NotFound).ProducesProblem(StatusCodes.Status409Conflict);
+
+        approvals.MapDelete("/{id:guid}", async (Guid id, ClaimsPrincipal user, HttpContext http, ApprovalService service, CancellationToken ct) =>
+            {
+                http.Response.Headers.CacheControl = "private, no-store";
+                var deleted = await service.DeleteAsync(id, user.GetUserId(), ct);
+                return deleted.IsSuccess ? Results.NoContent() : ApiResults.Problem(deleted.Error!);
+            })
+            .RequireScope(ApiScopes.ToolsWrite)
+            .Produces(StatusCodes.Status204NoContent).ProducesProblem(StatusCodes.Status404NotFound);
+
+        var open = app.MapGroup("/api/public/approvals").WithTags("Approval gate (public)").AllowAnonymous();
+
+        open.MapGet("/{code}", async (string code, HttpContext http, IAccessGate gate, ILinkResolver links, IResourceRegistry registry,
+                ApprovalService service, CancellationToken ct) =>
+            {
+                DeveloperToolsEndpoints.NoStore(http);
+                var gated = await DeveloperToolsEndpoints.GateAsync(http, gate, code, LinkTargetKind.Approval, ct);
+                if (gated.Refusal is not null) return gated.Refusal;
+                var link = await links.GetSnapshotAsync(SlugRules.Key(code), ct);
+                var resource = await registry.GetAsync(gated.ResourceId, ct);
+                if (link is null || resource is null) return ApiResults.NotFound();
+                return ApiResults.From(await service.DescribeAsync(gated.ResourceId, link, resource.Title, ct));
+            })
+            .RequireRateLimiting("content-read")
+            .WithSummary("Approval descriptor: the watermarked preview until release, then the original (never a download ticket here).")
+            .Produces<ApprovalDescriptorDto>().ProducesProblem(StatusCodes.Status401Unauthorized)
+            .ProducesProblem(StatusCodes.Status404NotFound).ProducesProblem(StatusCodes.Status410Gone);
+
+        open.MapPost("/{code}/approve", async (string code, ApproveRequest request, ClaimsPrincipal user, HttpContext http, IAccessGate gate,
+                ApprovalService service, IOptions<GuestOptions> guests, GuestRateLimiter limiter, CancellationToken ct) =>
+            {
+                DeveloperToolsEndpoints.NoStore(http);
+                var gated = await DeveloperToolsEndpoints.GateAsync(http, gate, code, LinkTargetKind.Approval, ct);
+                if (gated.Refusal is not null) return gated.Refusal;
+                Guid? userId = null;
+                if (user.Identity?.IsAuthenticated == true)
+                {
+                    userId = user.GetUserId();
+                }
+                else
+                {
+                    var captcha = await CaptchaGate.CheckAsync(http, GuestApproveAction, ct);
+                    if (captcha is not null) return captcha;
+                    if (!limiter.TryPerMinute("approve:" + IpPartition.Key(http.Connection.RemoteIpAddress), guests.Value.PerMinute))
+                        return ApiResults.Problem(Error.TooManyRequests("Too many requests. Try again in a minute."));
+                }
+                return ApiResults.From(await service.ApproveAsync(gated.ResourceId, userId, new ApproveCommand(request.Name, request.Email, request.Note), ct));
+            })
+            .RejectFailedCredentials()
+            .RequireRateLimiting("comment-write")
+            .WithRequestBodyLimit(16 * 1024)
+            .WithSummary("Approve the draft (recorded with time and optional name/email/note). Anonymous visitors need the Captcha-Token header.")
+            .Produces<ApprovalInfoDto>().ProducesProblem(StatusCodes.Status400BadRequest).ProducesProblem(StatusCodes.Status401Unauthorized)
+            .ProducesProblem(StatusCodes.Status404NotFound).ProducesProblem(StatusCodes.Status410Gone);
+
+        open.MapPost("/{code}/download", async (string code, HttpContext http, IAccessGate gate, ApprovalService service, CancellationToken ct) =>
+            {
+                DeveloperToolsEndpoints.NoStore(http);
+                var gated = await DeveloperToolsEndpoints.GateAsync(http, gate, code, LinkTargetKind.Approval, ct, AccessPurpose.Download);
+                if (gated.Refusal is not null) return gated.Refusal;
+                var ticket = await service.DownloadAsync(gated.ResourceId, ct);
+                return ticket.IsSuccess ? Results.Ok(new DownloadTicketDto(ticket.Value!.Url, ticket.Value.ExpiresAt)) : ApiResults.Problem(ticket.Error!);
+            })
+            .RequireRateLimiting("content-read")
+            .WithSummary("After release only: a download ticket for the clean original (valid 120 s if unused).")
+            .Produces<DownloadTicketDto>().ProducesProblem(StatusCodes.Status403Forbidden).ProducesProblem(StatusCodes.Status404NotFound);
     }
 
     private static void MapComments(IEndpointRouteBuilder app)

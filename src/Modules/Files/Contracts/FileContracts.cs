@@ -194,3 +194,19 @@ public interface IMediaMetadata
     /// <summary>The ready derivative of <paramref name="kind"/>, or null (not made, failed, skipped, or not yet).</summary>
     Task<StoredDerivative?> GetReadyDerivativeAsync(Guid resourceId, string kind, CancellationToken cancellationToken);
 }
+
+// ---- Phase 2 E2.2: watermarked previews (docs/phase2/approval-gate.md) ----
+
+/// <summary>
+/// Requests a watermarked preview derivative of an image (the approval gate's draft). The original is never modified or served by this:
+/// the worker renders a new, downscaled image with the text burned in and stores it as a derivative of the same resource; it is
+/// served only by a Preview ticket naming <see cref="KindFor"/>.
+/// </summary>
+public interface IWatermarkDerivatives
+{
+    /// <summary>The derivative kind for a watermark text: <c>wm-</c> plus 16 hex characters of SHA-256(text).</summary>
+    string KindFor(string text);
+
+    /// <summary>Queues the render (idempotent per resource and text) and returns the derivative kind.</summary>
+    Task<string> RequestAsync(Guid resourceId, string text, CancellationToken cancellationToken);
+}

@@ -79,3 +79,58 @@ public sealed record CommentDto(
 public sealed record CommentThreadDto(bool Enabled, bool AllowAnonymous, int Count, int MaxComments, IReadOnlyList<CommentDto> Items);
 
 public sealed record CommentSettingsDto(bool Enabled, bool AllowAnonymous, int Count, int MaxComments);
+
+// ---- Watermark and approval gate ------------------------------------------------------------------------------------------
+
+/// <param name="WatermarkText">Burned into the preview (1-60 characters); default "DRAFT".</param>
+/// <param name="ReleaseOnApproval">True (default): approving releases the original at once. False: the owner releases it.</param>
+public sealed record CreateApprovalCommand(
+    Guid DraftResourceId,
+    string? WatermarkText,
+    bool ReleaseOnApproval,
+    string? Title,
+    DateTime? ExpiresAt,
+    string? Password,
+    string? CustomSlug,
+    bool Public);
+
+/// <param name="Name">Optional, at most 100 characters.</param>
+/// <param name="Email">Optional, at most 254 characters, a plain address.</param>
+/// <param name="Note">Optional message to the owner, at most 1,000 characters.</param>
+public sealed record ApproveCommand(string? Name, string? Email, string? Note);
+
+/// <summary>The approval record shown to the link holder and the owner. <paramref name="State"/>: <c>draft</c>, <c>approved</c>,
+/// <c>paid</c> or <c>released</c>.</summary>
+public sealed record ApprovalInfoDto(string State, DateTime? ApprovedAt, string? ApproverName, DateTime? PaidAt, DateTime? ReleasedAt);
+
+/// <summary>Public descriptor. Before release <paramref name="Preview"/> is the watermarked derivative only (its <c>inlineUrl</c>
+/// is null while it is still rendering: <paramref name="PreviewState"/> = <c>processing</c>) and <paramref name="Original"/> is
+/// null. After release <paramref name="Original"/> carries an inline ticket and <c>POST .../download</c> works.</summary>
+public sealed record ApprovalDescriptorDto(
+    string Kind,
+    string? Title,
+    DateTime ExpiresAt,
+    bool HasPassword,
+    ApprovalInfoDto Approval,
+    string PreviewState,
+    ImagePartDto? Preview,
+    ImagePartDto? Original,
+    bool CanApprove);
+
+public sealed record OwnerApprovalDto(
+    Guid Id,
+    string Code,
+    string ShortUrl,
+    string? Title,
+    string State,
+    DateTime ExpiresAt,
+    bool IsPublic,
+    bool HasPassword,
+    Guid DraftResourceId,
+    string WatermarkText,
+    bool ReleaseOnApproval,
+    ApprovalInfoDto Approval,
+    string? ApproverEmail,
+    string? ApprovalNote,
+    string PreviewState,
+    DateTime CreatedAt);

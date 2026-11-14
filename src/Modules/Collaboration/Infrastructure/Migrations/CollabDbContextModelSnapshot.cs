@@ -23,6 +23,105 @@ namespace Zaagl.Modules.Collaboration.Infrastructure.Migrations
 
             NpgsqlModelBuilderExtensions.UseIdentityByDefaultColumns(modelBuilder);
 
+            modelBuilder.Entity("Zaagl.Modules.Collaboration.Domain.ApprovalRow", b =>
+                {
+                    b.Property<Guid>("ResourceId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("resource_id");
+
+                    b.Property<string>("ApprovalNote")
+                        .HasMaxLength(1000)
+                        .HasColumnType("character varying(1000)")
+                        .HasColumnName("approval_note");
+
+                    b.Property<DateTime?>("ApprovedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("approved_at");
+
+                    b.Property<string>("ApproverEmail")
+                        .HasMaxLength(254)
+                        .HasColumnType("character varying(254)")
+                        .HasColumnName("approver_email");
+
+                    b.Property<string>("ApproverName")
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)")
+                        .HasColumnName("approver_name");
+
+                    b.Property<Guid?>("ApproverUserId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("approver_user_id");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at");
+
+                    b.Property<Guid>("DraftResourceId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("draft_resource_id");
+
+                    b.Property<Guid>("OwnerId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("owner_id");
+
+                    b.Property<DateTime?>("PaidAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("paid_at");
+
+                    b.Property<string>("PaymentProvider")
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)")
+                        .HasColumnName("payment_provider");
+
+                    b.Property<string>("PaymentReference")
+                        .HasMaxLength(128)
+                        .HasColumnType("character varying(128)")
+                        .HasColumnName("payment_reference");
+
+                    b.Property<bool>("ReleaseOnApproval")
+                        .HasColumnType("boolean")
+                        .HasColumnName("release_on_approval");
+
+                    b.Property<DateTime?>("ReleasedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("released_at");
+
+                    b.Property<short>("State")
+                        .HasColumnType("smallint")
+                        .HasColumnName("state");
+
+                    b.Property<string>("WatermarkKind")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)")
+                        .HasColumnName("watermark_kind");
+
+                    b.Property<string>("WatermarkText")
+                        .IsRequired()
+                        .HasMaxLength(60)
+                        .HasColumnType("character varying(60)")
+                        .HasColumnName("watermark_text");
+
+                    b.HasKey("ResourceId")
+                        .HasName("pk_approvals");
+
+                    b.HasIndex("DraftResourceId")
+                        .HasDatabaseName("ix_approvals_draft");
+
+                    b.ToTable("approvals", "collab", t =>
+                        {
+                            t.HasCheckConstraint("ck_approvals_approved", "(state <> 1) OR approved_at IS NOT NULL");
+
+                            t.HasCheckConstraint("ck_approvals_paid", "(state <> 2) OR paid_at IS NOT NULL");
+
+                            t.HasCheckConstraint("ck_approvals_released", "(state = 3) = (released_at IS NOT NULL)");
+
+                            t.HasCheckConstraint("ck_approvals_state", "state IN (0, 1, 2, 3)");
+
+                            t.HasCheckConstraint("ck_approvals_watermark", "char_length(watermark_text) BETWEEN 1 AND 60");
+                        });
+                });
+
             modelBuilder.Entity("Zaagl.Modules.Collaboration.Domain.CommentRow", b =>
                 {
                     b.Property<long>("Id")

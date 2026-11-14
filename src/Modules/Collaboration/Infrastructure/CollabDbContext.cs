@@ -12,6 +12,7 @@ public sealed class CollabDbContext(DbContextOptions<CollabDbContext> options) :
     public DbSet<ComparisonRow> Comparisons => Set<ComparisonRow>();
     public DbSet<CommentSettingsRow> CommentSettings => Set<CommentSettingsRow>();
     public DbSet<CommentRow> Comments => Set<CommentRow>();
+    public DbSet<ApprovalRow> Approvals => Set<ApprovalRow>();
 
     protected override void OnModelCreating(ModelBuilder b)
     {
@@ -55,6 +56,29 @@ public sealed class CollabDbContext(DbContextOptions<CollabDbContext> options) :
             e.HasOne<CommentSettingsRow>().WithMany().HasForeignKey(x => x.ResourceId).OnDelete(DeleteBehavior.Cascade);
             e.HasIndex(x => new { x.ResourceId, x.Id }).HasDatabaseName("ix_comments_resource");
             e.HasIndex(x => x.AuthorUserId).HasFilter("author_user_id IS NOT NULL").HasDatabaseName("ix_comments_author");
+        });
+
+        b.Entity<ApprovalRow>(e =>
+        {
+            e.ToTable("approvals", t =>
+            {
+                t.HasCheckConstraint("ck_approvals_state", "state IN (0, 1, 2, 3)");
+                // The state machine as data invariants: an approved or paid draft has its timestamp; released has its own.
+                t.HasCheckConstraint("ck_approvals_approved", "(state <> 1) OR approved_at IS NOT NULL");
+                t.HasCheckConstraint("ck_approvals_paid", "(state <> 2) OR paid_at IS NOT NULL");
+                t.HasCheckConstraint("ck_approvals_released", "(state = 3) = (released_at IS NOT NULL)");
+                t.HasCheckConstraint("ck_approvals_watermark", "char_length(watermark_text) BETWEEN 1 AND 60");
+            });
+            e.HasKey(x => x.ResourceId);
+            e.Property(x => x.ResourceId).ValueGeneratedNever();
+            e.Property(x => x.WatermarkText).HasMaxLength(60).IsRequired();
+            e.Property(x => x.WatermarkKind).HasMaxLength(32).IsRequired();
+            e.Property(x => x.ApproverName).HasMaxLength(100);
+            e.Property(x => x.ApproverEmail).HasMaxLength(254);
+            e.Property(x => x.ApprovalNote).HasMaxLength(1000);
+            e.Property(x => x.PaymentProvider).HasMaxLength(32);
+            e.Property(x => x.PaymentReference).HasMaxLength(128);
+            e.HasIndex(x => x.DraftResourceId).HasDatabaseName("ix_approvals_draft");
         });
     }
 }

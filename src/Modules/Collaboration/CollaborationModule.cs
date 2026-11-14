@@ -28,6 +28,7 @@ public static class CollaborationModule
         services.AddDbContext<CollabDbContext>(o => Configure(o, connection));
         services.TryAddSingleton(TimeProvider.System);
         services.AddScoped<IResourceKindHandler, ComparisonKindHandler>();
+        services.AddScoped<IResourceKindHandler, ApprovalKindHandler>();
         foreach (var kind in CommentService.Targets)
             services.AddScoped<IResourceKindHandler>(sp => new CommentPurgeHandler(sp.GetRequiredService<CollabDbContext>(), kind));
         if (workerOnly) return services;
@@ -37,6 +38,7 @@ public static class CollaborationModule
         services.AddScoped<CompareService>();
         services.Configure<CommentOptions>(configuration.GetSection(CommentOptions.Section));
         services.AddScoped<CommentService>();
+        services.AddScoped<ApprovalService>();
         services.AddSingleton<IModuleMigrator>(sp =>
             new ModuleMigrator<CollabDbContext>("collab", sp.GetRequiredService<IServiceScopeFactory>()));
         return services;

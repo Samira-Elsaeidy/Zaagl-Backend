@@ -47,3 +47,28 @@ public sealed class CommentRow
     public DateTime CreatedAt { get; set; }
     public DateTime? ResolvedAt { get; set; }
 }
+
+/// <summary><c>collab.approvals</c> (docs/phase2/approval-gate.md): a draft image served watermarked until the link holder approves (or,
+/// later, pays); then the clean original is released. <see cref="State"/> follows <see cref="Application.ApprovalStateMachine"/>.</summary>
+public sealed class ApprovalRow
+{
+    public Guid ResourceId { get; set; }
+    public Guid OwnerId { get; set; }
+    public Guid DraftResourceId { get; set; }
+    public string WatermarkText { get; set; } = "";
+    /// <summary>The Files derivative kind of the watermarked preview (<c>wm-…</c>).</summary>
+    public string WatermarkKind { get; set; } = "";
+    public bool ReleaseOnApproval { get; set; }
+    /// <summary>0 draft, 1 approved, 2 paid, 3 released.</summary>
+    public short State { get; set; }
+    public DateTime? ApprovedAt { get; set; }
+    public string? ApproverName { get; set; }
+    public string? ApproverEmail { get; set; }
+    public string? ApprovalNote { get; set; }
+    public Guid? ApproverUserId { get; set; }
+    public DateTime? PaidAt { get; set; }
+    public string? PaymentProvider { get; set; }
+    public string? PaymentReference { get; set; }
+    public DateTime? ReleasedAt { get; set; }
+    public DateTime CreatedAt { get; set; }
+}

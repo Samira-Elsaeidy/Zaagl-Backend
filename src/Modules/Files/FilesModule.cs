@@ -47,6 +47,7 @@ public static class FilesModule
         services.AddScoped<IStoredObjects>(sp => sp.GetRequiredService<StoredObjects>());
         services.AddScoped<IStoredObjectSummaries>(sp => sp.GetRequiredService<StoredObjects>());
         services.AddScoped<IMediaMetadata, MediaMetadata>();
+        services.AddScoped<IWatermarkDerivatives, WatermarkRequests>(); // Phase 2 approval gate (docs/phase2/approval-gate.md)
         services.AddScoped<IResourceBytes>(sp => sp.GetRequiredService<StoredObjects>());
         services.AddScoped<IUploadStats>(sp => sp.GetRequiredService<StoredObjects>());
         services.AddScoped<IContentHashBlocklist, ContentHashBlocklist>();
@@ -91,6 +92,7 @@ public static class FilesModule
         services.AddScoped<ITaskHandler<FilesDbContext>, DeleteBytesTaskHandler>();
         services.AddSingleton<MediaConcurrencyGate>();
         services.AddScoped<ITaskHandler<FilesDbContext>, MediaPreviewTaskHandler>();
+        services.AddScoped<ITaskHandler<FilesDbContext>, WatermarkTaskHandler>();
         services.AddScoped<ScanTaskHandler>();
         return services;
     }
