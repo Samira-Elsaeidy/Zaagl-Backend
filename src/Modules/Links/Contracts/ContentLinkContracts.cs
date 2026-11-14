@@ -20,6 +20,14 @@ public enum LinkTargetKind : short
     File = 2,
     /// <summary>Viewer <c>app.zaa.gl/i/&lt;code&gt;</c>.</summary>
     Media = 3,
+    /// <summary>Phase 2 E2.1: end-to-end encrypted secret (vault). Viewer <c>app.zaa.gl/v/&lt;code&gt;</c>.</summary>
+    Secret = 4,
+    /// <summary>Phase 2 E2.1: bug capsule (recording + console and network logs). Viewer <c>app.zaa.gl/b/&lt;code&gt;</c>.</summary>
+    Capsule = 5,
+    /// <summary>Phase 2 E2.2: before/after comparison of two images. Viewer <c>app.zaa.gl/c/&lt;code&gt;</c>.</summary>
+    Compare = 6,
+    /// <summary>Phase 2 E2.2: watermarked draft behind a client approval gate. Viewer <c>app.zaa.gl/a/&lt;code&gt;</c>.</summary>
+    Approval = 7,
 }
 
 /// <summary>PD-02: first path segment of the viewer on <c>app.zaa.gl</c> per content kind.</summary>
@@ -28,6 +36,27 @@ public static class ViewerPathSegments
     public const string Snippet = "p";
     public const string Media = "i";
     public const string File = "f";
+    public const string Secret = "v";
+    public const string Capsule = "b";
+    public const string Compare = "c";
+    public const string Approval = "a";
+
+    /// <summary>The viewer segment of a content kind (never called for <see cref="LinkTargetKind.Url"/>).</summary>
+    public static string For(LinkTargetKind kind) => kind switch
+    {
+        LinkTargetKind.Snippet => Snippet,
+        LinkTargetKind.Media => Media,
+        LinkTargetKind.Secret => Secret,
+        LinkTargetKind.Capsule => Capsule,
+        LinkTargetKind.Compare => Compare,
+        LinkTargetKind.Approval => Approval,
+        _ => File,
+    };
+
+    /// <summary>True for every kind a content link may have (everything but <see cref="LinkTargetKind.Url"/>).</summary>
+    public static bool IsContentKind(LinkTargetKind kind) =>
+        kind is LinkTargetKind.Snippet or LinkTargetKind.File or LinkTargetKind.Media
+            or LinkTargetKind.Secret or LinkTargetKind.Capsule or LinkTargetKind.Compare or LinkTargetKind.Approval;
 }
 
 /// <summary>

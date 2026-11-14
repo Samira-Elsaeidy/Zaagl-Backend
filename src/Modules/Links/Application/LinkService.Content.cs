@@ -24,8 +24,8 @@ public sealed partial class LinkService : ILinkIssuer
         var now = time.GetUtcNow().UtcDateTime;
 
         // ---- 1. Validate (the caller already clamped the expiry to the plan, addendum §9.1) ----
-        if (request.Kind is not (LinkTargetKind.Snippet or LinkTargetKind.File or LinkTargetKind.Media))
-            return Error.Validation("A content link needs a content kind (snippet, file or media).");
+        if (!ViewerPathSegments.IsContentKind(request.Kind))
+            return Error.Validation("A content link needs a content kind (snippet, file, media or a Phase 2 tool kind).");
         if (request.ResourceId == Guid.Empty)
             return Error.Validation("A content link needs a resource id.");
         if ((request.OwnerId is null) == (request.GuestCreatorKey is null))

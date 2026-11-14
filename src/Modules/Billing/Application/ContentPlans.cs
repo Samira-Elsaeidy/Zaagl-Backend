@@ -31,10 +31,57 @@ public sealed class PlanCapabilityOptions
     public bool? ManageContent { get; set; }
 }
 
+/// <summary>Phase 2 <c>Plans:&lt;Plan&gt;:Tools:*</c>; every unset value falls back to <see cref="ToolLimits.Defaults"/> (PROPOSED
+/// values) and every value is clamped to <see cref="ToolCeilings"/>.</summary>
+public sealed class PlanToolOptions
+{
+    public bool? VaultEnabled { get; set; }
+    public int? VaultMaxCiphertextBytes { get; set; }
+    public int? VaultMaxViews { get; set; }
+    public int? HookMaxActive { get; set; }
+    public int? HookMaxRequests { get; set; }
+    public int? HookMaxBodyBytes { get; set; }
+    public int? HookLifetimeHours { get; set; }
+    public int? HookIngestPerMinute { get; set; }
+    public bool? CompareEnabled { get; set; }
+    public bool? CapsulesEnabled { get; set; }
+    public int? CapsuleMaxLogBytes { get; set; }
+    public bool? CommentsEnabled { get; set; }
+    public bool? ApprovalEnabled { get; set; }
+
+    public ToolLimits Resolve(ToolLimits d) => new(
+        VaultEnabled ?? d.VaultEnabled,
+        Clamp(VaultMaxCiphertextBytes ?? d.VaultMaxCiphertextBytes, 0, ToolCeilings.VaultCiphertextBytes),
+        Clamp(VaultMaxViews ?? d.VaultMaxViews, 1, ToolCeilings.VaultViews),
+        Clamp(HookMaxActive ?? d.HookMaxActive, 0, 1000),
+        Clamp(HookMaxRequests ?? d.HookMaxRequests, 0, ToolCeilings.HookRequests),
+        Clamp(HookMaxBodyBytes ?? d.HookMaxBodyBytes, 0, ToolCeilings.HookBodyBytes),
+        Clamp(HookLifetimeHours ?? d.HookLifetimeHours, 0, 24 * 30),
+        Clamp(HookIngestPerMinute ?? d.HookIngestPerMinute, 0, 6000),
+        CompareEnabled ?? d.CompareEnabled,
+        CapsulesEnabled ?? d.CapsulesEnabled,
+        Clamp(CapsuleMaxLogBytes ?? d.CapsuleMaxLogBytes, 0, ToolCeilings.CapsuleLogBytes),
+        CommentsEnabled ?? d.CommentsEnabled,
+        ApprovalEnabled ?? d.ApprovalEnabled);
+
+    private static int Clamp(int value, int min, int max) => Math.Min(Math.Max(value, min), max);
+}
+
+/// <summary>Hard ceilings no configuration can exceed: they match the database check constraints and the request body limits.</summary>
+public static class ToolCeilings
+{
+    public const int VaultCiphertextBytes = 1024 * 1024;
+    public const int VaultViews = 100;
+    public const int HookRequests = 10_000;
+    public const int HookBodyBytes = 1024 * 1024;
+    public const int CapsuleLogBytes = 4 * 1024 * 1024;
+}
+
 public sealed class PlanOptions
 {
     public PlanContentOptions? Content { get; set; }
     public PlanCapabilityOptions? Capabilities { get; set; }
+    public PlanToolOptions? Tools { get; set; }
 }
 
 public sealed class PlansOptions
@@ -103,15 +150,15 @@ public sealed class PlansOptionsValidator : IValidateOptions<PlansOptions>
 /// call, so a configuration change applies without code (ARC-005 §3).</summary>
 public sealed class PlanCatalog(IOptionsMonitor<PlansOptions> options)
 {
-    public ContentPlan Guest => Build(null, options.CurrentValue.Guest!);
+    public ContentPlan Guest => Build(null, options.CurrentValue.Guest!, ToolLimits.Defaults.Guest);
 
     public ContentPlan For(PlanTier tier) => tier switch
     {
-        PlanTier.Starter => Build(PlanTier.Starter, options.CurrentValue.Starter!),
-        _ => Build(PlanTier.Free, options.CurrentValue.Free!),
+        PlanTier.Starter => Build(PlanTier.Starter, options.CurrentValue.Starter!, ToolLimits.Defaults.Starter),
+        _ => Build(PlanTier.Free, options.CurrentValue.Free!, ToolLimits.Defaults.Free),
     };
 
-    private static ContentPlan Build(PlanTier? tier, PlanOptions p)
+    private static ContentPlan Build(PlanTier? tier, PlanOptions p, ToolLimits toolDefaults)
     {
         var c = p.Content!;
         var k = p.Capabilities!;
@@ -121,7 +168,8 @@ public sealed class PlanCatalog(IOptionsMonitor<PlansOptions> options)
             new ContentLimits(c.MaxFileBytes!.Value, c.MaxSnippetBytes!.Value, c.RetentionDays!.Value,
                 c.QuarantineAfterExpiry!.Value, c.StorageQuotaBytes),
             new PlanCapabilities(k.IsPaid!.Value, k.ApiKeys!.Value, k.KeepStatsAfterPurge!.Value,
-                k.BurnAfterDownload!.Value, k.PasswordOnContent!.Value, k.ContentStatistics!.Value, k.ManageContent!.Value));
+                k.BurnAfterDownload!.Value, k.PasswordOnContent!.Value, k.ContentStatistics!.Value, k.ManageContent!.Value),
+            (p.Tools ?? new PlanToolOptions()).Resolve(toolDefaults));
     }
 }
 

@@ -45,6 +45,12 @@ public static class TestDatabase
                 ConnectionPruningInterval = 1,
             }
             : new NpgsqlConnectionStringBuilder(raw);
+        // A project with its own database (the coordinator tests' "zaagl_test_coordinator") keeps its own one under the
+        // override too: ZAAGL_TEST_PG=...;Database=zaagl_test_p2 gives it "zaagl_test_p2_coordinator", so a second checkout's run
+        // never shares (and wipes) another run's allocator tables.
+        if (raw is not null && databaseName != DefaultName && databaseName.StartsWith(DefaultName, StringComparison.Ordinal)
+            && !string.IsNullOrWhiteSpace(builder.Database))
+            builder.Database += databaseName[DefaultName.Length..];
 
         if (string.IsNullOrWhiteSpace(builder.Database) || ForbiddenDatabases.Contains(builder.Database))
             throw new InvalidOperationException(
@@ -81,6 +87,8 @@ public static class TestDatabase
         }
     }
 
-    /// <summary>Valkey for tests: database 15, never the dev stack's database 0.</summary>
-    public const string Valkey = "localhost:6379,abortConnect=false,defaultDatabase=15";
+    /// <summary>Valkey for tests: database 15 (or <c>ZAAGL_TEST_VALKEY_DB</c>, so two checkouts can test side by side), never the
+    /// dev stack's database 0.</summary>
+    public static string Valkey =>
+        $"localhost:6379,abortConnect=false,defaultDatabase={(int.TryParse(Environment.GetEnvironmentVariable("ZAAGL_TEST_VALKEY_DB"), out var db) && db is > 0 and < 16 ? db : 15)}";
 }

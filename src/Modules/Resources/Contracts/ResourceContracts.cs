@@ -11,6 +11,14 @@ public enum ResourceKind : short
     Snippet = 1,
     File = 2,
     Media = 3,
+    /// <summary>Phase 2: rows in <c>devtools.secrets</c> (ciphertext only).</summary>
+    Secret = 4,
+    /// <summary>Phase 2: rows in <c>devtools.capsules</c> (references a recording resource + logs).</summary>
+    Capsule = 5,
+    /// <summary>Phase 2: rows in <c>collab.comparisons</c> (references two image resources).</summary>
+    Compare = 6,
+    /// <summary>Phase 2: rows in <c>collab.approvals</c> (references one image resource).</summary>
+    Approval = 7,
 }
 
 /// <summary>Stored processing status (<c>resources.resources.processing_status</c>).</summary>

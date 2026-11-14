@@ -638,6 +638,10 @@ public sealed partial class LinkService(
             case "snippet": q = q.Where(l => l.TargetKind == LinkTargetKind.Snippet); break;
             case "image": q = q.Where(l => l.TargetKind == LinkTargetKind.Media); break;
             case "file": q = q.Where(l => l.TargetKind == LinkTargetKind.File); break;
+            case "secret": q = q.Where(l => l.TargetKind == LinkTargetKind.Secret); break;
+            case "capsule": q = q.Where(l => l.TargetKind == LinkTargetKind.Capsule); break;
+            case "compare": q = q.Where(l => l.TargetKind == LinkTargetKind.Compare); break;
+            case "approval": q = q.Where(l => l.TargetKind == LinkTargetKind.Approval); break;
             default: q = q.Where(l => l.TargetKind == LinkTargetKind.Url); break;
         }
         if (!string.IsNullOrWhiteSpace(query.Search))
@@ -1100,7 +1104,12 @@ public sealed partial class LinkService(
         l.TargetKind,
         l.ResourceId,
         $"{options.Value.BaseUrl.TrimEnd('/')}/{l.Slug}",
-        l.TargetKind switch { LinkTargetKind.Snippet => "snippet", LinkTargetKind.Media => "image", LinkTargetKind.File => "file", _ => "url" },
+        l.TargetKind switch
+        {
+            LinkTargetKind.Snippet => "snippet", LinkTargetKind.Media => "image", LinkTargetKind.File => "file",
+            LinkTargetKind.Secret => "secret", LinkTargetKind.Capsule => "capsule", LinkTargetKind.Compare => "compare",
+            LinkTargetKind.Approval => "approval", _ => "url",
+        },
         l.DisabledKind,
         l.DisabledAt,
         l.DisabledKind == DisabledKinds.Safety ? l.DisabledReason : null);

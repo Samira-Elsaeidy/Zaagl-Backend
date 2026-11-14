@@ -350,6 +350,10 @@ public static class ResourcesEndpoints
             "snippet" => (kind = ResourceKind.Snippet) == ResourceKind.Snippet,
             "file" => (kind = ResourceKind.File) == ResourceKind.File,
             "media" => (kind = ResourceKind.Media) == ResourceKind.Media,
+            "secret" => (kind = ResourceKind.Secret) == ResourceKind.Secret,
+            "capsule" => (kind = ResourceKind.Capsule) == ResourceKind.Capsule,
+            "compare" => (kind = ResourceKind.Compare) == ResourceKind.Compare,
+            "approval" => (kind = ResourceKind.Approval) == ResourceKind.Approval,
             _ => false,
         };
     }

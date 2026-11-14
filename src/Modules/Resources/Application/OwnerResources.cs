@@ -109,6 +109,13 @@ public sealed class OwnerResources(
             if (wantBurn && resource.Kind != ResourceKind.File) return Error.Validation("burnAfterDownload applies to files only.");
             if (wantBurn && !plan.Capabilities.BurnAfterDownload) return Error.PlanRequired("Burn after downloading is available on the Starter plan.");
         }
+        // Phase 2 vault (docs/phase2/vault.md): the link key is mandatory and expired ciphertext is wiped, never kept for a renewal.
+        if (resource.Kind == ResourceKind.Secret)
+        {
+            if (patch.Public == true) return Error.Validation("A secret link always needs its link key; it cannot be made public.");
+            if (patch.ExpiresAt is not null && owned.State != ResourceState.Ready)
+                return Error.Conflict("An expired or closed secret cannot be renewed.");
+        }
         if (patch.TitleSet && patch.Title is { } title && title.Trim().Length > 200) return Error.Validation("The title is at most 200 characters.");
         if (patch.Password is { } pw && (pw.Length < 4 || pw.Length > 128)) return Error.Validation("The password must be 4-128 characters.");
         if (patch.Password is not null && !plan.Capabilities.PasswordOnContent)

@@ -14,6 +14,7 @@ using Zaagl.Modules.Access;
 using Zaagl.Modules.Analytics;
 using Zaagl.Modules.Analytics.Contracts;
 using Zaagl.Modules.Billing;
+using Zaagl.Modules.DeveloperTools;
 using Zaagl.Modules.Files;
 using Zaagl.Modules.Identity;
 using Zaagl.Modules.Identity.Application;
@@ -270,7 +271,8 @@ builder.Services
     .AddFilesModule(config)
     .AddFilesUploads() // BE-011/BE-012: tus sessions, /complete (the scan task itself runs in the worker)
     .AddResourcesModule(config, builder.Environment.IsProduction()) // BE-006/BE-008: resources schema, registry, quota, raw/owner tickets
-    .AddSnippetsModule(config); // BE-008: snippets schema, immutable versions, create/edit/read
+    .AddSnippetsModule(config) // BE-008: snippets schema, immutable versions, create/edit/read
+    .AddDeveloperToolsModule(config); // Phase 2 E2.1 (docs/phase2): vault, webhook catcher, bug capsules
 builder.Services.AddScoped<ObjectDelivery>(); // ARC-008 hop for stored objects
 builder.Services.AddSingleton<ILiveClickPublisher, SignalRLiveClickPublisher>();
 
@@ -378,6 +380,7 @@ app.MapSnippets();
 app.MapFiles();     // BE-011/BE-012: tus uploads and /complete
 app.MapResources(); // F-12: owner library, status, patch, delete, owner tickets, /api/me/storage
 app.MapPublicContent();
+app.MapDeveloperTools(); // Phase 2 E2.1 (docs/phase2)
 app.MapDelivery();
 // Resolution owns the catch-all /{slug} route, so it is mapped last.
 app.MapResolution();

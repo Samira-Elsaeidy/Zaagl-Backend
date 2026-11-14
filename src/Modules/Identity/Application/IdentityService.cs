@@ -39,7 +39,7 @@ public sealed class IdentityService(
     /// <summary>Scopes a key may be created with (BE-001). The Phase 1 content scopes are accepted now and
     /// enforced by the API's scope policies once their endpoints ship.</summary>
     public static readonly IReadOnlyList<string> AllowedScopes =
-        ["links:read", "links:write", "stats:read", "snippets:write", "files:write", "resources:read"];
+        ["links:read", "links:write", "stats:read", "snippets:write", "files:write", "resources:read", "tools:write"];
 
     /// <summary>A key created without an explicit scope list gets the Phase 0 set only; content scopes must be
     /// requested explicitly, so existing clients never gain new powers silently.</summary>
