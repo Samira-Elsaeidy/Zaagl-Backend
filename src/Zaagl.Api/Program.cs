@@ -14,6 +14,7 @@ using Zaagl.Modules.Access;
 using Zaagl.Modules.Analytics;
 using Zaagl.Modules.Analytics.Contracts;
 using Zaagl.Modules.Billing;
+using Zaagl.Modules.Collaboration;
 using Zaagl.Modules.DeveloperTools;
 using Zaagl.Modules.Files;
 using Zaagl.Modules.Identity;
@@ -276,7 +277,8 @@ builder.Services
     .AddFilesUploads() // BE-011/BE-012: tus sessions, /complete (the scan task itself runs in the worker)
     .AddResourcesModule(config, builder.Environment.IsProduction()) // BE-006/BE-008: resources schema, registry, quota, raw/owner tickets
     .AddSnippetsModule(config) // BE-008: snippets schema, immutable versions, create/edit/read
-    .AddDeveloperToolsModule(config); // Phase 2 E2.1 (docs/phase2): vault, webhook catcher, bug capsules
+    .AddDeveloperToolsModule(config) // Phase 2 E2.1 (docs/phase2): vault, webhook catcher, bug capsules
+    .AddCollaborationModule(config); // Phase 2 E2.2 (docs/phase2): comparisons, pinned comments, approval gates
 builder.Services.AddScoped<ObjectDelivery>(); // ARC-008 hop for stored objects
 builder.Services.AddSingleton<ILiveClickPublisher, SignalRLiveClickPublisher>();
 
@@ -386,6 +388,7 @@ app.MapResources(); // F-12: owner library, status, patch, delete, owner tickets
 app.MapPublicContent();
 app.MapDeveloperTools(); // Phase 2 E2.1 (docs/phase2)
 app.MapWebhooks();       // Phase 2 E2.1: zaa.gl/hook/{token} ingest (short host) and /api/hooks
+app.MapCollaboration();  // Phase 2 E2.2 (docs/phase2)
 app.MapDelivery();
 // Resolution owns the catch-all /{slug} route, so it is mapped last.
 app.MapResolution();
