@@ -34,7 +34,9 @@ public sealed record ContentDescriptorDto(
     object? File);
 
 /// <summary>openapi ContentDescriptor.file (S2). No URL of any kind.</summary>
-public sealed record FileBlockDto(string DetectedMime, long SizeBytes, string? Sha256, long? SingleResponseLimitBytes);
+/// <param name="Viewer">Phase 2 (docs/phase2/viewers-3d-lottie-audio.md): <c>model3d</c>, <c>lottie</c> or <c>audio</c> when the scan task
+/// validated the file for a browser viewer; the descriptor's <c>inlineUrl</c> then carries an inline ticket (never for burn files).</param>
+public sealed record FileBlockDto(string DetectedMime, long SizeBytes, string? Sha256, long? SingleResponseLimitBytes, string? Viewer = null);
 
 public sealed record UnlockContentRequest(string? Password);
 
@@ -88,7 +90,7 @@ public static class PublicContentEndpoints
                         false, hasPassword, null, null, null, null, null, null));
 
                 if (gated.Kind == LinkTargetKind.File)
-                    return await FileDescriptorAsync(resource, expiresAt, hasPassword, objects, content.Value, ct);
+                    return await FileDescriptorAsync(resource, expiresAt, hasPassword, objects, content.Value, grants, ct);
 
                 if (gated.Kind == LinkTargetKind.Media)
                     return await MediaDescriptorAsync(resource, expiresAt, hasPassword, objects, mediaMeta, content.Value, mediaOptions.Value, grants, ct);
@@ -147,15 +149,23 @@ public static class PublicContentEndpoints
     /// <summary>File descriptor (ARC-019 section 11.1): the card data and never a URL of any kind. <c>burnAfterDownload</c> tells the page to show the
     /// once-only notice; the ticket exists only behind the button's POST. `sha256` is the hex of the stored bytes (set by the scan task, so present once Clean).</summary>
     private static async Task<IResult> FileDescriptorAsync(
-        ResourceDescriptor resource, DateTime expiresAt, bool hasPassword, IStoredObjectSummaries objects, ContentOptions content, CancellationToken ct)
+        ResourceDescriptor resource, DateTime expiresAt, bool hasPassword, IStoredObjectSummaries objects, ContentOptions content,
+        IDownloadGrants grants, CancellationToken ct)
     {
         var summary = (await objects.GetAsync([resource.ResourceId], ct)).GetValueOrDefault(resource.ResourceId);
         if (summary is null || summary.Scan != ScanVerdict.Clean)
             return ApiResults.Problem(Error.Of(ErrorCodes.Gone, "This content is no longer available."));
         var mime = summary.DetectedMime ?? "application/octet-stream";
+        // Phase 2 viewers: an inline ticket on the original for a validated 3D, Lottie or audio file (never for a burn file, addendum §8.1.3).
+        string? inlineUrl = null;
+        if (summary.Viewer is not null && !resource.BurnAfterDownload)
+        {
+            var ticket = await grants.MintAsync(new MintTicketRequest(resource.ResourceId, DeliveryPurpose.Inline, null), ct);
+            if (ticket.IsSuccess) inlineUrl = ticket.Value!.Url;
+        }
         return Results.Ok(new ContentDescriptorDto("file", "ready", resource.Title, summary.SizeBytes, mime, summary.DisplayName, expiresAt,
-            resource.BurnAfterDownload, hasPassword, null, null, null, null, null,
-            new FileBlockDto(mime, summary.SizeBytes, summary.Sha256, content.MaxResponseBytes)));
+            resource.BurnAfterDownload, hasPassword, inlineUrl, null, null, null, null,
+            new FileBlockDto(mime, summary.SizeBytes, summary.Sha256, content.MaxResponseBytes, resource.BurnAfterDownload ? null : summary.Viewer)));
     }
 
     /// <summary>Media descriptor (ARC-011 section 9, S1): the original behind an Inline ticket, the detected type, and from S3 the probe result and the thumbnail ticket.

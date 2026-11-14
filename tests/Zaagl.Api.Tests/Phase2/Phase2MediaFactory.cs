@@ -59,7 +59,7 @@ public static class MediaHelper
 
     /// <summary>tus create, one PATCH, /complete. Returns resource id, code and the link key (null when public).</summary>
     public static async Task<(Guid ResourceId, string Code, string? LinkKey)> UploadAsync(HttpClient client, byte[] data, string filename = "pic.png",
-        string kind = "media", bool isPublic = false, DateTime? expiresAt = null)
+        string kind = "media", bool isPublic = false, DateTime? expiresAt = null, bool burn = false)
     {
         var create = new HttpRequestMessage(HttpMethod.Post, "/api/uploads");
         create.Headers.Add("Tus-Resumable", "1.0.0");
@@ -78,7 +78,7 @@ public static class MediaHelper
 
         var complete = new HttpRequestMessage(HttpMethod.Post, $"/api/uploads/{id}/complete")
         {
-            Content = JsonContent.Create(new { @public = isPublic, expiresAt }, options: TestPrincipals.Json),
+            Content = JsonContent.Create(new { @public = isPublic, expiresAt, burnAfterDownload = burn }, options: TestPrincipals.Json),
         };
         complete.Headers.Add("Idempotency-Key", "c-" + TestIps.UniqueSuffix());
         using var completed = await client.SendAsync(complete);
@@ -110,9 +110,9 @@ public static class MediaHelper
 
     /// <summary>Upload, scan, then the media task when one was queued. The image is ready afterwards.</summary>
     public static async Task<(Guid ResourceId, string Code, string? LinkKey)> ReadyAsync(FilesApiFactory api, HttpClient client, byte[] data,
-        string filename = "pic.png", string kind = "media", bool isPublic = false, DateTime? expiresAt = null)
+        string filename = "pic.png", string kind = "media", bool isPublic = false, DateTime? expiresAt = null, bool burn = false)
     {
-        var up = await UploadAsync(client, data, filename, kind, isPublic, expiresAt);
+        var up = await UploadAsync(client, data, filename, kind, isPublic, expiresAt, burn);
         await RunTaskAsync(api, $"scan:{up.ResourceId}");
         if (await HasOpenTaskAsync(api, $"media-preview:{up.ResourceId}")) await RunTaskAsync(api, $"media-preview:{up.ResourceId}");
         return up;

@@ -8,7 +8,7 @@ namespace Zaagl.Modules.Resources.Infrastructure.Migrations
     /// Phase 2 (docs/phase2/README.md): widens <c>ck_resources_kind</c> to the four Phase 2 tool kinds (secret 4, capsule 5, compare 6,
     /// approval 7). Expand-only (spec MUST NOT #32): every existing row already satisfies the wider check. The new constraint is
     /// added NOT VALID (no table scan under ACCESS EXCLUSIVE) inside the transaction that drops the old one, so no window exists
-    /// without a check; VALIDATE runs on its own afterwards and takes only SHARE UPDATE EXCLUSIVE (reads and writes continue).
+    /// without a check; the next migration (Validate*) runs VALIDATE on its own, outside any transaction, taking only SHARE UPDATE EXCLUSIVE.
     /// </summary>
     public partial class WidenResourceKindForPhase2Tools : Migration
     {
@@ -20,7 +20,6 @@ namespace Zaagl.Modules.Resources.Infrastructure.Migrations
                 ALTER TABLE resources.resources DROP CONSTRAINT IF EXISTS ck_resources_kind;
                 ALTER TABLE resources.resources ADD CONSTRAINT ck_resources_kind CHECK (kind IN (1, 2, 3, 4, 5, 6, 7)) NOT VALID;
                 """);
-            migrationBuilder.Sql("ALTER TABLE resources.resources VALIDATE CONSTRAINT ck_resources_kind;", suppressTransaction: true);
         }
 
         /// <summary>Local development only (expand-only in every shared environment).</summary>

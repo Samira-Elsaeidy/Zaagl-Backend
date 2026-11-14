@@ -64,7 +64,9 @@ public sealed record ResourceDto(
     string? LinkKey = null,
     ScanDto? Scan = null,
     MediaBlockDto? Media = null,
-    ResourceFileBlockDto? File = null);
+    ResourceFileBlockDto? File = null,
+    /// <summary>Phase 2: <c>model3d</c>, <c>lottie</c> or <c>audio</c> when the file was validated for a browser viewer.</summary>
+    string? Viewer = null);
 
 public sealed record ResourceStatusDto(string State, string ProcessingStatus, string? RejectedReason, IReadOnlyList<MediaDerivativeDto> Derivatives);
 
@@ -276,7 +278,8 @@ public static class ResourcesEndpoints
             r.ResourceId, Lower(r.Kind), r.Title, code, $"{baseUrl.TrimEnd('/')}/{code}", Lower(owned.State), Lower(r.Processing),
             isFile ? stored?.DisplayName : null, isFile ? stored?.DetectedMime : null, thumbnailUrl,
             r.SizeBytes, owned.Link?.ExpiresAt ?? r.ExpiresAt, owned.Link?.PurgeAfter ?? r.PurgeAfter, r.BurnAfterDownload, owned.IsPublic,
-            r.DownloadCount, r.CreatedAt, r.RejectedReason, BurnClaimedAt: r.BurnClaimedAt); // S2: both also in the list summary
+            r.DownloadCount, r.CreatedAt, r.RejectedReason, BurnClaimedAt: r.BurnClaimedAt, // S2: both also in the list summary
+            Viewer: isFile ? stored?.Viewer : null);
         // The list carries the media block only once the probe ran (dimensions and the thumbnail for the library); the detail always has it.
         if (!detail) return media is not null && r.Kind == ResourceKind.Media && stored?.DetectedMime is { } listMime ? dto with { Media = MediaBlock(listMime, media, thumbnailUrl) } : dto;
         return dto with

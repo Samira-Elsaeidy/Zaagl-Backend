@@ -50,6 +50,8 @@ public sealed class StorageObjectRow
     public string? ScanEngine { get; set; }
     public DateTime? ScannedAt { get; set; }
     public DateTime CreatedAt { get; set; }
+    /// <summary>Phase 2: the browser viewer validated for this object (<see cref="Application.ViewerKind"/>), set by the scan task; null = none.</summary>
+    public short? Viewer { get; set; }
 }
 
 public sealed class BlockedHashRow

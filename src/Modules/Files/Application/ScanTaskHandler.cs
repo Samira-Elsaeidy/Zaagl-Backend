@@ -34,7 +34,8 @@ public sealed class ScanTaskHandler(
     [FromKeyedServices(FilesDbContext.Schema)] TaskQueue tasks,
     TimeProvider time,
     IOptions<ScanOptions> scanOptions,
-    ILogger<ScanTaskHandler> logger) : ITaskHandler<FilesDbContext>
+    ILogger<ScanTaskHandler> logger,
+    IOptions<ViewerOptions>? viewerOptions = null) : ITaskHandler<FilesDbContext>
 {
     public const string TaskKind = "scan";
     private const int HeadBytes = MediaSniffer.HeadBytes;
@@ -116,10 +117,28 @@ public sealed class ScanTaskHandler(
                 }
                 throw new InvalidOperationException($"The stored file has {counted} bytes, the upload declared {obj.SizeBytes}.");
             }
+            // Phase 2 viewer candidates (3D, Lottie, audio): the whole file is validated before anything else (docs/phase2/
+            // viewers-3d-lottie-audio.md). External references or Lottie expressions reject the upload; a candidate that is not
+            // what its head suggested loses its type and is served as a plain octet-stream attachment.
+            short? viewer = null;
+            if (ViewerValidator.IsCandidate(detected?.Mime))
+            {
+                var verdict = await ViewerValidator.ValidateAsync(storage.ResolvePath(currentKey), detected!.Mime, counted,
+                    viewerOptions?.Value.MaxJsonBytes ?? new ViewerOptions().MaxJsonBytes, ct);
+                if (verdict.Reject)
+                {
+                    await DeleteTempAsync(tempKey, ct);
+                    await resources.MarkRejectedAsync(resourceId, RejectedReasons.UnsafeContent, ct);
+                    return;
+                }
+                if (!verdict.KeepType) detected = null;
+                viewer = verdict.Viewer is { } v ? (short)v : null;
+            }
             await db.StorageObjects.Where(o => o.Id == obj.Id).ExecuteUpdateAsync(s => s
                 .SetProperty(o => o.Sha256, sha256)
                 .SetProperty(o => o.DetectedMime, detected?.Mime)
-                .SetProperty(o => o.DetectedExt, detected?.Extension), ct);
+                .SetProperty(o => o.DetectedExt, detected?.Extension)
+                .SetProperty(o => o.Viewer, viewer), ct);
         }
 
         // 4. Category (media allowlist for Media) and the blocked-hash list.
@@ -229,7 +248,8 @@ public sealed class ScanTaskHandler(
             }
             total += read;
         }
-        return (hash.GetHashAndReset(), MediaSniffer.Detect(head.AsSpan(0, headLength)), total);
+        var headSpan = head.AsSpan(0, headLength);
+        return (hash.GetHashAndReset(), MediaSniffer.Detect(headSpan) ?? MediaSniffer.DetectViewerType(headSpan), total);
     }
 
     /// <summary>6b: the bytes move to quarantine (rename, id kept), the row follows, then Resources is told.</summary>

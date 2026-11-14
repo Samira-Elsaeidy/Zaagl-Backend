@@ -42,6 +42,9 @@ public static class RejectedReasons
     /// <summary>Stage 2 (BE-008): a create flow failed after the resource was registered (for example an alias
     /// conflict). The resource never gets a link, so it stays unreachable; the reservation is released.</summary>
     public const string CreateFailed = "create-failed";
+    /// <summary>Phase 2 (docs/phase2/viewers-3d-lottie-audio.md): a 3D or Lottie file that references external content or carries
+    /// Lottie expressions (script). Never served.</summary>
+    public const string UnsafeContent = "unsafe-content";
 }
 
 /// <summary>

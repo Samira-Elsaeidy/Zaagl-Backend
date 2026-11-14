@@ -35,7 +35,8 @@ public sealed class StoredObjects(
         var rows = await db.StorageObjects.AsNoTracking().Where(o => resourceIds.Contains(o.ResourceId)).ToListAsync(ct);
         return rows.ToDictionary(o => o.ResourceId, o => new StoredObjectSummary(
             o.ResourceId, o.DisplayName, o.DetectedMime, o.SizeBytes, o.Sha256 is null ? null : Convert.ToHexStringLower(o.Sha256),
-            o.ScanStatus, o.ScannedAt is null ? null : DateTime.SpecifyKind(o.ScannedAt.Value, DateTimeKind.Utc)));
+            o.ScanStatus, o.ScannedAt is null ? null : DateTime.SpecifyKind(o.ScannedAt.Value, DateTimeKind.Utc),
+            o.Viewer is { } v ? ((ViewerKind)v).ToString().ToLowerInvariant() : null));
     }
 
     /// <summary>Queues byte deletion as a <c>delete-bytes</c> task (dedupe per object). Idempotent.</summary>

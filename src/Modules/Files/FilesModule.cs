@@ -34,6 +34,7 @@ public static class FilesModule
         services.Configure<ScanOptions>(configuration.GetSection(ScanOptions.Section));
         services.Configure<ClamAvOptions>(configuration.GetSection(ClamAvOptions.Section));
         services.Configure<MediaOptions>(configuration.GetSection(MediaOptions.Section));
+        services.Configure<ViewerOptions>(configuration.GetSection(ViewerOptions.Section));
         services.AddSingleton<LocalObjectStorage>();
         services.AddSingleton<IObjectStorage>(sp => sp.GetRequiredService<LocalObjectStorage>());
         services.AddSingleton<TempUploadFiles>();

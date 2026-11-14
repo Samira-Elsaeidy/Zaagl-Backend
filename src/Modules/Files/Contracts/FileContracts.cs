@@ -159,7 +159,8 @@ public sealed record StoredObjectSummary(
     long SizeBytes,
     string? Sha256,
     ScanVerdict Scan,
-    DateTime? ScannedAt);
+    DateTime? ScannedAt,
+    string? Viewer = null);
 
 /// <summary>Batch read for list pages; ids without an object are simply absent from the result.</summary>
 public interface IStoredObjectSummaries

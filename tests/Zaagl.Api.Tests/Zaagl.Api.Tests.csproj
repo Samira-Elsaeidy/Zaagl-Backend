@@ -31,6 +31,8 @@
     <!-- Test database isolation: never the dev zaagl database (tests/Shared/TestDatabase.cs). -->
     <Compile Include="../Shared/TestDatabase.cs" Link="Shared/TestDatabase.cs" />
     <Compile Include="../Shared/TestDatabaseMigrator.cs" Link="Shared/TestDatabaseMigrator.cs" />
+    <!-- Phase 2: viewer test file builders shared with the Files unit tests. -->
+    <Compile Include="../Zaagl.Files.Tests/ViewerSamples.cs" Link="Phase2/ViewerSamples.cs" />
   </ItemGroup>
 
 </Project>

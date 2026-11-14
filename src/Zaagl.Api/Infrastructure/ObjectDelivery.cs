@@ -97,10 +97,14 @@ public sealed partial class ObjectDelivery(
             if (consumed.Outcome != DeliveryOutcome.Allowed) return Refusal(consumed.Outcome, http);
         }
 
-        var name = serveName ?? (await summaries.GetAsync([resource.ResourceId], ct)).GetValueOrDefault(resource.ResourceId)?.DisplayName ?? "file";
+        var summary = (await summaries.GetAsync([resource.ResourceId], ct)).GetValueOrDefault(resource.ResourceId);
+        var name = serveName ?? summary?.DisplayName ?? "file";
         var mime = serveMime;
         var isInlinePurpose = decision.Purpose is DeliveryPurpose.Inline or DeliveryPurpose.Preview;
-        var inline = isInlinePurpose && o.InlineMimeAllowlist.Contains(mime, StringComparer.OrdinalIgnoreCase);
+        // Phase 2 (docs/phase2/viewers-3d-lottie-audio.md): a validated viewer type (3D, Lottie, audio) may open inline for an Inline
+        // ticket of the original; nothing of these types can execute, and the sandbox CSP and nosniff still apply.
+        var inline = isInlinePurpose && (o.InlineMimeAllowlist.Contains(mime, StringComparer.OrdinalIgnoreCase)
+            || (decision.Purpose == DeliveryPurpose.Inline && serveName is null && summary?.Viewer is not null && ViewerInlineTypes.Contains(mime)));
         var disposition = ContentDispositionFor(inline, name);
         var etag = serveEtag;
 
@@ -176,6 +180,13 @@ public sealed partial class ObjectDelivery(
 
     /// <summary>RFC 6266 / 8187: <c>attachment; filename="&lt;ascii&gt;"; filename*=UTF-8''&lt;pct&gt;</c>, the ascii part at most 150 bytes
     /// with every non-ASCII, control and <c>" \ / ;</c> character replaced by an underscore (ARC-008 section 7).</summary>
+    /// <summary>Detected types that may open inline once the scan task validated them for a viewer (storage_objects.viewer set).</summary>
+    public static readonly IReadOnlySet<string> ViewerInlineTypes = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+    {
+        "model/gltf-binary", "model/gltf+json", "application/json",
+        "audio/mpeg", "audio/wav", "audio/flac", "audio/ogg", "audio/aac", "audio/mp4",
+    };
+
     internal static string ContentDispositionFor(bool inline, string displayName)
     {
         var ascii = new StringBuilder();
