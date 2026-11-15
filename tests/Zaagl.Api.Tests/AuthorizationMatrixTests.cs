@@ -303,6 +303,13 @@ public static class AuthzOracle
         ["POST /api/public/drops/{code}/uploads/{id:guid}/complete"] = new(Access.Anyone, AllowedMayBe404: true, Execute: false, Note: "drop token; DropPortalTests"),
         ["GET /drop/{slug}"] = new(Access.Anyone, Execute: false, Note: "short host; DropPortalTests"),
         ["HEAD /drop/{slug}"] = new(Access.Anyone, Execute: false, Note: "short host; DropPortalTests"),
+        // Phase 2 E2.3 clipboard tables: ClipboardTableTests.
+        ["POST /api/tables/"] = new(Access.ScopedOrGuest, "tools:write", Execute: false, Note: "guest with CAPTCHA guest-table, failed credential 401; ClipboardTableTests"),
+        ["GET /api/tables/{id:guid}"] = new(Access.Scoped, "resources:read", Execute: false, Note: "owner, other user 404; ClipboardTableTests"),
+        ["GET /api/tables/{id:guid}/export"] = new(Access.Scoped, "resources:read", Execute: false, Note: "owner, other user 404; ClipboardTableTests"),
+        ["DELETE /api/tables/{id:guid}"] = new(Access.Scoped, "tools:write", Execute: false, Note: "owner, other user 404; ClipboardTableTests"),
+        ["GET /api/public/tables/{code}"] = new(Access.Anyone, AllowedMayBe404: true, Execute: false, Note: "link key gate; ClipboardTableTests"),
+        ["GET /api/public/tables/{code}/export"] = new(Access.Anyone, AllowedMayBe404: true, Execute: false, Note: "link key gate; ClipboardTableTests"),
         ["POST /api/vault/secrets/"] = new(Access.ScopedOrGuest, "tools:write", Execute: false, Note: "guest with CAPTCHA, failed credential 401, scope; VaultApiTests"),
         ["GET /api/vault/secrets/"] = new(Access.Scoped, "resources:read", Execute: false, Note: "VaultApiTests"),
         ["GET /api/vault/secrets/{id:guid}"] = new(Access.Scoped, "resources:read", Execute: false, Note: "owner, other user 404; VaultApiTests"),

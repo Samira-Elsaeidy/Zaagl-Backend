@@ -417,6 +417,58 @@ namespace Zaagl.Modules.Collaboration.Infrastructure.Migrations
                         });
                 });
 
+            modelBuilder.Entity("Zaagl.Modules.Collaboration.Domain.TableRow", b =>
+                {
+                    b.Property<Guid>("ResourceId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("resource_id");
+
+                    b.Property<int>("ColumnCount")
+                        .HasColumnType("integer")
+                        .HasColumnName("column_count");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at");
+
+                    b.Property<string>("Document")
+                        .IsRequired()
+                        .HasColumnType("jsonb")
+                        .HasColumnName("document");
+
+                    b.Property<int>("DocumentBytes")
+                        .HasColumnType("integer")
+                        .HasColumnName("document_bytes");
+
+                    b.Property<Guid?>("OwnerId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("owner_id");
+
+                    b.Property<int>("RowCount")
+                        .HasColumnType("integer")
+                        .HasColumnName("row_count");
+
+                    b.Property<string>("SourceFormat")
+                        .IsRequired()
+                        .HasMaxLength(4)
+                        .HasColumnType("character varying(4)")
+                        .HasColumnName("source_format");
+
+                    b.HasKey("ResourceId")
+                        .HasName("pk_tables");
+
+                    b.HasIndex("OwnerId", "CreatedAt")
+                        .HasDatabaseName("ix_tables_owner")
+                        .HasFilter("owner_id IS NOT NULL");
+
+                    b.ToTable("tables", "collab", t =>
+                        {
+                            t.HasCheckConstraint("ck_tables_format", "source_format IN ('json', 'csv')");
+
+                            t.HasCheckConstraint("ck_tables_size", "column_count BETWEEN 1 AND 500 AND row_count BETWEEN 0 AND 200000 AND document_bytes BETWEEN 2 AND 33554432");
+                        });
+                });
+
             modelBuilder.Entity("Zaagl.Modules.Collaboration.Domain.CommentRow", b =>
                 {
                     b.HasOne("Zaagl.Modules.Collaboration.Domain.CommentSettingsRow", null)

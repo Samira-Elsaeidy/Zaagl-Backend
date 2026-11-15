@@ -110,6 +110,11 @@ public sealed class ApiScopeTests(RealApiFactory real) : IAsyncLifetime, IClassF
         ["DELETE /api/public/drops/{code}/uploads/{id:guid}"] = "uploader tus termination, gate plus drop token",
         ["POST /api/public/drops/{code}/uploads/{id:guid}/complete"] = "uploader finishes the upload, gate plus drop token",
         ["GET /drop/{slug}"] = "short-host redirect of a drop portal",
+        // Phase 2 E2.3 clipboard tables: guest-capable create (tools:write when authenticated, failed credentials 401; ClipboardTableTests),
+        // visitor reads gated by key and grant.
+        ["POST /api/tables/"] = "guest table creation",
+        ["GET /api/public/tables/{code}"] = "visitor read, gate: key and grant",
+        ["GET /api/public/tables/{code}/export"] = "visitor export as data, gate: key and grant",
         ["HEAD /drop/{slug}"] = "short-host redirect of a drop portal",
         ["GET /hook/{token}"] = "webhook ingest, short host, token",
         ["HEAD /hook/{token}"] = "webhook ingest, short host, token",
@@ -154,6 +159,7 @@ public sealed class ApiScopeTests(RealApiFactory real) : IAsyncLifetime, IClassF
                              // Phase 2 E2.3
                              typeof(Zaagl.Modules.Collaboration.Application.DropPortalService), typeof(Zaagl.Modules.Files.Application.UploadService),
                              typeof(Zaagl.Modules.Files.Infrastructure.DiskAdmission), typeof(Zaagl.Modules.Identity.Contracts.IOwnerNotices),
+                             typeof(Zaagl.Modules.Collaboration.Application.TableService),
                          })
                     services.AddPlaceholder(type);
             },
@@ -168,6 +174,7 @@ public sealed class ApiScopeTests(RealApiFactory real) : IAsyncLifetime, IClassF
                 app.MapWebhooks();
                 app.MapCollaboration();
                 app.MapDrops();
+                app.MapTables();
             });
         _client = _host.GetTestClient();
     }

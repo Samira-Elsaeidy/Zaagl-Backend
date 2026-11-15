@@ -19,6 +19,49 @@ namespace Zaagl.Api.Endpoints;
 /// </summary>
 public static class ToolActors
 {
+    /// <summary>
+    /// Phase 2 E2.3: like <see cref="ResolveAsync"/>, but a guest is admitted through the admin control panel for
+    /// <paramref name="feature"/> (pause and the CAPTCHA toggle, <see cref="GuestGate"/>, CAPTCHA action = the feature name) and the
+    /// panel's run-time limits (brakes and PD-14 counters), exactly like guest snippets and uploads.
+    /// </summary>
+    public static async Task<(ToolActor? Actor, IResult? Refusal)> ResolveWithPanelAsync(
+        HttpContext http, ClaimsPrincipal user, string feature, CancellationToken ct)
+    {
+        if (user.Identity?.IsAuthenticated == true)
+            return (new ToolActor(user.GetUserId(), null, SnippetsEndpoints.CreatedViaFor(user)), null);
+
+        var services = http.RequestServices;
+        var (settings, refusal) = await GuestGate.AdmitAsync(http, feature, ct);
+        if (refusal is not null) return (null, refusal);
+        var limits = settings!.Limits;
+        var partition = IpPartition.Key(http.Connection.RemoteIpAddress);
+        var limiter = services.GetRequiredService<GuestRateLimiter>();
+        if (!limiter.TryGlobalCeiling(partition, limits.GlobalPerHour))
+            return (null, ApiResults.Problem(new Error(ErrorCodes.GuestCreationPaused, "Guest creation is temporarily paused for this network. Try again shortly.")));
+        if (!limiter.TryPerMinute(partition, limits.PerMinute))
+            return (null, ApiResults.Problem(Error.TooManyRequests("Too many requests. Try again in a minute.")));
+
+        var guestKey = services.GetRequiredService<GuestKeyProvider>();
+        var linksDb = services.GetRequiredService<LinksDbContext>();
+        var clock = services.GetRequiredService<TimeProvider>();
+        var counterKey = GuestContentQuota.PrefixKey(guestKey.Key, partition);
+        DateTime consumedAt = default;
+        var admitted = false;
+        return (new ToolActor(null, GuestIdentity.DeriveKey(guestKey.Key, partition), Modules.Resources.Contracts.CreatedVia.Web,
+            async token =>
+            {
+                consumedAt = clock.GetUtcNow().UtcDateTime;
+                admitted = await GuestContentQuota.TryConsumeAsync(linksDb, counterKey, limits.ContentPerHour, limits.ContentPerDay, consumedAt, token);
+                return admitted;
+            },
+            async () =>
+            {
+                if (!admitted) return;
+                admitted = false;
+                await GuestContentQuota.RefundAsync(linksDb, counterKey, consumedAt);
+            }), null);
+    }
+
     public static async Task<(ToolActor? Actor, IResult? Refusal)> ResolveAsync(
         HttpContext http, ClaimsPrincipal user, string captchaAction, CancellationToken ct)
     {

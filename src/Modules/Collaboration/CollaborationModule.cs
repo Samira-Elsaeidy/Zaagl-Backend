@@ -31,6 +31,7 @@ public static class CollaborationModule
         services.AddScoped<IResourceKindHandler, ComparisonKindHandler>();
         services.AddScoped<IResourceKindHandler, ApprovalKindHandler>();
         services.AddScoped<IResourceKindHandler, DropPortalKindHandler>();
+        services.AddScoped<IResourceKindHandler, TableKindHandler>();
         services.AddScoped<IResourceKindHandler>(sp => new DropFilePurgeHandler(sp.GetRequiredService<CollabDbContext>(), ResourceKind.File));
         services.AddScoped<IResourceKindHandler>(sp => new DropFilePurgeHandler(sp.GetRequiredService<CollabDbContext>(), ResourceKind.Media));
         foreach (var kind in CommentService.Targets)
@@ -44,6 +45,7 @@ public static class CollaborationModule
         services.AddScoped<CommentService>();
         services.AddScoped<ApprovalService>();
         services.AddScoped<DropPortalService>();
+        services.AddScoped<TableService>();
         services.AddSingleton<IModuleMigrator>(sp =>
             new ModuleMigrator<CollabDbContext>("collab", sp.GetRequiredService<IServiceScopeFactory>()));
         return services;

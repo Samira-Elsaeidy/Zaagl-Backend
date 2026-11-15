@@ -165,6 +165,62 @@ public sealed record DropFileDto(
 /// <summary>What an uploader learns after <c>/complete</c>: the file was received (never a link to it).</summary>
 public sealed record DropReceiptDto(Guid UploadId, string Status, string? FileName, long SizeBytes);
 
+// ---- Clipboard tables (E2.3, docs/phase2/clipboard-tables.md) --------------------------------------------------------------------
+
+/// <param name="Format"><c>auto</c> (default: JSON when the text starts with <c>[</c> or <c>{</c>), <c>json</c> or <c>csv</c>.</param>
+/// <param name="Delimiter">CSV only: <c>,</c> <c>;</c> <c>tab</c> or <c>|</c>; detected from the first line when absent.</param>
+/// <param name="Header">CSV only: the first row holds the column names (default true).</param>
+public sealed record CreateTableCommand(
+    string? Text,
+    string? Format,
+    string? Delimiter,
+    bool? Header,
+    string? Title,
+    DateTime? ExpiresAt,
+    string? Password,
+    string? CustomSlug,
+    bool Public);
+
+/// <param name="Type"><c>integer</c>, <c>number</c>, <c>boolean</c>, <c>date</c>, <c>datetime</c>, <c>string</c>, <c>json</c> (nested value kept as
+/// JSON text) or <c>empty</c>.</param>
+public sealed record TableColumnDto(string Name, string Type);
+
+/// <summary>Public descriptor: one page of rows (<paramref name="Offset"/>, <paramref name="Count"/> of <paramref name="RowCount"/>). Every
+/// cell is a JSON string, number, boolean or null: data, never markup or a formula.</summary>
+public sealed record TableDescriptorDto(
+    string Kind,
+    string? Title,
+    DateTime ExpiresAt,
+    bool HasPassword,
+    string SourceFormat,
+    int RowCount,
+    IReadOnlyList<TableColumnDto> Columns,
+    int Offset,
+    int Count,
+    System.Text.Json.JsonElement Rows);
+
+public sealed record OwnerTableDto(
+    Guid Id,
+    string Code,
+    string ShortUrl,
+    string? Title,
+    string State,
+    DateTime ExpiresAt,
+    bool IsPublic,
+    bool HasPassword,
+    string SourceFormat,
+    int RowCount,
+    IReadOnlyList<TableColumnDto> Columns,
+    int Offset,
+    int Count,
+    System.Text.Json.JsonElement Rows,
+    int StoredBytes,
+    DateTime CreatedAt);
+
+/// <summary>A download as data: the browser saves <paramref name="Content"/> under <paramref name="FileName"/> (no bytes are served from
+/// the API origin as a document).</summary>
+public sealed record TableExportDto(string FileName, string Mime, string Content);
+
 // ---- Watermark and approval gate ------------------------------------------------------------------------------------------
 
 /// <param name="WatermarkText">Burned into the preview (1-60 characters); default "DRAFT".</param>

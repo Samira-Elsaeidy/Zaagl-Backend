@@ -83,6 +83,21 @@ public sealed class DropFileRow
     public DateTime ReceivedAt { get; set; }
 }
 
+/// <summary><c>collab.tables</c> (docs/phase2/clipboard-tables.md): a normalised table parsed from pasted JSON or CSV. The document is
+/// <c>{"columns":[{"name","type"}],"rows":[[cell,…],…]}</c> with scalar cells only. Guests may own one (owner_id null).</summary>
+public sealed class TableRow
+{
+    public Guid ResourceId { get; set; }
+    public Guid? OwnerId { get; set; }
+    /// <summary><c>json</c> or <c>csv</c>.</summary>
+    public string SourceFormat { get; set; } = "";
+    public int ColumnCount { get; set; }
+    public int RowCount { get; set; }
+    public int DocumentBytes { get; set; }
+    public string Document { get; set; } = "{}";
+    public DateTime CreatedAt { get; set; }
+}
+
 /// <summary><c>collab.approvals</c> (docs/phase2/approval-gate.md): a draft image served watermarked until the link holder approves (or,
 /// later, pays); then the clean original is released. <see cref="State"/> follows <see cref="Application.ApprovalStateMachine"/>.</summary>
 public sealed class ApprovalRow

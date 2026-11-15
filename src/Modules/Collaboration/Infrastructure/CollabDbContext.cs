@@ -15,6 +15,7 @@ public sealed class CollabDbContext(DbContextOptions<CollabDbContext> options) :
     public DbSet<ApprovalRow> Approvals => Set<ApprovalRow>();
     public DbSet<DropPortalRow> DropPortals => Set<DropPortalRow>();
     public DbSet<DropFileRow> DropFiles => Set<DropFileRow>();
+    public DbSet<TableRow> Tables => Set<TableRow>();
 
     protected override void OnModelCreating(ModelBuilder b)
     {
@@ -113,6 +114,20 @@ public sealed class CollabDbContext(DbContextOptions<CollabDbContext> options) :
             e.Property(x => x.Note).HasMaxLength(1000);
             e.HasIndex(x => new { x.PortalId, x.ReceivedAt }).HasDatabaseName("ix_drop_files_portal");
             e.HasIndex(x => x.UploadSessionId).IsUnique().HasDatabaseName("ux_drop_files_session");
+        });
+
+        b.Entity<TableRow>(e =>
+        {
+            e.ToTable("tables", t =>
+            {
+                t.HasCheckConstraint("ck_tables_format", "source_format IN ('json', 'csv')");
+                t.HasCheckConstraint("ck_tables_size", "column_count BETWEEN 1 AND 500 AND row_count BETWEEN 0 AND 200000 AND document_bytes BETWEEN 2 AND 33554432");
+            });
+            e.HasKey(x => x.ResourceId);
+            e.Property(x => x.ResourceId).ValueGeneratedNever();
+            e.Property(x => x.SourceFormat).HasMaxLength(4).IsRequired();
+            e.Property(x => x.Document).HasColumnType("jsonb").IsRequired();
+            e.HasIndex(x => new { x.OwnerId, x.CreatedAt }).HasFilter("owner_id IS NOT NULL").HasDatabaseName("ix_tables_owner");
         });
     }
 }
