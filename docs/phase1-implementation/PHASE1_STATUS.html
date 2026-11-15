@@ -102,9 +102,9 @@
     <tr><td>Guest snippet creation on the web</td><td class="s"><span class="tag todo">Not done</span> <span class="note">needs the CAPTCHA below</span></td></tr>
     <tr><td>CAPTCHA settings in an admin control panel (instead of requiring a Google API key)</td><td class="s"><span class="tag todo">Not done</span> <span class="note">new, from the head of tech</span></td></tr>
     <tr><td>Visitors seeing older versions</td><td class="s"><span class="tag block">Your decision</span></td></tr>
-    <tr><td>CLI Windows AOT build</td><td class="s"><span class="tag block">Moved to Phase 2</span></td></tr>
-    <tr><td>CLI Linux credential store, macOS check</td><td class="s"><span class="tag block">Moved to Phase 2</span></td></tr>
-    <tr><td>CLI build job in CI</td><td class="s"><span class="tag block">Moved to Phase 2</span></td></tr>
+    <tr><td>CLI Windows AOT build</td><td class="s"><span class="tag block">Moved to Phase 3</span></td></tr>
+    <tr><td>CLI Linux credential store, macOS check</td><td class="s"><span class="tag block">Moved to Phase 3</span></td></tr>
+    <tr><td>CLI build job in CI</td><td class="s"><span class="tag block">Moved to Phase 3</span></td></tr>
   </table></div>
 
   <h2>E1.2 Images and media</h2>
@@ -142,30 +142,30 @@
   </table></div>
 
   <h2>Postponed from Phase 1 to Phase 2</h2>
-  <p class="note">Decision from the head of tech, 2026-11-11. On 2026-11-12 the product owner moved the desktop tray app further, to Phase 3 (Windows, macOS and Linux). The CLI items stay in Phase 2.</p>
+  <p class="note">Decision from the head of tech, 2026-11-11. On 2026-11-12 the product owner moved the desktop tray app further, to Phase 3 (Windows, macOS and Linux). On 2026-11-15 the product owner moved the CLI items to Phase 3 as well: all app work (desktop tray and CLI) is now Phase 3.</p>
   <div class="table-wrap"><table>
     <tr><th>Item</th><th>Status</th></tr>
-    <tr><td>CLI Windows AOT build</td><td class="s"><span class="tag block">Phase 2</span></td></tr>
-    <tr><td>CLI Linux credential store and macOS check</td><td class="s"><span class="tag block">Phase 2</span></td></tr>
-    <tr><td>CLI build job in CI</td><td class="s"><span class="tag block">Phase 2</span></td></tr>
+    <tr><td>CLI Windows AOT build</td><td class="s"><span class="tag block">Phase 3</span> <span class="note">moved from Phase 2 on 2026-11-15</span></td></tr>
+    <tr><td>CLI Linux credential store and macOS check</td><td class="s"><span class="tag block">Phase 3</span> <span class="note">moved from Phase 2 on 2026-11-15</span></td></tr>
+    <tr><td>CLI build job in CI</td><td class="s"><span class="tag block">Phase 3</span> <span class="note">moved from Phase 2 on 2026-11-15</span></td></tr>
     <tr><td>E1.4 Desktop tray app (tray, shortcut, clipboard, upload, signing) for Windows, macOS and Linux</td><td class="s"><span class="tag block">Phase 3</span> <span class="note">moved from Phase 2 on 2026-11-12</span></td></tr>
   </table></div>
 
-  <h2>Phase 2: Accelerators (not started)</h2>
-  <p class="note">From the PRD. The PRD says no phase starts until the previous one passes its exit gate.</p>
+  <h2>Phase 2: Accelerators (in progress)</h2>
+  <p class="note">From the PRD. Updated 2026-11-15: E2.1 and E2.2 backend built, tested and merged into phase1/stage-1 (local); web screens built in the current app style (final design pending). E2.3 backend built on branch phase2/backend-e23, not merged yet, no screens. Payments for the approval gate and the Pro plan tier are postponed to Phase 3.</p>
   <div class="table-wrap"><table>
     <tr><th>Feature and sub-feature</th><th>Status</th></tr>
-    <tr><td><strong>E2.1 Developer power tools</strong>: webhook and payload catcher (<code>zaa.gl/hook/…</code>)</td><td class="s"><span class="tag todo">Not started</span></td></tr>
-    <tr><td>E2.1 Zero-knowledge <code>.env</code> secret vault (client-side encrypted, one view)</td><td class="s"><span class="tag todo">Not started</span></td></tr>
-    <tr><td>E2.1 Bug capsules (screen clip with console errors and network logs)</td><td class="s"><span class="tag todo">Not started</span></td></tr>
-    <tr><td><strong>E2.2 Artist and designer tools</strong>: interactive before/after visual diff slider</td><td class="s"><span class="tag todo">Not started</span></td></tr>
-    <tr><td>E2.2 Colour palette, dimensions and pinned comments on shared artwork</td><td class="s"><span class="tag todo">Not started</span></td></tr>
-    <tr><td>E2.2 Browser sandboxes for 3D (.glb), Lottie and audio</td><td class="s"><span class="tag todo">Not started</span></td></tr>
-    <tr><td>E2.2 Watermark and client approval gate</td><td class="s"><span class="tag todo">Not started</span></td></tr>
-    <tr><td><strong>E2.3 Team productivity</strong>: “Reverse Pigeon” drop-off portals (<code>zaa.gl/drop/…</code>)</td><td class="s"><span class="tag todo">Not started</span></td></tr>
-    <tr><td>E2.3 Smart PII redaction on screenshots</td><td class="s"><span class="tag todo">Not started</span></td></tr>
-    <tr><td>E2.3 Voice-over micro-briefs</td><td class="s"><span class="tag todo">Not started</span></td></tr>
-    <tr><td>E2.3 Instant clipboard transformers (JSON or CSV to a readable table link)</td><td class="s"><span class="tag todo">Not started</span></td></tr>
+    <tr><td><strong>E2.1 Developer power tools</strong>: webhook and payload catcher (<code>zaa.gl/hook/…</code>)</td><td class="s"><span class="tag done">Backend built</span> <span class="note">backend + screens (/hooks)</span></td></tr>
+    <tr><td>E2.1 Zero-knowledge <code>.env</code> secret vault (client-side encrypted, one view)</td><td class="s"><span class="tag done">Backend built</span> <span class="note">backend + screens (/vault, /v/…); truly end-to-end encrypted</span></td></tr>
+    <tr><td>E2.1 Bug capsules (screen clip with console errors and network logs)</td><td class="s"><span class="tag done">Backend built</span> <span class="note">backend + screens (/capsules, /b/…)</span></td></tr>
+    <tr><td><strong>E2.2 Artist and designer tools</strong>: interactive before/after visual diff slider</td><td class="s"><span class="tag done">Backend built</span> <span class="note">backend + screens (/compare, /c/…)</span></td></tr>
+    <tr><td>E2.2 Colour palette, dimensions and pinned comments on shared artwork</td><td class="s"><span class="tag done">Backend built</span> <span class="note">backend + screens (Feedback tab)</span></td></tr>
+    <tr><td>E2.2 Browser sandboxes for 3D (.glb), Lottie and audio</td><td class="s"><span class="tag done">Backend built</span> <span class="note">backend + audio/video playback; 3D and Lottie in-browser preview not built yet</span></td></tr>
+    <tr><td>E2.2 Watermark and client approval gate</td><td class="s"><span class="tag done">Backend built</span> <span class="note">backend + screens (/reviews, /a/…); approval only, payment postponed to Phase 3</span></td></tr>
+    <tr><td><strong>E2.3 Team productivity</strong>: “Reverse Pigeon” drop-off portals (<code>zaa.gl/drop/…</code>)</td><td class="s"><span class="tag todo">Backend built, not merged</span> <span class="note">branch phase2/backend-e23; no screens yet</span></td></tr>
+    <tr><td>E2.3 Smart PII redaction on screenshots</td><td class="s"><span class="tag todo">Backend built, not merged</span> <span class="note">branch phase2/backend-e23; no screens yet</span></td></tr>
+    <tr><td>E2.3 Voice-over micro-briefs</td><td class="s"><span class="tag todo">Backend built, not merged</span> <span class="note">branch phase2/backend-e23; no screens yet</span></td></tr>
+    <tr><td>E2.3 Instant clipboard transformers (JSON or CSV to a readable table link)</td><td class="s"><span class="tag todo">Backend built, not merged</span> <span class="note">branch phase2/backend-e23; no screens yet</span></td></tr>
   </table></div>
 
   <h2>Phase 3: Enterprise and AI (not started)</h2>
@@ -179,6 +179,8 @@
     <tr><td>E3.3 Compliance audit logs</td><td class="s"><span class="tag todo">Not started</span></td></tr>
     <tr><td>E3.3 Custom corporate domains (<code>go.company.com</code>)</td><td class="s"><span class="tag todo">Not started</span></td></tr>
     <tr><td>E3.3 Connect your own AWS or Google Cloud storage</td><td class="s"><span class="tag todo">Not started</span></td></tr>
+    <tr><td>Payments for the approval gate (“approve or pay”): payment provider, pricing, paid release. The backend keeps a ready seam (<code>MarkPaidAsync</code>).</td><td class="s"><span class="tag todo">Not started</span> <span class="note">moved from Phase 2 on 2026-11-15</span></td></tr>
+    <tr><td>Pro plan tier (the PRD prices webhook catcher, A/B diff and watermarks under Pro). Phase 1/2 keep Free and Starter only.</td><td class="s"><span class="tag todo">Not started</span> <span class="note">moved from Phase 2 on 2026-11-15</span></td></tr>
     <tr><td><strong>E1.4 Desktop tray app</strong> for Windows, macOS and Linux (tray, global shortcut, clipboard share, file and screenshot upload, signing and notarisation, auto-update). Moved here from Phase 1 and Phase 2.</td><td class="s"><span class="tag todo">Not started</span></td></tr>
   </table></div>
 
@@ -219,7 +221,7 @@
     <tr><td>Password reset and confirmation emails (dev mail goes to the API log, not Mailpit)</td><td class="s"><span class="tag todo">Not working in dev</span></td></tr>
     <tr><td>Header icons white on white in light mode on public pages</td><td class="s"><span class="tag todo">Not fixed</span></td></tr>
     <tr><td>"Download original" 503 seen by the web tester on <code>usercontent.localhost</code></td><td class="s"><span class="tag block">Needs your local check</span></td></tr>
-    <tr><td>CAPTCHA admin control panel (last item; guest snippets on the web need it)</td><td class="s"><span class="tag todo">Not done</span> <span class="note">decide: Phase 1 end or Phase 2</span></td></tr>
+    <tr><td>CAPTCHA admin control panel (last item; guest snippets on the web need it)</td><td class="s"><span class="tag done">Built / done</span> <span class="note">built at Phase 1 end (2026-11-14): /admin/guest-controls, guest snippets on /paste/new</span></td></tr>
     <tr><td>Snippet click limit or burn option</td><td class="s"><span class="tag block">Your decision</span> <span class="note">backend has no field (PD-05, PD-10)</span></td></tr>
     <tr><td>SVG, video, PDF preview, EXIF and GPS option, older versions visible to visitors, Arabic native review</td><td class="s"><span class="tag block">Your decisions</span></td></tr>
     <tr><td>One-day soak: check expiry, purge and orphan cleanup jobs after the stack runs for a day</td><td class="s"><span class="tag todo">Not done</span></td></tr>
