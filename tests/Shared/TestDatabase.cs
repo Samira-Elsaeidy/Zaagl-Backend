@@ -36,15 +36,18 @@ public static class TestDatabase
                 Database = databaseName,
                 Username = "zaagl",
                 Password = "zaagl_dev",
-                // The dev server allows 100 connections and the dev stack holds ~15. Every WebApplicationFactory host
-                // builds its own Npgsql data sources (LinksModule registers instances the container never disposes), so their
-                // idle connections used to pile up across a suite run until PostgreSQL answered 53300 "too many clients"
-                // (and random 500s). Small pools whose idle connections are pruned within seconds keep the total bounded.
-                MaxPoolSize = 20,
-                ConnectionIdleLifetime = 5,
-                ConnectionPruningInterval = 1,
             }
             : new NpgsqlConnectionStringBuilder(raw);
+        // The dev server allows 100 connections and the dev stack holds ~15-20. Every WebApplicationFactory host builds its own
+        // Npgsql data sources (the redirect pool, the NOTIFY pool); they are owned by the host's container and disposed when the
+        // factory is (they used to be instance registrations the container never disposed, and their connections piled up across
+        // a suite run until PostgreSQL answered 53300 "too many clients"). Small pools whose idle connections are pruned within
+        // seconds keep the live hosts' total bounded too - also under ZAAGL_TEST_PG, unless it sets these values itself (Npgsql's
+        // defaults, 100 connections kept idle for 300 s, let one burst of parallel requests hold ~40 connections for minutes).
+        var defaults = new NpgsqlConnectionStringBuilder();
+        if (builder.MaxPoolSize == defaults.MaxPoolSize) builder.MaxPoolSize = 20;
+        if (builder.ConnectionIdleLifetime == defaults.ConnectionIdleLifetime) builder.ConnectionIdleLifetime = 5;
+        if (builder.ConnectionPruningInterval == defaults.ConnectionPruningInterval) builder.ConnectionPruningInterval = 1;
         // A project with its own database (the coordinator tests' "zaagl_test_coordinator") keeps its own one under the
         // override too: ZAAGL_TEST_PG=...;Database=zaagl_test_p2 gives it "zaagl_test_p2_coordinator", so a second checkout's run
         // never shares (and wipes) another run's allocator tables.

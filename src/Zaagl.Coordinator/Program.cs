@@ -23,8 +23,10 @@ var sinkDirectory = builder.Configuration["Allocator:Sink:LocalFileSystem:Direct
 
 builder.Services.AddSingleton<Zaagl.SharedKernel.Testing.IFailpoints, Zaagl.SharedKernel.Testing.NoOpFailpoints>();
 
+// Registered through a factory so the container owns the data source and disposes it (closing its pooled connections) when
+// the host stops; an instance registration is never disposed by the container.
 var dataSource = NpgsqlDataSource.Create(connectionString);
-builder.Services.AddSingleton(dataSource);
+builder.Services.AddSingleton(_ => dataSource);
 builder.Services.AddSingleton(new HwmStore(stateFilePath));
 builder.Services.AddSingleton<IAllocatorSink>(_ =>
 {
