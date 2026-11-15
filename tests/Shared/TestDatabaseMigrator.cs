@@ -30,7 +30,9 @@ public static class TestDatabaseMigrator
 
         using var lockConnection = new NpgsqlConnection(new NpgsqlConnectionStringBuilder(cs) { Pooling = false }.ConnectionString);
         lockConnection.Open();
-        using (var take = new NpgsqlCommand($"SELECT pg_advisory_lock({MigrationLockKey})", lockConnection))
+        // No command timeout: another test process may hold the lock while it applies a batch of new migrations (the first run after a
+        // merge took longer than Npgsql's default 30 s, and every test of the waiting project failed with "Timeout during reading attempt").
+        using (var take = new NpgsqlCommand($"SELECT pg_advisory_lock({MigrationLockKey})", lockConnection) { CommandTimeout = 0 })
             take.ExecuteNonQuery();
         try
         {
