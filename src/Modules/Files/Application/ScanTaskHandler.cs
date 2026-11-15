@@ -249,8 +249,15 @@ public sealed class ScanTaskHandler(
             total += read;
         }
         var headSpan = head.AsSpan(0, headLength);
-        return (hash.GetHashAndReset(), MediaSniffer.Detect(headSpan) ?? MediaSniffer.DetectViewerType(headSpan), total);
+        // Phase 2 E2.3 (docs/phase2/README.md known gap 5, fixed): the document types /complete detects (PDF, ZIP, GZip, 7z) are kept
+        // instead of being reset to "unknown"; they are still served as attachments (never inline).
+        return (hash.GetHashAndReset(), MediaSniffer.Detect(headSpan) ?? MediaSniffer.DetectViewerType(headSpan) ?? DocumentType(headSpan), total);
     }
+
+    private static DetectedType? DocumentType(ReadOnlySpan<byte> head) =>
+        FileTypePolicy.Classify(head) is { Class: FileClass.Other, Type: { Mime: "application/pdf" or "application/zip" or "application/gzip" or "application/x-7z-compressed" } type }
+            ? type
+            : null;
 
     /// <summary>6b: the bytes move to quarantine (rename, id kept), the row follows, then Resources is told.</summary>
     private async Task<string> QuarantineAsync(Guid objectId, string currentKey, ScanVerdict verdict, ScanResult? result, CancellationToken ct)

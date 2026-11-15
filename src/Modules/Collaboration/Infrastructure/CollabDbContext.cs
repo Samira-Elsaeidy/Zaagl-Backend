@@ -16,6 +16,7 @@ public sealed class CollabDbContext(DbContextOptions<CollabDbContext> options) :
     public DbSet<DropPortalRow> DropPortals => Set<DropPortalRow>();
     public DbSet<DropFileRow> DropFiles => Set<DropFileRow>();
     public DbSet<TableRow> Tables => Set<TableRow>();
+    public DbSet<BriefRow> Briefs => Set<BriefRow>();
 
     protected override void OnModelCreating(ModelBuilder b)
     {
@@ -128,6 +129,22 @@ public sealed class CollabDbContext(DbContextOptions<CollabDbContext> options) :
             e.Property(x => x.SourceFormat).HasMaxLength(4).IsRequired();
             e.Property(x => x.Document).HasColumnType("jsonb").IsRequired();
             e.HasIndex(x => new { x.OwnerId, x.CreatedAt }).HasFilter("owner_id IS NOT NULL").HasDatabaseName("ix_tables_owner");
+        });
+
+        b.Entity<BriefRow>(e =>
+        {
+            e.ToTable("briefs", t =>
+            {
+                t.HasCheckConstraint("ck_briefs_subject_kind", "subject_kind IN ('image', 'document')");
+                t.HasCheckConstraint("ck_briefs_parts", "subject_resource_id <> audio_resource_id");
+                t.HasCheckConstraint("ck_briefs_duration", "duration_ms BETWEEN 1 AND 300000");
+                t.HasCheckConstraint("ck_briefs_events", "event_count BETWEEN 0 AND 20000");
+            });
+            e.HasKey(x => x.ResourceId);
+            e.Property(x => x.ResourceId).ValueGeneratedNever();
+            e.Property(x => x.SubjectKind).HasMaxLength(8).IsRequired();
+            e.Property(x => x.Timeline).HasColumnType("jsonb").IsRequired();
+            e.HasIndex(x => new { x.OwnerId, x.CreatedAt }).HasDatabaseName("ix_briefs_owner");
         });
     }
 }

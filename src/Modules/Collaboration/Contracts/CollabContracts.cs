@@ -221,6 +221,64 @@ public sealed record OwnerTableDto(
 /// the API origin as a document).</summary>
 public sealed record TableExportDto(string FileName, string Mime, string Content);
 
+// ---- Voice-over micro-briefs (E2.3, docs/phase2/voice-briefs.md) ----------------------------------------------------------------
+
+/// <param name="SubjectResourceId">One of the owner's ready images (PNG, JPEG, GIF, WebP) or PDFs.</param>
+/// <param name="AudioResourceId">One of the owner's ready audio recordings (WebM/MP4 from MediaRecorder, or MP3, WAV, OGG, AAC, M4A, FLAC).</param>
+/// <param name="DurationMs">The recording's length as measured by the recorder (1 .. plan maximum).</param>
+/// <param name="Timeline">Optional <c>{"v":1,"events":[{"t","k","x","y","p","text"}]}</c>.</param>
+public sealed record CreateBriefCommand(
+    Guid SubjectResourceId,
+    Guid AudioResourceId,
+    int? DurationMs,
+    System.Text.Json.JsonElement Timeline,
+    string? Title,
+    DateTime? ExpiresAt,
+    string? Password,
+    string? CustomSlug,
+    bool Public);
+
+/// <summary>One part of a brief. <paramref name="Kind"/>: <c>image</c>, <c>document</c> or <c>audio</c>; <paramref name="State"/>:
+/// <c>ready</c> or <c>unavailable</c> (then every URL is null). URLs are short-lived inline/preview tickets on <c>usercontent.zaa.gl</c>.</summary>
+public sealed record BriefMediaDto(
+    string Kind,
+    string State,
+    string? Mime,
+    long? SizeBytes,
+    int? Width,
+    int? Height,
+    string? InlineUrl,
+    string? PreviewUrl);
+
+/// <param name="State"><c>ready</c> when the subject and the audio are both usable, otherwise <c>incomplete</c>.</param>
+public sealed record BriefDescriptorDto(
+    string Kind,
+    string State,
+    string? Title,
+    DateTime ExpiresAt,
+    bool HasPassword,
+    int DurationMs,
+    BriefMediaDto Subject,
+    BriefMediaDto Audio,
+    System.Text.Json.JsonElement Timeline);
+
+public sealed record OwnerBriefDto(
+    Guid Id,
+    string Code,
+    string ShortUrl,
+    string? Title,
+    string State,
+    DateTime ExpiresAt,
+    bool IsPublic,
+    bool HasPassword,
+    Guid SubjectResourceId,
+    Guid AudioResourceId,
+    int DurationMs,
+    int EventCount,
+    BriefMediaDto Subject,
+    BriefMediaDto Audio,
+    DateTime CreatedAt);
+
 // ---- Watermark and approval gate ------------------------------------------------------------------------------------------
 
 /// <param name="WatermarkText">Burned into the preview (1-60 characters); default "DRAFT".</param>

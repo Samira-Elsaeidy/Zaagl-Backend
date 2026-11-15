@@ -122,6 +122,65 @@ namespace Zaagl.Modules.Collaboration.Infrastructure.Migrations
                         });
                 });
 
+            modelBuilder.Entity("Zaagl.Modules.Collaboration.Domain.BriefRow", b =>
+                {
+                    b.Property<Guid>("ResourceId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("resource_id");
+
+                    b.Property<Guid>("AudioResourceId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("audio_resource_id");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at");
+
+                    b.Property<int>("DurationMs")
+                        .HasColumnType("integer")
+                        .HasColumnName("duration_ms");
+
+                    b.Property<int>("EventCount")
+                        .HasColumnType("integer")
+                        .HasColumnName("event_count");
+
+                    b.Property<Guid>("OwnerId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("owner_id");
+
+                    b.Property<string>("SubjectKind")
+                        .IsRequired()
+                        .HasMaxLength(8)
+                        .HasColumnType("character varying(8)")
+                        .HasColumnName("subject_kind");
+
+                    b.Property<Guid>("SubjectResourceId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("subject_resource_id");
+
+                    b.Property<string>("Timeline")
+                        .IsRequired()
+                        .HasColumnType("jsonb")
+                        .HasColumnName("timeline");
+
+                    b.HasKey("ResourceId")
+                        .HasName("pk_briefs");
+
+                    b.HasIndex("OwnerId", "CreatedAt")
+                        .HasDatabaseName("ix_briefs_owner");
+
+                    b.ToTable("briefs", "collab", t =>
+                        {
+                            t.HasCheckConstraint("ck_briefs_duration", "duration_ms BETWEEN 1 AND 300000");
+
+                            t.HasCheckConstraint("ck_briefs_events", "event_count BETWEEN 0 AND 20000");
+
+                            t.HasCheckConstraint("ck_briefs_parts", "subject_resource_id <> audio_resource_id");
+
+                            t.HasCheckConstraint("ck_briefs_subject_kind", "subject_kind IN ('image', 'document')");
+                        });
+                });
+
             modelBuilder.Entity("Zaagl.Modules.Collaboration.Domain.CommentRow", b =>
                 {
                     b.Property<long>("Id")

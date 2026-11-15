@@ -98,6 +98,22 @@ public sealed class TableRow
     public DateTime CreatedAt { get; set; }
 }
 
+/// <summary><c>collab.briefs</c> (docs/phase2/voice-briefs.md): a voice recording over an image or a PDF of the owner, with a pointer
+/// timeline (<c>{"v":1,"events":[…]}</c>). The parts are references, re-checked on every read.</summary>
+public sealed class BriefRow
+{
+    public Guid ResourceId { get; set; }
+    public Guid OwnerId { get; set; }
+    public Guid SubjectResourceId { get; set; }
+    /// <summary><c>image</c> or <c>document</c> (PDF).</summary>
+    public string SubjectKind { get; set; } = "";
+    public Guid AudioResourceId { get; set; }
+    public int DurationMs { get; set; }
+    public string Timeline { get; set; } = "{}";
+    public int EventCount { get; set; }
+    public DateTime CreatedAt { get; set; }
+}
+
 /// <summary><c>collab.approvals</c> (docs/phase2/approval-gate.md): a draft image served watermarked until the link holder approves (or,
 /// later, pays); then the clean original is released. <see cref="State"/> follows <see cref="Application.ApprovalStateMachine"/>.</summary>
 public sealed class ApprovalRow

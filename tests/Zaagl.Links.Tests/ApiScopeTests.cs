@@ -115,6 +115,7 @@ public sealed class ApiScopeTests(RealApiFactory real) : IAsyncLifetime, IClassF
         ["POST /api/tables/"] = "guest table creation",
         ["GET /api/public/tables/{code}"] = "visitor read, gate: key and grant",
         ["GET /api/public/tables/{code}/export"] = "visitor export as data, gate: key and grant",
+        ["GET /api/public/briefs/{code}"] = "listener read, gate: key and grant",
         ["HEAD /drop/{slug}"] = "short-host redirect of a drop portal",
         ["GET /hook/{token}"] = "webhook ingest, short host, token",
         ["HEAD /hook/{token}"] = "webhook ingest, short host, token",
@@ -159,7 +160,7 @@ public sealed class ApiScopeTests(RealApiFactory real) : IAsyncLifetime, IClassF
                              // Phase 2 E2.3
                              typeof(Zaagl.Modules.Collaboration.Application.DropPortalService), typeof(Zaagl.Modules.Files.Application.UploadService),
                              typeof(Zaagl.Modules.Files.Infrastructure.DiskAdmission), typeof(Zaagl.Modules.Identity.Contracts.IOwnerNotices),
-                             typeof(Zaagl.Modules.Collaboration.Application.TableService),
+                             typeof(Zaagl.Modules.Collaboration.Application.TableService), typeof(Zaagl.Modules.Collaboration.Application.BriefService),
                          })
                     services.AddPlaceholder(type);
             },
@@ -175,6 +176,7 @@ public sealed class ApiScopeTests(RealApiFactory real) : IAsyncLifetime, IClassF
                 app.MapCollaboration();
                 app.MapDrops();
                 app.MapTables();
+                app.MapBriefs();
             });
         _client = _host.GetTestClient();
     }

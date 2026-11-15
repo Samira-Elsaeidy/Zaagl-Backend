@@ -310,6 +310,11 @@ public static class AuthzOracle
         ["DELETE /api/tables/{id:guid}"] = new(Access.Scoped, "tools:write", Execute: false, Note: "owner, other user 404; ClipboardTableTests"),
         ["GET /api/public/tables/{code}"] = new(Access.Anyone, AllowedMayBe404: true, Execute: false, Note: "link key gate; ClipboardTableTests"),
         ["GET /api/public/tables/{code}/export"] = new(Access.Anyone, AllowedMayBe404: true, Execute: false, Note: "link key gate; ClipboardTableTests"),
+        // Phase 2 E2.3 voice-over briefs: VoiceBriefTests.
+        ["POST /api/briefs/"] = new(Access.Scoped, "tools:write", Execute: false, Note: "accounts only; VoiceBriefTests"),
+        ["GET /api/briefs/{id:guid}"] = new(Access.Scoped, "resources:read", Execute: false, Note: "owner, other user 404; VoiceBriefTests"),
+        ["DELETE /api/briefs/{id:guid}"] = new(Access.Scoped, "tools:write", Execute: false, Note: "owner, other user 404; VoiceBriefTests"),
+        ["GET /api/public/briefs/{code}"] = new(Access.Anyone, AllowedMayBe404: true, Execute: false, Note: "link key gate; VoiceBriefTests"),
         ["POST /api/vault/secrets/"] = new(Access.ScopedOrGuest, "tools:write", Execute: false, Note: "guest with CAPTCHA, failed credential 401, scope; VaultApiTests"),
         ["GET /api/vault/secrets/"] = new(Access.Scoped, "resources:read", Execute: false, Note: "VaultApiTests"),
         ["GET /api/vault/secrets/{id:guid}"] = new(Access.Scoped, "resources:read", Execute: false, Note: "owner, other user 404; VaultApiTests"),
