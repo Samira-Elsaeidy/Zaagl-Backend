@@ -287,6 +287,136 @@ namespace Zaagl.Modules.Collaboration.Infrastructure.Migrations
                         });
                 });
 
+            modelBuilder.Entity("Zaagl.Modules.Collaboration.Domain.DropFileRow", b =>
+                {
+                    b.Property<Guid>("ResourceId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("resource_id");
+
+                    b.Property<string>("Note")
+                        .HasMaxLength(1000)
+                        .HasColumnType("character varying(1000)")
+                        .HasColumnName("note");
+
+                    b.Property<Guid>("OwnerId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("owner_id");
+
+                    b.Property<Guid>("PortalId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("portal_id");
+
+                    b.Property<DateTime>("ReceivedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("received_at");
+
+                    b.Property<Guid>("UploadSessionId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("upload_session_id");
+
+                    b.Property<string>("UploaderEmail")
+                        .HasMaxLength(254)
+                        .HasColumnType("character varying(254)")
+                        .HasColumnName("uploader_email");
+
+                    b.Property<string>("UploaderName")
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)")
+                        .HasColumnName("uploader_name");
+
+                    b.HasKey("ResourceId")
+                        .HasName("pk_drop_files");
+
+                    b.HasIndex("UploadSessionId")
+                        .IsUnique()
+                        .HasDatabaseName("ux_drop_files_session");
+
+                    b.HasIndex("PortalId", "ReceivedAt")
+                        .HasDatabaseName("ix_drop_files_portal");
+
+                    b.ToTable("drop_files", "collab", t =>
+                        {
+                            t.HasCheckConstraint("ck_drop_files_email", "uploader_email IS NULL OR char_length(uploader_email) <= 254");
+
+                            t.HasCheckConstraint("ck_drop_files_name", "uploader_name IS NULL OR char_length(uploader_name) <= 100");
+
+                            t.HasCheckConstraint("ck_drop_files_note", "note IS NULL OR char_length(note) <= 1000");
+                        });
+                });
+
+            modelBuilder.Entity("Zaagl.Modules.Collaboration.Domain.DropPortalRow", b =>
+                {
+                    b.Property<Guid>("ResourceId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("resource_id");
+
+                    b.Property<string>("AllowedTypes")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)")
+                        .HasColumnName("allowed_types");
+
+                    b.Property<DateTime?>("ClosedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("closed_at");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at");
+
+                    b.Property<string>("Instructions")
+                        .HasMaxLength(2000)
+                        .HasColumnType("character varying(2000)")
+                        .HasColumnName("instructions");
+
+                    b.Property<DateTime?>("LastNotifiedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("last_notified_at");
+
+                    b.Property<long>("MaxBytes")
+                        .HasColumnType("bigint")
+                        .HasColumnName("max_bytes");
+
+                    b.Property<long>("MaxFileBytes")
+                        .HasColumnType("bigint")
+                        .HasColumnName("max_file_bytes");
+
+                    b.Property<int>("MaxFiles")
+                        .HasColumnType("integer")
+                        .HasColumnName("max_files");
+
+                    b.Property<bool>("NotifyOwner")
+                        .HasColumnType("boolean")
+                        .HasColumnName("notify_owner");
+
+                    b.Property<Guid>("OwnerId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("owner_id");
+
+                    b.Property<bool>("RequireEmail")
+                        .HasColumnType("boolean")
+                        .HasColumnName("require_email");
+
+                    b.Property<bool>("RequireName")
+                        .HasColumnType("boolean")
+                        .HasColumnName("require_name");
+
+                    b.HasKey("ResourceId")
+                        .HasName("pk_drop_portals");
+
+                    b.HasIndex("OwnerId", "CreatedAt")
+                        .HasDatabaseName("ix_drop_portals_owner");
+
+                    b.ToTable("drop_portals", "collab", t =>
+                        {
+                            t.HasCheckConstraint("ck_drop_portals_caps", "max_files BETWEEN 1 AND 10000 AND max_bytes >= 1 AND max_file_bytes >= 1");
+
+                            t.HasCheckConstraint("ck_drop_portals_instructions", "instructions IS NULL OR char_length(instructions) <= 2000");
+
+                            t.HasCheckConstraint("ck_drop_portals_types", "char_length(allowed_types) <= 100");
+                        });
+                });
+
             modelBuilder.Entity("Zaagl.Modules.Collaboration.Domain.CommentRow", b =>
                 {
                     b.HasOne("Zaagl.Modules.Collaboration.Domain.CommentSettingsRow", null)

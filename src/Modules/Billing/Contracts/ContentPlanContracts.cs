@@ -59,6 +59,20 @@ public sealed record ContentLimits(
 /// <param name="CommentsEnabled">May turn on pinned comments for their own content (E2.2). Commenting itself is open to link holders.</param>
 /// <param name="ApprovalEnabled">May create a watermarked approval link (E2.2).</param>
 /// <param name="HookMaxStoredBytes">Total captured bytes kept per catcher; the oldest captures are dropped beyond it.</param>
+/// <param name="DropEnabled">E2.3: may create "Reverse Pigeon" drop-off portals.</param>
+/// <param name="DropMaxActive">E2.3: open (not closed, not expired, not deleted) portals at once.</param>
+/// <param name="DropMaxFiles">E2.3: largest per-portal file cap the owner may set.</param>
+/// <param name="DropMaxBytes">E2.3: largest per-portal total-bytes cap the owner may set (the owner's storage quota still applies).</param>
+/// <param name="DropUploadsPerHour">E2.3: upload sessions a single portal accepts per rolling hour (all uploaders together).</param>
+/// <param name="TablesEnabled">E2.3: may create clipboard-transformer table links.</param>
+/// <param name="TableMaxInputBytes">E2.3: largest pasted JSON/CSV, in UTF-8 bytes.</param>
+/// <param name="TableMaxRows">E2.3: largest number of data rows.</param>
+/// <param name="TableMaxColumns">E2.3: largest number of columns.</param>
+/// <param name="BriefsEnabled">E2.3: may create voice-over micro-briefs.</param>
+/// <param name="BriefMaxSeconds">E2.3: longest recording (declared duration; the audio byte cap follows from it).</param>
+/// <param name="BriefMaxPointerEvents">E2.3: largest pointer/annotation timeline.</param>
+/// <param name="RedactEnabled">E2.3: may render redacted copies of their screenshots (PII guard).</param>
+/// <param name="RedactMaxRegions">E2.3: rectangles per redaction request.</param>
 public sealed record ToolLimits(
     bool VaultEnabled,
     int VaultMaxCiphertextBytes,
@@ -73,7 +87,21 @@ public sealed record ToolLimits(
     int CapsuleMaxLogBytes,
     bool CommentsEnabled,
     bool ApprovalEnabled,
-    long HookMaxStoredBytes = 0)
+    long HookMaxStoredBytes = 0,
+    bool DropEnabled = false,
+    int DropMaxActive = 0,
+    int DropMaxFiles = 0,
+    long DropMaxBytes = 0,
+    int DropUploadsPerHour = 0,
+    bool TablesEnabled = false,
+    int TableMaxInputBytes = 0,
+    int TableMaxRows = 0,
+    int TableMaxColumns = 0,
+    bool BriefsEnabled = false,
+    int BriefMaxSeconds = 0,
+    int BriefMaxPointerEvents = 0,
+    bool RedactEnabled = false,
+    int RedactMaxRegions = 0)
 {
     /// <summary>The proposed defaults per plan (1 KB = 1,024 bytes, PD-54).</summary>
     public static class Defaults
@@ -82,19 +110,31 @@ public sealed record ToolLimits(
             VaultEnabled: true, VaultMaxCiphertextBytes: 16 * 1024, VaultMaxViews: 1,
             HookMaxActive: 0, HookMaxRequests: 0, HookMaxBodyBytes: 0, HookLifetimeHours: 0, HookIngestPerMinute: 0,
             CompareEnabled: false, CapsulesEnabled: false, CapsuleMaxLogBytes: 0, CommentsEnabled: false, ApprovalEnabled: false,
-            HookMaxStoredBytes: 0);
+            HookMaxStoredBytes: 0,
+            DropEnabled: false, DropMaxActive: 0, DropMaxFiles: 0, DropMaxBytes: 0, DropUploadsPerHour: 0,
+            TablesEnabled: true, TableMaxInputBytes: 64 * 1024, TableMaxRows: 500, TableMaxColumns: 20,
+            BriefsEnabled: false, BriefMaxSeconds: 0, BriefMaxPointerEvents: 0,
+            RedactEnabled: false, RedactMaxRegions: 0);
 
         public static readonly ToolLimits Free = new(
             VaultEnabled: true, VaultMaxCiphertextBytes: 64 * 1024, VaultMaxViews: 1,
             HookMaxActive: 1, HookMaxRequests: 100, HookMaxBodyBytes: 64 * 1024, HookLifetimeHours: 24, HookIngestPerMinute: 30,
             CompareEnabled: true, CapsulesEnabled: true, CapsuleMaxLogBytes: 512 * 1024, CommentsEnabled: true, ApprovalEnabled: false,
-            HookMaxStoredBytes: 5L * 1024 * 1024);
+            HookMaxStoredBytes: 5L * 1024 * 1024,
+            DropEnabled: true, DropMaxActive: 2, DropMaxFiles: 20, DropMaxBytes: 250L * 1024 * 1024, DropUploadsPerHour: 60,
+            TablesEnabled: true, TableMaxInputBytes: 256 * 1024, TableMaxRows: 5_000, TableMaxColumns: 50,
+            BriefsEnabled: true, BriefMaxSeconds: 30, BriefMaxPointerEvents: 600,
+            RedactEnabled: true, RedactMaxRegions: 50);
 
         public static readonly ToolLimits Starter = new(
             VaultEnabled: true, VaultMaxCiphertextBytes: 256 * 1024, VaultMaxViews: 10,
             HookMaxActive: 10, HookMaxRequests: 1000, HookMaxBodyBytes: 512 * 1024, HookLifetimeHours: 168, HookIngestPerMinute: 120,
             CompareEnabled: true, CapsulesEnabled: true, CapsuleMaxLogBytes: 2 * 1024 * 1024, CommentsEnabled: true, ApprovalEnabled: true,
-            HookMaxStoredBytes: 50L * 1024 * 1024);
+            HookMaxStoredBytes: 50L * 1024 * 1024,
+            DropEnabled: true, DropMaxActive: 20, DropMaxFiles: 500, DropMaxBytes: 5L * 1024 * 1024 * 1024, DropUploadsPerHour: 300,
+            TablesEnabled: true, TableMaxInputBytes: 2 * 1024 * 1024, TableMaxRows: 50_000, TableMaxColumns: 200,
+            BriefsEnabled: true, BriefMaxSeconds: 60, BriefMaxPointerEvents: 3_000,
+            RedactEnabled: true, RedactMaxRegions: 200);
     }
 }
 

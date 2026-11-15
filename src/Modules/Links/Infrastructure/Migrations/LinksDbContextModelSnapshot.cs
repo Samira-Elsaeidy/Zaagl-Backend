@@ -405,6 +405,16 @@ namespace Zaagl.Modules.Links.Infrastructure.Migrations
                         .HasColumnType("integer")
                         .HasColumnName("content_per_hour");
 
+                    b.Property<bool>("DropCaptcha")
+                        .HasColumnType("boolean")
+                        .HasDefaultValue(true)
+                        .HasColumnName("drop_captcha");
+
+                    b.Property<bool>("DropEnabled")
+                        .HasColumnType("boolean")
+                        .HasDefaultValue(true)
+                        .HasColumnName("drop_enabled");
+
                     b.Property<int>("GlobalPerHour")
                         .HasColumnType("integer")
                         .HasColumnName("global_per_hour");
@@ -432,6 +442,16 @@ namespace Zaagl.Modules.Links.Infrastructure.Migrations
                     b.Property<bool>("SnippetEnabled")
                         .HasColumnType("boolean")
                         .HasColumnName("snippet_enabled");
+
+                    b.Property<bool>("TableCaptcha")
+                        .HasColumnType("boolean")
+                        .HasDefaultValue(true)
+                        .HasColumnName("table_captcha");
+
+                    b.Property<bool>("TableEnabled")
+                        .HasColumnType("boolean")
+                        .HasDefaultValue(true)
+                        .HasColumnName("table_enabled");
 
                     b.Property<DateTime>("UpdatedAt")
                         .HasColumnType("timestamp with time zone")
@@ -771,7 +791,7 @@ namespace Zaagl.Modules.Links.Infrastructure.Migrations
 
                             t.HasCheckConstraint("ck_links_target_destination", "(target_kind = 0) = (destination_url IS NOT NULL AND target_host IS NOT NULL)");
 
-                            t.HasCheckConstraint("ck_links_target_kind", "target_kind IN (0, 1, 2, 3, 4, 5, 6, 7)");
+                            t.HasCheckConstraint("ck_links_target_kind", "target_kind IN (0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10)");
 
                             t.HasCheckConstraint("ck_links_target_resource", "(target_kind = 0) = (resource_id IS NULL)");
                         });

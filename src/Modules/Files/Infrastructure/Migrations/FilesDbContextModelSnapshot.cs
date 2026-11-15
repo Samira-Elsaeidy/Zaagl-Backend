@@ -288,6 +288,14 @@ namespace Zaagl.Modules.Files.Infrastructure.Migrations
                         .HasColumnType("character varying(255)")
                         .HasColumnName("declared_type");
 
+                    b.Property<Guid?>("DropPortalId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("drop_portal_id");
+
+                    b.Property<byte[]>("DropTokenHash")
+                        .HasColumnType("bytea")
+                        .HasColumnName("drop_token_hash");
+
                     b.Property<DateTime>("ExpiresAt")
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("expires_at");
@@ -331,6 +339,10 @@ namespace Zaagl.Modules.Files.Infrastructure.Migrations
                     b.HasKey("Id")
                         .HasName("pk_upload_sessions");
 
+                    b.HasIndex("DropPortalId", "CreatedAt")
+                        .HasDatabaseName("ix_upload_sessions_drop_portal")
+                        .HasFilter("drop_portal_id IS NOT NULL");
+
                     b.HasIndex("OwnerId", "CreateKeyHash")
                         .IsUnique()
                         .HasDatabaseName("ux_upload_sessions_owner_create_key")
@@ -348,6 +360,8 @@ namespace Zaagl.Modules.Files.Infrastructure.Migrations
                     b.ToTable("upload_sessions", "files", t =>
                         {
                             t.HasCheckConstraint("ck_upload_sessions_declared_length", "declared_length >= 1");
+
+                            t.HasCheckConstraint("ck_upload_sessions_drop", "(drop_portal_id IS NULL) = (drop_token_hash IS NULL) AND (drop_portal_id IS NULL OR owner_id IS NOT NULL)");
 
                             t.HasCheckConstraint("ck_upload_sessions_owner_xor_guest", "(owner_id IS NULL) <> (guest_creator_key IS NULL)");
 

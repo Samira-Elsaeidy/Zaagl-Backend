@@ -100,6 +100,17 @@ public sealed class ApiScopeTests(RealApiFactory real) : IAsyncLifetime, IClassF
         ["GET /api/public/approvals/{code}"] = "visitor read, gate: key and grant",
         ["POST /api/public/approvals/{code}/approve"] = "visitor approval, gate plus CAPTCHA when anonymous",
         ["POST /api/public/approvals/{code}/download"] = "visitor download after release, gate",
+        // Phase 2 E2.3 drop-off portals: the uploader routes are anonymous by design, gated by the portal code (key, grant) on every
+        // call; the tus create adds the guest panel (pause, CAPTCHA guest-drop), brakes and counters, and every later call the per-session
+        // drop token (DropPortalTests). zaa.gl/drop/<code> is the short host's redirect form.
+        ["GET /api/public/drops/{code}"] = "uploader read, gate: key and grant",
+        ["POST /api/public/drops/{code}/uploads"] = "uploader tus create, gate plus CAPTCHA guest-drop and counters",
+        ["HEAD /api/public/drops/{code}/uploads/{id:guid}"] = "uploader tus offset, gate plus drop token",
+        ["PATCH /api/public/drops/{code}/uploads/{id:guid}"] = "uploader tus append, gate plus drop token",
+        ["DELETE /api/public/drops/{code}/uploads/{id:guid}"] = "uploader tus termination, gate plus drop token",
+        ["POST /api/public/drops/{code}/uploads/{id:guid}/complete"] = "uploader finishes the upload, gate plus drop token",
+        ["GET /drop/{slug}"] = "short-host redirect of a drop portal",
+        ["HEAD /drop/{slug}"] = "short-host redirect of a drop portal",
         ["GET /hook/{token}"] = "webhook ingest, short host, token",
         ["HEAD /hook/{token}"] = "webhook ingest, short host, token",
         ["POST /hook/{token}"] = "webhook ingest, short host, token",
@@ -140,6 +151,9 @@ public sealed class ApiScopeTests(RealApiFactory real) : IAsyncLifetime, IClassF
                              typeof(Zaagl.Modules.DeveloperTools.Application.CapsuleService), typeof(Zaagl.Modules.Collaboration.Application.CompareService),
                              typeof(Zaagl.Modules.Collaboration.Application.CommentService), typeof(Zaagl.Modules.Collaboration.Application.ApprovalService),
                              typeof(Zaagl.Modules.Access.Contracts.IAccessGate), typeof(ILinkResolver),
+                             // Phase 2 E2.3
+                             typeof(Zaagl.Modules.Collaboration.Application.DropPortalService), typeof(Zaagl.Modules.Files.Application.UploadService),
+                             typeof(Zaagl.Modules.Files.Infrastructure.DiskAdmission), typeof(Zaagl.Modules.Identity.Contracts.IOwnerNotices),
                          })
                     services.AddPlaceholder(type);
             },
@@ -153,6 +167,7 @@ public sealed class ApiScopeTests(RealApiFactory real) : IAsyncLifetime, IClassF
                 app.MapDeveloperTools();
                 app.MapWebhooks();
                 app.MapCollaboration();
+                app.MapDrops();
             });
         _client = _host.GetTestClient();
     }

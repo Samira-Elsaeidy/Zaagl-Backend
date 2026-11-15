@@ -28,6 +28,13 @@ public enum LinkTargetKind : short
     Compare = 6,
     /// <summary>Phase 2 E2.2: watermarked draft behind a client approval gate. Viewer <c>app.zaa.gl/a/&lt;code&gt;</c>.</summary>
     Approval = 7,
+    /// <summary>Phase 2 E2.3: "Reverse Pigeon" drop-off portal (external uploads into the owner's library). Viewer
+    /// <c>app.zaa.gl/drop/&lt;code&gt;</c>; short form <c>zaa.gl/drop/&lt;code&gt;</c>.</summary>
+    Drop = 8,
+    /// <summary>Phase 2 E2.3: clipboard transformer table (normalised JSON/CSV). Viewer <c>app.zaa.gl/t/&lt;code&gt;</c>.</summary>
+    Table = 9,
+    /// <summary>Phase 2 E2.3: voice-over micro-brief (audio + pointer timeline over an image or document). Viewer <c>app.zaa.gl/vb/&lt;code&gt;</c>.</summary>
+    Brief = 10,
 }
 
 /// <summary>PD-02: first path segment of the viewer on <c>app.zaa.gl</c> per content kind.</summary>
@@ -40,6 +47,9 @@ public static class ViewerPathSegments
     public const string Capsule = "b";
     public const string Compare = "c";
     public const string Approval = "a";
+    public const string Drop = "drop";
+    public const string Table = "t";
+    public const string Brief = "vb";
 
     /// <summary>The viewer segment of a content kind (never called for <see cref="LinkTargetKind.Url"/>).</summary>
     public static string For(LinkTargetKind kind) => kind switch
@@ -50,13 +60,17 @@ public static class ViewerPathSegments
         LinkTargetKind.Capsule => Capsule,
         LinkTargetKind.Compare => Compare,
         LinkTargetKind.Approval => Approval,
+        LinkTargetKind.Drop => Drop,
+        LinkTargetKind.Table => Table,
+        LinkTargetKind.Brief => Brief,
         _ => File,
     };
 
     /// <summary>True for every kind a content link may have (everything but <see cref="LinkTargetKind.Url"/>).</summary>
     public static bool IsContentKind(LinkTargetKind kind) =>
         kind is LinkTargetKind.Snippet or LinkTargetKind.File or LinkTargetKind.Media
-            or LinkTargetKind.Secret or LinkTargetKind.Capsule or LinkTargetKind.Compare or LinkTargetKind.Approval;
+            or LinkTargetKind.Secret or LinkTargetKind.Capsule or LinkTargetKind.Compare or LinkTargetKind.Approval
+            or LinkTargetKind.Drop or LinkTargetKind.Table or LinkTargetKind.Brief;
 }
 
 /// <summary>

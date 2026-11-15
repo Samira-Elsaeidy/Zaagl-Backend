@@ -9,6 +9,8 @@ public static class EmailKinds
     public const string Expiring = "expiring";
     public const string Expired = "expired";
     public const string Purge = "purge";
+    /// <summary>Phase 2 E2.3 (docs/phase2/drop-portals.md): new files arrived in one of the user's drop-off portals.</summary>
+    public const string DropReceived = "drop-received";
 }
 
 public static class EmailOutboxStatuses

@@ -46,6 +46,7 @@ public static class FilesModule
         services.AddScoped<StoredObjects>();
         services.AddScoped<IStoredObjects>(sp => sp.GetRequiredService<StoredObjects>());
         services.AddScoped<IStoredObjectSummaries>(sp => sp.GetRequiredService<StoredObjects>());
+        services.AddScoped<IDropUploadUsage, DropUploadUsage>(); // Phase 2 E2.3
         services.AddScoped<IMediaMetadata, MediaMetadata>();
         services.AddScoped<IWatermarkDerivatives, WatermarkRequests>(); // Phase 2 approval gate (docs/phase2/approval-gate.md)
         services.AddScoped<IResourceBytes>(sp => sp.GetRequiredService<StoredObjects>());

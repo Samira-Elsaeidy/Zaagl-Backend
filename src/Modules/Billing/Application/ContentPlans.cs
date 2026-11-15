@@ -49,6 +49,20 @@ public sealed class PlanToolOptions
     public bool? CommentsEnabled { get; set; }
     public bool? ApprovalEnabled { get; set; }
     public long? HookMaxStoredBytes { get; set; }
+    public bool? DropEnabled { get; set; }
+    public int? DropMaxActive { get; set; }
+    public int? DropMaxFiles { get; set; }
+    public long? DropMaxBytes { get; set; }
+    public int? DropUploadsPerHour { get; set; }
+    public bool? TablesEnabled { get; set; }
+    public int? TableMaxInputBytes { get; set; }
+    public int? TableMaxRows { get; set; }
+    public int? TableMaxColumns { get; set; }
+    public bool? BriefsEnabled { get; set; }
+    public int? BriefMaxSeconds { get; set; }
+    public int? BriefMaxPointerEvents { get; set; }
+    public bool? RedactEnabled { get; set; }
+    public int? RedactMaxRegions { get; set; }
 
     public ToolLimits Resolve(ToolLimits d) => new(
         VaultEnabled ?? d.VaultEnabled,
@@ -64,7 +78,21 @@ public sealed class PlanToolOptions
         Clamp(CapsuleMaxLogBytes ?? d.CapsuleMaxLogBytes, 0, ToolCeilings.CapsuleLogBytes),
         CommentsEnabled ?? d.CommentsEnabled,
         ApprovalEnabled ?? d.ApprovalEnabled,
-        Math.Min(Math.Max(HookMaxStoredBytes ?? d.HookMaxStoredBytes, 0), ToolCeilings.HookStoredBytes));
+        Math.Min(Math.Max(HookMaxStoredBytes ?? d.HookMaxStoredBytes, 0), ToolCeilings.HookStoredBytes),
+        DropEnabled ?? d.DropEnabled,
+        Clamp(DropMaxActive ?? d.DropMaxActive, 0, ToolCeilings.DropActive),
+        Clamp(DropMaxFiles ?? d.DropMaxFiles, 0, ToolCeilings.DropFiles),
+        Math.Min(Math.Max(DropMaxBytes ?? d.DropMaxBytes, 0), ToolCeilings.DropBytes),
+        Clamp(DropUploadsPerHour ?? d.DropUploadsPerHour, 0, ToolCeilings.DropUploadsPerHour),
+        TablesEnabled ?? d.TablesEnabled,
+        Clamp(TableMaxInputBytes ?? d.TableMaxInputBytes, 0, ToolCeilings.TableInputBytes),
+        Clamp(TableMaxRows ?? d.TableMaxRows, 0, ToolCeilings.TableRows),
+        Clamp(TableMaxColumns ?? d.TableMaxColumns, 0, ToolCeilings.TableColumns),
+        BriefsEnabled ?? d.BriefsEnabled,
+        Clamp(BriefMaxSeconds ?? d.BriefMaxSeconds, 0, ToolCeilings.BriefSeconds),
+        Clamp(BriefMaxPointerEvents ?? d.BriefMaxPointerEvents, 0, ToolCeilings.BriefPointerEvents),
+        RedactEnabled ?? d.RedactEnabled,
+        Clamp(RedactMaxRegions ?? d.RedactMaxRegions, 0, ToolCeilings.RedactRegions));
 
     private static int Clamp(int value, int min, int max) => Math.Min(Math.Max(value, min), max);
 }
@@ -78,6 +106,17 @@ public static class ToolCeilings
     public const int HookBodyBytes = 1024 * 1024;
     public const long HookStoredBytes = 1024L * 1024 * 1024;
     public const int CapsuleLogBytes = 4 * 1024 * 1024;
+    // E2.3 (docs/phase2/drop-portals.md, clipboard-tables.md, voice-briefs.md, pii-redaction.md).
+    public const int DropActive = 1000;
+    public const int DropFiles = 10_000;
+    public const long DropBytes = 50L * 1024 * 1024 * 1024;
+    public const int DropUploadsPerHour = 10_000;
+    public const int TableInputBytes = 8 * 1024 * 1024;
+    public const int TableRows = 200_000;
+    public const int TableColumns = 500;
+    public const int BriefSeconds = 300;
+    public const int BriefPointerEvents = 20_000;
+    public const int RedactRegions = 500;
 }
 
 public sealed class PlanOptions

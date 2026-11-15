@@ -13,6 +13,8 @@ public sealed class CollabDbContext(DbContextOptions<CollabDbContext> options) :
     public DbSet<CommentSettingsRow> CommentSettings => Set<CommentSettingsRow>();
     public DbSet<CommentRow> Comments => Set<CommentRow>();
     public DbSet<ApprovalRow> Approvals => Set<ApprovalRow>();
+    public DbSet<DropPortalRow> DropPortals => Set<DropPortalRow>();
+    public DbSet<DropFileRow> DropFiles => Set<DropFileRow>();
 
     protected override void OnModelCreating(ModelBuilder b)
     {
@@ -79,6 +81,38 @@ public sealed class CollabDbContext(DbContextOptions<CollabDbContext> options) :
             e.Property(x => x.PaymentProvider).HasMaxLength(32);
             e.Property(x => x.PaymentReference).HasMaxLength(128);
             e.HasIndex(x => x.DraftResourceId).HasDatabaseName("ix_approvals_draft");
+        });
+
+        b.Entity<DropPortalRow>(e =>
+        {
+            e.ToTable("drop_portals", t =>
+            {
+                t.HasCheckConstraint("ck_drop_portals_caps", "max_files BETWEEN 1 AND 10000 AND max_bytes >= 1 AND max_file_bytes >= 1");
+                t.HasCheckConstraint("ck_drop_portals_instructions", "instructions IS NULL OR char_length(instructions) <= 2000");
+                t.HasCheckConstraint("ck_drop_portals_types", "char_length(allowed_types) <= 100");
+            });
+            e.HasKey(x => x.ResourceId);
+            e.Property(x => x.ResourceId).ValueGeneratedNever();
+            e.Property(x => x.Instructions).HasMaxLength(2000);
+            e.Property(x => x.AllowedTypes).HasMaxLength(100).IsRequired();
+            e.HasIndex(x => new { x.OwnerId, x.CreatedAt }).HasDatabaseName("ix_drop_portals_owner");
+        });
+
+        b.Entity<DropFileRow>(e =>
+        {
+            e.ToTable("drop_files", t =>
+            {
+                t.HasCheckConstraint("ck_drop_files_name", "uploader_name IS NULL OR char_length(uploader_name) <= 100");
+                t.HasCheckConstraint("ck_drop_files_email", "uploader_email IS NULL OR char_length(uploader_email) <= 254");
+                t.HasCheckConstraint("ck_drop_files_note", "note IS NULL OR char_length(note) <= 1000");
+            });
+            e.HasKey(x => x.ResourceId);
+            e.Property(x => x.ResourceId).ValueGeneratedNever();
+            e.Property(x => x.UploaderName).HasMaxLength(100);
+            e.Property(x => x.UploaderEmail).HasMaxLength(254);
+            e.Property(x => x.Note).HasMaxLength(1000);
+            e.HasIndex(x => new { x.PortalId, x.ReceivedAt }).HasDatabaseName("ix_drop_files_portal");
+            e.HasIndex(x => x.UploadSessionId).IsUnique().HasDatabaseName("ux_drop_files_session");
         });
     }
 }

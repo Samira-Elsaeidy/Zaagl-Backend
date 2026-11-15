@@ -55,6 +55,8 @@ public static class GuestGate
     {
         GuestFeatures.Link => "Guest link creation is paused right now. Sign in, or try again later.",
         GuestFeatures.Upload => "Guest uploads are paused right now. Sign in, or try again later.",
+        GuestFeatures.Drop => "Uploads to drop-off portals are paused right now. Try again later.",
+        GuestFeatures.Table => "Guest table links are paused right now. Sign in, or try again later.",
         _ => "Guest snippet creation is paused right now. Sign in, or try again later.",
     };
 }

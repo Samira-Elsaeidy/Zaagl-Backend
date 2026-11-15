@@ -394,6 +394,8 @@ app.MapPublicContent();
 app.MapDeveloperTools(); // Phase 2 E2.1 (docs/phase2)
 app.MapWebhooks();       // Phase 2 E2.1: zaa.gl/hook/{token} ingest (short host) and /api/hooks
 app.MapCollaboration();  // Phase 2 E2.2 (docs/phase2)
+app.MapDrops();          // Phase 2 E2.3: drop-off portals (/api/drops, /api/public/drops)
+app.MapDropShortRoute(); // Phase 2 E2.3: zaa.gl/drop/<code> (short host)
 app.MapDelivery();
 // Resolution owns the catch-all /{slug} route, so it is mapped last.
 app.MapResolution();

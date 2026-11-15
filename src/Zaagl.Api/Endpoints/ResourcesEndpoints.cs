@@ -360,6 +360,9 @@ public static class ResourcesEndpoints
             "capsule" => (kind = ResourceKind.Capsule) == ResourceKind.Capsule,
             "compare" => (kind = ResourceKind.Compare) == ResourceKind.Compare,
             "approval" => (kind = ResourceKind.Approval) == ResourceKind.Approval,
+            "drop" => (kind = ResourceKind.Drop) == ResourceKind.Drop,
+            "table" => (kind = ResourceKind.Table) == ResourceKind.Table,
+            "brief" => (kind = ResourceKind.Brief) == ResourceKind.Brief,
             _ => false,
         };
     }

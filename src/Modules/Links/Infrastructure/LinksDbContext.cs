@@ -39,7 +39,7 @@ public sealed class LinksDbContext(DbContextOptions<LinksDbContext> options) : D
             e.Property(x => x.DestinationUrl).HasMaxLength(2048).IsRequired(false);
             e.Property(x => x.TargetHost).HasMaxLength(255).IsRequired(false);
             e.Property(x => x.TargetKind).HasConversion<short>().HasDefaultValue(Contracts.LinkTargetKind.Url).HasSentinel(Contracts.LinkTargetKind.Url);
-            e.ToTable(t => t.HasCheckConstraint("ck_links_target_kind", "target_kind IN (0, 1, 2, 3, 4, 5, 6, 7)"));
+            e.ToTable(t => t.HasCheckConstraint("ck_links_target_kind", "target_kind IN (0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10)"));
             e.ToTable(t => t.HasCheckConstraint("ck_links_target_resource", "(target_kind = 0) = (resource_id IS NULL)"));
             e.ToTable(t => t.HasCheckConstraint("ck_links_target_destination",
                 "(target_kind = 0) = (destination_url IS NOT NULL AND target_host IS NOT NULL)"));
@@ -192,6 +192,10 @@ public sealed class LinksDbContext(DbContextOptions<LinksDbContext> options) : D
             e.HasKey(x => x.Id);
             e.Property(x => x.Id).ValueGeneratedNever();
             e.Property(x => x.UpdatedByEmail).HasMaxLength(255);
+            e.Property(x => x.DropEnabled).HasDefaultValue(true).ValueGeneratedNever();
+            e.Property(x => x.DropCaptcha).HasDefaultValue(true).ValueGeneratedNever();
+            e.Property(x => x.TableEnabled).HasDefaultValue(true).ValueGeneratedNever();
+            e.Property(x => x.TableCaptcha).HasDefaultValue(true).ValueGeneratedNever();
         });
 
         b.Entity<GuestSettingsAuditRow>(e =>

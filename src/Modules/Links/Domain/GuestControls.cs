@@ -15,6 +15,12 @@ public sealed class GuestSettingsRow
     public bool UploadCaptcha { get; set; }
     public bool SnippetEnabled { get; set; }
     public bool SnippetCaptcha { get; set; }
+    /// <summary>Phase 2 E2.3 (column default true): drop-off portal uploads by people without an account.</summary>
+    public bool DropEnabled { get; set; } = true;
+    public bool DropCaptcha { get; set; } = true;
+    /// <summary>Phase 2 E2.3 (column default true): guest table links.</summary>
+    public bool TableEnabled { get; set; } = true;
+    public bool TableCaptcha { get; set; } = true;
 
     public int PerMinute { get; set; }
     public int GlobalPerHour { get; set; }

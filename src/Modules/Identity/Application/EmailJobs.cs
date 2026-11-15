@@ -14,6 +14,15 @@ namespace Zaagl.Modules.Identity.Application;
 internal sealed record ConfirmEmailPayload(string Token);
 internal sealed record PasswordResetPayload(string Token);
 internal sealed record SecurityNoticePayload(string Message);
+internal sealed record DropReceivedPayload(Guid PortalId, string? Title, int Count);
+
+/// <summary>Phase 2 E2.3 <see cref="Contracts.IOwnerNotices"/>: one outbox row per notice (the caller throttles).</summary>
+public sealed class OwnerNotices(IdentityDbContext db) : Contracts.IOwnerNotices
+{
+    public Task QueueDropReceivedAsync(Guid userId, Guid portalId, string? portalTitle, int newFiles, CancellationToken cancellationToken) =>
+        EmailQueue.QueueAccountEmailAsync(db, userId, EmailKinds.DropReceived,
+            new DropReceivedPayload(portalId, portalTitle is { Length: > 100 } t ? t[..100] : portalTitle, Math.Max(1, newFiles)), null, cancellationToken);
+}
 
 /// <summary>Queueing helpers used by IdentityService (account emails) and EmailDigestJob (link warnings).
 /// Kept as plain static methods against the DbContext, same shape as GuestQuotaStore's raw-SQL helpers.</summary>
@@ -191,8 +200,15 @@ public sealed class EmailDispatcher(
             EmailKinds.PasswordReset => EmailTemplates.PasswordReset(toEmail, BuildFragmentUrl(opts.WebBaseUrl, "/reset-password", row.UserId!.Value, Parse<PasswordResetPayload>(row).Token)),
             EmailKinds.AccountExists => EmailTemplates.AccountExists(toEmail),
             EmailKinds.SecurityNotice => EmailTemplates.SecurityNotice(toEmail, Parse<SecurityNoticePayload>(row).Message),
+            EmailKinds.DropReceived => DropReceived(toEmail, Parse<DropReceivedPayload>(row), opts),
             _ => EmailTemplates.Digest(toEmail, row.Kind, row.Items.Select(i => (i.Slug, i.ExpiresAtSnapshot)).ToList()),
         };
+    }
+
+    private static EmailMessage DropReceived(string toEmail, DropReceivedPayload p, EmailOptions opts)
+    {
+        var web = (string.IsNullOrWhiteSpace(opts.WebBaseUrl) ? "https://app.zaa.gl" : opts.WebBaseUrl).TrimEnd('/');
+        return EmailTemplates.DropReceived(toEmail, p.Title, p.Count, $"{web}/dashboard/drops/{p.PortalId}");
     }
 
     /// <summary>Confirm links go to the API page (Hosts:Api/account/confirm-email, spec §7.4); reset links go to the

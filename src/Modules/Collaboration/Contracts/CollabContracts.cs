@@ -80,6 +80,91 @@ public sealed record CommentThreadDto(bool Enabled, bool AllowAnonymous, int Cou
 
 public sealed record CommentSettingsDto(bool Enabled, bool AllowAnonymous, int Count, int MaxComments);
 
+// ---- Drop-off portals (E2.3, docs/phase2/drop-portals.md) ------------------------------------------------------------------
+
+/// <param name="AllowedTypes"><c>image</c>, <c>video</c>, <c>audio</c>, <c>pdf</c>, <c>archive</c>, <c>model</c>, <c>other</c>; empty or null = any.</param>
+public sealed record CreateDropPortalCommand(
+    string? Title,
+    string? Instructions,
+    int? MaxFiles,
+    long? MaxBytes,
+    long? MaxFileBytes,
+    IReadOnlyList<string>? AllowedTypes,
+    bool RequireName,
+    bool RequireEmail,
+    bool NotifyOwner,
+    DateTime? ExpiresAt,
+    string? Password,
+    string? CustomSlug,
+    bool Public);
+
+/// <summary>PATCH: a null field is unchanged; <c>instructions: ""</c> clears them.</summary>
+public sealed record UpdateDropPortalCommand(
+    string? Instructions,
+    int? MaxFiles,
+    long? MaxBytes,
+    long? MaxFileBytes,
+    IReadOnlyList<string>? AllowedTypes,
+    bool? RequireName,
+    bool? RequireEmail,
+    bool? NotifyOwner);
+
+/// <param name="State">Link state: <c>ready</c> (live), <c>expired</c>, <c>deleted</c>, <c>disabled</c>, <c>taken-down</c>.</param>
+/// <param name="Accepting">True when uploads are accepted now (live link, not closed, caps not reached).</param>
+public sealed record OwnerDropPortalDto(
+    Guid Id,
+    string Code,
+    string ShortUrl,
+    string? Title,
+    string State,
+    bool Accepting,
+    DateTime? ClosedAt,
+    DateTime ExpiresAt,
+    bool IsPublic,
+    bool HasPassword,
+    string? Instructions,
+    int MaxFiles,
+    long MaxBytes,
+    long MaxFileBytes,
+    IReadOnlyList<string> AllowedTypes,
+    bool RequireName,
+    bool RequireEmail,
+    bool NotifyOwner,
+    int FilesReceived,
+    long BytesReceived,
+    DateTime CreatedAt);
+
+/// <summary>Public descriptor for an uploader. Holds nothing about other uploads (no counts, no names).</summary>
+/// <param name="State"><c>open</c>, <c>closed</c> (by the owner) or <c>full</c> (a cap is reached).</param>
+public sealed record DropDescriptorDto(
+    string Kind,
+    string State,
+    string? Title,
+    string? Instructions,
+    DateTime ExpiresAt,
+    bool HasPassword,
+    long MaxFileBytes,
+    IReadOnlyList<string> AllowedTypes,
+    bool RequireName,
+    bool RequireEmail);
+
+/// <param name="Scan"><c>pending</c>, <c>clean</c>, <c>infected</c>, <c>error</c>: the owner can download once <c>clean</c> and
+/// <c>State</c> is <c>ready</c> (POST /api/resources/{id}/download).</param>
+public sealed record DropFileDto(
+    Guid ResourceId,
+    string? FileName,
+    long SizeBytes,
+    string? Mime,
+    string Scan,
+    string State,
+    string? UploaderName,
+    string? UploaderEmail,
+    string? Note,
+    DateTime ReceivedAt);
+
+/// <summary>What an uploader learns after <c>/complete</c>: the file was received (never a link to it).</summary>
+public sealed record DropReceiptDto(Guid UploadId, string Status, string? FileName, long SizeBytes);
+
 // ---- Watermark and approval gate ------------------------------------------------------------------------------------------
 
 /// <param name="WatermarkText">Burned into the preview (1-60 characters); default "DRAFT".</param>

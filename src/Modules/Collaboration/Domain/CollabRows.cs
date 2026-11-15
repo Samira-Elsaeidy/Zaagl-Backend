@@ -48,6 +48,41 @@ public sealed class CommentRow
     public DateTime? ResolvedAt { get; set; }
 }
 
+/// <summary><c>collab.drop_portals</c> (docs/phase2/drop-portals.md): a "Reverse Pigeon" drop-off portal. People without an account
+/// upload into it; the files become ordinary resources of the owner (quota, library), attributed through <see cref="DropFileRow"/>.
+/// The caps are enforced by Files under a per-portal advisory lock; this row holds the owner's settings.</summary>
+public sealed class DropPortalRow
+{
+    public Guid ResourceId { get; set; }
+    public Guid OwnerId { get; set; }
+    public string? Instructions { get; set; }
+    public int MaxFiles { get; set; }
+    public long MaxBytes { get; set; }
+    public long MaxFileBytes { get; set; }
+    /// <summary>Comma-separated <c>UploadTypeCategories</c>; empty = any.</summary>
+    public string AllowedTypes { get; set; } = "";
+    public bool RequireName { get; set; }
+    public bool RequireEmail { get; set; }
+    public bool NotifyOwner { get; set; }
+    public DateTime? ClosedAt { get; set; }
+    public DateTime? LastNotifiedAt { get; set; }
+    public DateTime CreatedAt { get; set; }
+}
+
+/// <summary><c>collab.drop_files</c>: one received file (its own File/Media resource of the portal owner) and what the uploader
+/// typed. Visible to the owner only; never to other uploaders. No IP or user agent is stored.</summary>
+public sealed class DropFileRow
+{
+    public Guid ResourceId { get; set; }
+    public Guid PortalId { get; set; }
+    public Guid OwnerId { get; set; }
+    public Guid UploadSessionId { get; set; }
+    public string? UploaderName { get; set; }
+    public string? UploaderEmail { get; set; }
+    public string? Note { get; set; }
+    public DateTime ReceivedAt { get; set; }
+}
+
 /// <summary><c>collab.approvals</c> (docs/phase2/approval-gate.md): a draft image served watermarked until the link holder approves (or,
 /// later, pays); then the clean original is released. <see cref="State"/> follows <see cref="Application.ApprovalStateMachine"/>.</summary>
 public sealed class ApprovalRow
