@@ -265,7 +265,7 @@ public static class FilesEndpoints
             : new UploadActor(null, null, CreatedVia.Web);
 
     /// <summary>ARC-009 4.3: only this route may carry a chunk of up to 90,000,000 bytes (Kestrel's global limit stays 2 MiB), and the slow-body floor is 240 bytes/s after a 10 s grace. Both features are absent under the test server.</summary>
-    private static void RaiseBodyLimits(HttpContext http)
+    internal static void RaiseBodyLimits(HttpContext http)
     {
         if (http.Features.Get<Microsoft.AspNetCore.Http.Features.IHttpMaxRequestBodySizeFeature>() is { IsReadOnly: false } size)
             size.MaxRequestBodySize = UploadProtocol.MaxChunkBytes;
@@ -285,22 +285,22 @@ public static class FilesEndpoints
         return read > maxBytes ? null : System.Text.Encoding.UTF8.GetString(buffer, 0, read);
     }
 
-    private static void Tus(HttpContext http) => http.Response.Headers["Tus-Resumable"] = TusResumable;
+    internal static void Tus(HttpContext http) => http.Response.Headers["Tus-Resumable"] = TusResumable;
 
     /// <summary>tus 1.0: a request for another protocol version is <c>412</c> with <c>Tus-Version</c>. A client that sends no
     /// <c>Tus-Resumable</c> at all (a plain HTTP client of the CLI) is served.</summary>
-    private static bool TusVersionMismatch(HttpContext http) =>
+    internal static bool TusVersionMismatch(HttpContext http) =>
         http.Request.Headers.TryGetValue("Tus-Resumable", out var v) && v.ToString() is { Length: > 0 } s && s != TusResumable;
 
-    private static IResult PreconditionFailed() => new HeaderResult(
+    internal static IResult PreconditionFailed() => new HeaderResult(
         Results.StatusCode(StatusCodes.Status412PreconditionFailed), h => h["Tus-Version"] = TusResumable);
 
-    private static string HttpDate(DateTime utc) =>
+    internal static string HttpDate(DateTime utc) =>
         new DateTimeOffset(DateTime.SpecifyKind(utc, DateTimeKind.Utc)).ToString("r", CultureInfo.InvariantCulture);
 
     /// <summary>The problem for an error. <c>507</c> carries <c>Retry-After</c> (the configured admission seconds) and a refused
     /// type carries <c>reason: type-not-allowed</c> (the wire contract of <c>422 content-rejected</c>).</summary>
-    private static IResult Problem(HttpContext http, Error error, DiskAdmission admission)
+    internal static IResult Problem(HttpContext http, Error error, DiskAdmission admission)
     {
         if (error.Code == ErrorCodes.InsufficientStorage)
             return new HeaderResult(ApiResults.Problem(error), h => h.RetryAfter = admission.RetryAfterSeconds.ToString(CultureInfo.InvariantCulture));

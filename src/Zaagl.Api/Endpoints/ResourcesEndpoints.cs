@@ -255,7 +255,7 @@ public static class ResourcesEndpoints
     /// <summary>
     /// The kind's write scope for an API key (a session JWT has every scope), checked after the endpoint policy (files:write or
     /// tools:write): files and media need files:write; snippets files:write plus snippets:write; Phase 2 tool links (secret, capsule,
-    /// comparison, approval) tools:write, the scope that created them (files:write is still accepted there, as before). Interim rule
+    /// comparison, approval; E2.3 drop, table, brief) tools:write, the scope that created them (files:write is still accepted there, as before). Interim rule
     /// (contracts.md C9): a separate resources:write scope is OPEN (ARC-014 Q3).
     /// </summary>
     internal static IResult? KindScopeError(ClaimsPrincipal user, ResourceKind kind) => kind switch
@@ -264,6 +264,7 @@ public static class ResourcesEndpoints
         ResourceKind.Snippet when !ApiScopes.Allows(user, ApiScopes.SnippetsWrite) => ApiScopes.InsufficientScope(ApiScopes.SnippetsWrite),
         ResourceKind.File or ResourceKind.Media when !ApiScopes.Allows(user, ApiScopes.FilesWrite) => ApiScopes.InsufficientScope(ApiScopes.FilesWrite),
         ResourceKind.Secret or ResourceKind.Capsule or ResourceKind.Compare or ResourceKind.Approval
+            or ResourceKind.Drop or ResourceKind.Table or ResourceKind.Brief
             when !ApiScopes.AllowsAny(user, ApiScopes.ResourceWriteScopes) => ApiScopes.InsufficientScope(ApiScopes.ToolsWrite),
         _ => null,
     };
@@ -371,6 +372,9 @@ public static class ResourcesEndpoints
             "capsule" => (kind = ResourceKind.Capsule) == ResourceKind.Capsule,
             "compare" => (kind = ResourceKind.Compare) == ResourceKind.Compare,
             "approval" => (kind = ResourceKind.Approval) == ResourceKind.Approval,
+            "drop" => (kind = ResourceKind.Drop) == ResourceKind.Drop,
+            "table" => (kind = ResourceKind.Table) == ResourceKind.Table,
+            "brief" => (kind = ResourceKind.Brief) == ResourceKind.Brief,
             _ => false,
         };
     }

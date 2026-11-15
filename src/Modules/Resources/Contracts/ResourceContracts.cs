@@ -19,6 +19,12 @@ public enum ResourceKind : short
     Compare = 6,
     /// <summary>Phase 2: rows in <c>collab.approvals</c> (references one image resource).</summary>
     Approval = 7,
+    /// <summary>Phase 2 E2.3: rows in <c>collab.drop_portals</c> (the received files are ordinary File/Media resources).</summary>
+    Drop = 8,
+    /// <summary>Phase 2 E2.3: rows in <c>collab.tables</c> (normalised table document).</summary>
+    Table = 9,
+    /// <summary>Phase 2 E2.3: rows in <c>collab.briefs</c> (references an audio and a subject resource + pointer timeline).</summary>
+    Brief = 10,
 }
 
 /// <summary>Stored processing status (<c>resources.resources.processing_status</c>).</summary>

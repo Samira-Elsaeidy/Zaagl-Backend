@@ -75,7 +75,9 @@ public static class GuestControlsEndpoints
                 return Results.Ok(new GuestStatusDto(
                     Effective(settings.Link, true),
                     Effective(settings.Upload, uploadOptions.Value.GuestsEnabled),
-                    Effective(settings.Snippet, true)));
+                    Effective(settings.Snippet, true),
+                    Effective(settings.DropOrDefault, true),
+                    Effective(settings.TableOrDefault, true)));
             })
             .WithTags("Guests")
             .AllowAnonymous()

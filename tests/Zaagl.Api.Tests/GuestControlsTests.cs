@@ -273,6 +273,58 @@ public sealed class GuestControlsTests(GuestControlsApiFactory api) : IClassFixt
         await AssertStatusAsync(await CreateGuestSnippetAsync("ok"), HttpStatusCode.Created);
     }
 
+    /// <summary>Phase 2 E2.3: uploads into a drop-off portal follow the panel's <c>guest-drop</c> switches (pause, CAPTCHA), independently of
+    /// guest uploads. A huge Upload-Length shows the gates passed (413 file-too-large comes from the upload service, after them).</summary>
+    [Fact]
+    public async Task Drop_portal_uploads_follow_the_guest_drop_switches()
+    {
+        using var admin = await AdminAsync();
+        var owner = await api.Principals.CreateUserAsync(starter: true);
+        using var ownerClient = api.ApiClient(bearer: owner.AccessToken);
+        using var created = await ownerClient.PostAsJsonAsync("/api/drops", new { title = "panel", @public = true }, Json);
+        await AssertStatusAsync(created, HttpStatusCode.Created);
+        var code = (await BodyAsync(created)).GetProperty("code").GetString();
+
+        async Task<HttpResponseMessage> Upload(string? captcha)
+        {
+            using var guest = NewGuest();
+            using var request = new HttpRequestMessage(HttpMethod.Post, $"/api/public/drops/{code}/uploads");
+            request.Headers.Add("Tus-Resumable", "1.0.0");
+            request.Headers.Add("Upload-Length", "999999999999");
+            if (captcha is not null) request.Headers.Add("Captcha-Token", captcha);
+            return await guest.SendAsync(request);
+        }
+
+        await AssertProblemCodeAsync(await Upload(null), HttpStatusCode.BadRequest, "validation", "captcha-required");
+        await AssertStatusAsync(await Upload("ok"), HttpStatusCode.RequestEntityTooLarge);
+        Assert.Equal("guest-drop", api.Captcha.Calls.Last().Action);
+
+        object With(object drop) => new
+        {
+            link = new { enabled = true, captchaRequired = true },
+            upload = new { enabled = true, captchaRequired = true },
+            snippet = new { enabled = true, captchaRequired = true },
+            limits = new { perMinute = 5, globalPerHour = 5000, contentPerHour = 30, contentPerDay = 60, linksPerDay = 20 },
+            drop,
+            reason = "qa",
+        };
+        var paused = await PutAsync(admin, With(new { enabled = false, captchaRequired = true }));
+        Assert.False(paused.GetProperty("settings").GetProperty("drop").GetProperty("enabled").GetBoolean());
+        Assert.True(paused.GetProperty("settings").GetProperty("table").GetProperty("enabled").GetBoolean()); // absent: unchanged
+        var refused = await Upload("ok");
+        Assert.Equal(HttpStatusCode.ServiceUnavailable, refused.StatusCode);
+        // Guest uploads (another feature) are not paused by it.
+        using (var anonymous = api.ApiClient())
+        {
+            var status = await BodyAsync(await anonymous.GetAsync("/api/guest-status"));
+            Assert.False(status.GetProperty("drop").GetProperty("enabled").GetBoolean());
+            Assert.True(status.GetProperty("upload").GetProperty("enabled").GetBoolean());
+        }
+
+        await PutAsync(admin, With(new { enabled = true, captchaRequired = false }));
+        await AssertStatusAsync(await Upload(null), HttpStatusCode.RequestEntityTooLarge);
+    }
+
     [Fact]
     public async Task Turning_captcha_off_for_guest_snippets_skips_the_check_for_that_feature_only()
     {
@@ -382,7 +434,7 @@ public sealed class GuestControlsTests(GuestControlsApiFactory api) : IClassFixt
 
         var pause = rows[1];
         Assert.Equal("qa audit", pause.GetProperty("reason").GetString());
-        Assert.Equal(3, pause.GetProperty("changes").GetArrayLength());
+        Assert.Equal(5, pause.GetProperty("changes").GetArrayLength()); // link, upload, snippet + Phase 2 E2.3 drop, table
     }
 
     [Fact]

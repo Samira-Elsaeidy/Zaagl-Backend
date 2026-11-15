@@ -30,6 +30,8 @@ public sealed class FilesDbContext(DbContextOptions<FilesDbContext> options) : D
                 t.HasCheckConstraint("ck_upload_sessions_declared_length", "declared_length >= 1");
                 t.HasCheckConstraint("ck_upload_sessions_received_length", "received_length BETWEEN 0 AND declared_length");
                 t.HasCheckConstraint("ck_upload_sessions_status", "status IN (0, 1, 2, 3, 4)");
+                // Phase 2 E2.3: a drop upload has both its portal and its uploader token, and always a (portal) owner.
+                t.HasCheckConstraint("ck_upload_sessions_drop", "(drop_portal_id IS NULL) = (drop_token_hash IS NULL) AND (drop_portal_id IS NULL OR owner_id IS NOT NULL)");
             });
             e.HasKey(x => x.Id);
             e.Property(x => x.Id).ValueGeneratedNever();
@@ -41,6 +43,8 @@ public sealed class FilesDbContext(DbContextOptions<FilesDbContext> options) : D
                 .HasFilter("owner_id IS NOT NULL").HasDatabaseName("ix_upload_sessions_owner_created");
             e.HasIndex(x => new { x.OwnerId, x.CreateKeyHash }).IsUnique()
                 .HasFilter("create_key_hash IS NOT NULL").HasDatabaseName("ux_upload_sessions_owner_create_key");
+            e.HasIndex(x => new { x.DropPortalId, x.CreatedAt })
+                .HasFilter("drop_portal_id IS NOT NULL").HasDatabaseName("ix_upload_sessions_drop_portal");
         });
 
         b.Entity<StorageObjectRow>(e =>

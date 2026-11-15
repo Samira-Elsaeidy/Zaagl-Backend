@@ -10,8 +10,12 @@ public static class GuestFeatures
     public const string Link = "guest-link";
     public const string Upload = "guest-upload";
     public const string Snippet = "guest-snippet";
+    /// <summary>Phase 2 E2.3: an anonymous uploader sending files into someone's drop-off portal (docs/phase2/drop-portals.md).</summary>
+    public const string Drop = "guest-drop";
+    /// <summary>Phase 2 E2.3: a guest creating a clipboard-transformer table link (docs/phase2/clipboard-tables.md).</summary>
+    public const string Table = "guest-table";
 
-    public static readonly string[] All = [Link, Upload, Snippet];
+    public static readonly string[] All = [Link, Upload, Snippet, Drop, Table];
 }
 
 /// <summary>One guest feature: <c>Enabled = false</c> pauses it (503 <c>guest_creation_paused</c>); <c>CaptchaRequired = false</c>
@@ -33,28 +37,41 @@ public sealed record GuestSettings(
     GuestLimitSettings Limits,
     int Version,
     DateTime? UpdatedAt,
-    string? UpdatedBy)
+    string? UpdatedBy,
+    GuestFeatureSettings? Drop = null,
+    GuestFeatureSettings? Table = null)
 {
+    /// <summary>Phase 2 E2.3 features default to on with CAPTCHA (the stored row always sets them).</summary>
+    private static readonly GuestFeatureSettings On = new(Enabled: true, CaptchaRequired: true);
+
+    [System.Text.Json.Serialization.JsonIgnore] public GuestFeatureSettings DropOrDefault => Drop ?? On;
+    [System.Text.Json.Serialization.JsonIgnore] public GuestFeatureSettings TableOrDefault => Table ?? On;
+
     public GuestFeatureSettings For(string feature) => feature switch
     {
         GuestFeatures.Link => Link,
         GuestFeatures.Upload => Upload,
         GuestFeatures.Snippet => Snippet,
+        GuestFeatures.Drop => DropOrDefault,
+        GuestFeatures.Table => TableOrDefault,
         _ => throw new ArgumentOutOfRangeException(nameof(feature), feature, "Unknown guest feature."),
     };
 
-    public bool AllPaused => !Link.Enabled && !Upload.Enabled && !Snippet.Enabled;
+    public bool AllPaused => !Link.Enabled && !Upload.Enabled && !Snippet.Enabled && !DropOrDefault.Enabled && !TableOrDefault.Enabled;
 }
 
 /// <summary><c>PUT /api/admin/guest-controls</c>: the whole document. <c>Version</c>, when sent, must match the stored one
-/// (409 otherwise), so two admins cannot overwrite each other's change unseen.</summary>
+/// (409 otherwise), so two admins cannot overwrite each other's change unseen. <c>Drop</c> and <c>Table</c> (Phase 2 E2.3) are
+/// optional: absent keeps the stored value, so a panel built before E2.3 keeps working.</summary>
 public sealed record UpdateGuestSettingsRequest(
     GuestFeatureSettings? Link,
     GuestFeatureSettings? Upload,
     GuestFeatureSettings? Snippet,
     GuestLimitSettings? Limits,
     int? Version,
-    string? Reason);
+    string? Reason,
+    GuestFeatureSettings? Drop = null,
+    GuestFeatureSettings? Table = null);
 
 /// <summary><c>POST /api/admin/guest-controls/pause-all</c> and <c>/resume-all</c>.</summary>
 public sealed record GuestPauseRequest(string? Reason);
@@ -97,4 +114,7 @@ public sealed record GuestAuditEntryDto(long Id, DateTime At, Guid? ActorId, str
 public sealed record GuestSettingChange(string Field, string? Old, string? New);
 
 /// <summary><c>GET /api/guest-status</c> (public): what the website needs before showing a guest form.</summary>
-public sealed record GuestStatusDto(GuestFeatureSettings Link, GuestFeatureSettings Upload, GuestFeatureSettings Snippet);
+/// <param name="Drop">Phase 2 E2.3: uploading into a drop-off portal without an account.</param>
+/// <param name="Table">Phase 2 E2.3: creating a table link as a guest.</param>
+public sealed record GuestStatusDto(GuestFeatureSettings Link, GuestFeatureSettings Upload, GuestFeatureSettings Snippet,
+    GuestFeatureSettings? Drop = null, GuestFeatureSettings? Table = null);

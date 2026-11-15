@@ -642,6 +642,9 @@ public sealed partial class LinkService(
             case "capsule": q = q.Where(l => l.TargetKind == LinkTargetKind.Capsule); break;
             case "compare": q = q.Where(l => l.TargetKind == LinkTargetKind.Compare); break;
             case "approval": q = q.Where(l => l.TargetKind == LinkTargetKind.Approval); break;
+            case "drop": q = q.Where(l => l.TargetKind == LinkTargetKind.Drop); break;
+            case "table": q = q.Where(l => l.TargetKind == LinkTargetKind.Table); break;
+            case "brief": q = q.Where(l => l.TargetKind == LinkTargetKind.Brief); break;
             default: q = q.Where(l => l.TargetKind == LinkTargetKind.Url); break;
         }
         if (!string.IsNullOrWhiteSpace(query.Search))
@@ -1108,7 +1111,8 @@ public sealed partial class LinkService(
         {
             LinkTargetKind.Snippet => "snippet", LinkTargetKind.Media => "image", LinkTargetKind.File => "file",
             LinkTargetKind.Secret => "secret", LinkTargetKind.Capsule => "capsule", LinkTargetKind.Compare => "compare",
-            LinkTargetKind.Approval => "approval", _ => "url",
+            LinkTargetKind.Approval => "approval", LinkTargetKind.Drop => "drop", LinkTargetKind.Table => "table",
+            LinkTargetKind.Brief => "brief", _ => "url",
         },
         l.DisabledKind,
         l.DisabledAt,

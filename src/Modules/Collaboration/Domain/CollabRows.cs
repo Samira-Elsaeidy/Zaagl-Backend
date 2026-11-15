@@ -48,6 +48,72 @@ public sealed class CommentRow
     public DateTime? ResolvedAt { get; set; }
 }
 
+/// <summary><c>collab.drop_portals</c> (docs/phase2/drop-portals.md): a "Reverse Pigeon" drop-off portal. People without an account
+/// upload into it; the files become ordinary resources of the owner (quota, library), attributed through <see cref="DropFileRow"/>.
+/// The caps are enforced by Files under a per-portal advisory lock; this row holds the owner's settings.</summary>
+public sealed class DropPortalRow
+{
+    public Guid ResourceId { get; set; }
+    public Guid OwnerId { get; set; }
+    public string? Instructions { get; set; }
+    public int MaxFiles { get; set; }
+    public long MaxBytes { get; set; }
+    public long MaxFileBytes { get; set; }
+    /// <summary>Comma-separated <c>UploadTypeCategories</c>; empty = any.</summary>
+    public string AllowedTypes { get; set; } = "";
+    public bool RequireName { get; set; }
+    public bool RequireEmail { get; set; }
+    public bool NotifyOwner { get; set; }
+    public DateTime? ClosedAt { get; set; }
+    public DateTime? LastNotifiedAt { get; set; }
+    public DateTime CreatedAt { get; set; }
+}
+
+/// <summary><c>collab.drop_files</c>: one received file (its own File/Media resource of the portal owner) and what the uploader
+/// typed. Visible to the owner only; never to other uploaders. No IP or user agent is stored.</summary>
+public sealed class DropFileRow
+{
+    public Guid ResourceId { get; set; }
+    public Guid PortalId { get; set; }
+    public Guid OwnerId { get; set; }
+    public Guid UploadSessionId { get; set; }
+    public string? UploaderName { get; set; }
+    public string? UploaderEmail { get; set; }
+    public string? Note { get; set; }
+    public DateTime ReceivedAt { get; set; }
+}
+
+/// <summary><c>collab.tables</c> (docs/phase2/clipboard-tables.md): a normalised table parsed from pasted JSON or CSV. The document is
+/// <c>{"columns":[{"name","type"}],"rows":[[cell,…],…]}</c> with scalar cells only. Guests may own one (owner_id null).</summary>
+public sealed class TableRow
+{
+    public Guid ResourceId { get; set; }
+    public Guid? OwnerId { get; set; }
+    /// <summary><c>json</c> or <c>csv</c>.</summary>
+    public string SourceFormat { get; set; } = "";
+    public int ColumnCount { get; set; }
+    public int RowCount { get; set; }
+    public int DocumentBytes { get; set; }
+    public string Document { get; set; } = "{}";
+    public DateTime CreatedAt { get; set; }
+}
+
+/// <summary><c>collab.briefs</c> (docs/phase2/voice-briefs.md): a voice recording over an image or a PDF of the owner, with a pointer
+/// timeline (<c>{"v":1,"events":[…]}</c>). The parts are references, re-checked on every read.</summary>
+public sealed class BriefRow
+{
+    public Guid ResourceId { get; set; }
+    public Guid OwnerId { get; set; }
+    public Guid SubjectResourceId { get; set; }
+    /// <summary><c>image</c> or <c>document</c> (PDF).</summary>
+    public string SubjectKind { get; set; } = "";
+    public Guid AudioResourceId { get; set; }
+    public int DurationMs { get; set; }
+    public string Timeline { get; set; } = "{}";
+    public int EventCount { get; set; }
+    public DateTime CreatedAt { get; set; }
+}
+
 /// <summary><c>collab.approvals</c> (docs/phase2/approval-gate.md): a draft image served watermarked until the link holder approves (or,
 /// later, pays); then the clean original is released. <see cref="State"/> follows <see cref="Application.ApprovalStateMachine"/>.</summary>
 public sealed class ApprovalRow

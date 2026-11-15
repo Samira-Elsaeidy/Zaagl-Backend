@@ -128,5 +128,16 @@ public static class EmailTemplates
             $"<p>{lead}</p><ul>{string.Join("", htmlItems)}</ul><p><a href=\"https://app.zaa.gl/links\">Manage your links</a></p>");
     }
 
+    /// <summary>Phase 2 E2.3: files arrived in a drop-off portal. Only the owner's own title is shown (HTML-encoded), never the
+    /// uploader's name, note or file names (visitor-controlled text stays out of Zaagl mail).</summary>
+    public static EmailMessage DropReceived(string toEmail, string? portalTitle, int count, string manageUrl)
+    {
+        var name = string.IsNullOrWhiteSpace(portalTitle) ? "your drop-off portal" : $"\"{portalTitle}\"";
+        var files = count == 1 ? "1 new file" : $"{count} new files";
+        return Build(toEmail, $"{files} in {(string.IsNullOrWhiteSpace(portalTitle) ? "your drop-off portal" : portalTitle)}",
+            $"{files} arrived in {name}. Files are scanned before you can download them.\n\nOpen the portal: {manageUrl}",
+            $"<p>{files} arrived in {System.Net.WebUtility.HtmlEncode(name)}. Files are scanned before you can download them.</p><p><a href=\"{System.Net.WebUtility.HtmlEncode(manageUrl)}\">Open the portal</a></p>");
+    }
+
     private static EmailMessage Build(string toEmail, string subject, string text, string html) => new(toEmail, subject, text, html);
 }

@@ -27,7 +27,7 @@ public static class LinksModule
             ?? throw new InvalidOperationException("ConnectionStrings:Postgres is not configured.");
         services.Configure<AbuseOptions>(configuration.GetSection(AbuseOptions.Section));
         services.AddDbContext<LinksDbContext>(o => Configure(o, connection));
-        services.AddSingleton(Npgsql.NpgsqlDataSource.Create(connection));
+        services.AddNpgsqlDataSourceOwnedByHost(connection);
         services.AddSingleton<ILinkCacheInvalidator, PgNotifyLinkCacheInvalidator>();
         services.AddScoped<TakedownService>();
         services.AddScoped<ILinkTakedown, ContentLinkTakedown>();
@@ -63,12 +63,13 @@ public static class LinksModule
 
         // Spec §7.0: redirects get their own small, fast-timeout pool so a slow creation transaction can
         // never starve (or be starved by) a redirect lookup.
-        services.AddSingleton(RedirectsDataSource.Create(connection));
+        // Built by a factory so the container owns it and disposes it (closing its connections) when the host stops.
+        services.AddSingleton(_ => RedirectsDataSource.Create(connection));
 
         // Spec §7.3: NOTIFY-based cache invalidation, real but secondary in this single-instance dev
         // environment (see LinkCacheInvalidation.cs's doc comment) - the main "db" pool is reused for it,
         // since it only sends short-lived SELECT pg_notify(...) calls, not the redirect hot path.
-        services.AddSingleton(Npgsql.NpgsqlDataSource.Create(connection));
+        services.AddNpgsqlDataSourceOwnedByHost(connection);
         services.AddSingleton<ILinkCacheInvalidator, PgNotifyLinkCacheInvalidator>();
         services.AddHostedService<LinkCacheInvalidationListener>();
 

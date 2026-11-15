@@ -34,6 +34,7 @@ public static class IdentityModule
         services.AddSingleton<TokenService>();
         services.AddSingleton<SecurityStampValidator>();
         services.AddScoped<IdentityService>();
+        services.AddScoped<Contracts.IOwnerNotices, OwnerNotices>(); // Phase 2 E2.3 drop-off portal notices
         services.AddScoped<Zaagl.Modules.Billing.Contracts.IPlanChangeListener, ApiKeyPlanChangeListener>();
         services.TryAddSingleton(TimeProvider.System);
         services.AddScoped<OneTimeCodeService>(); // PD-41: social sign-in exchange codes and hub tickets

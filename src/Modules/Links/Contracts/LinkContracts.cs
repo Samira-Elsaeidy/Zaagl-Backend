@@ -177,6 +177,9 @@ public static class LinkExportKinds
     public const string Capsule = "capsule";
     public const string Compare = "compare";
     public const string Approval = "approval";
+    public const string Drop = "drop";
+    public const string Table = "table";
+    public const string Brief = "brief";
 
     public static string For(LinkTargetKind kind) => kind switch
     {
@@ -187,6 +190,9 @@ public static class LinkExportKinds
         LinkTargetKind.Capsule => Capsule,
         LinkTargetKind.Compare => Compare,
         LinkTargetKind.Approval => Approval,
+        LinkTargetKind.Drop => Drop,
+        LinkTargetKind.Table => Table,
+        LinkTargetKind.Brief => Brief,
         _ => Url,
     };
 }

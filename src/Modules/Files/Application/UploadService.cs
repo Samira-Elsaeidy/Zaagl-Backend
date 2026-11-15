@@ -22,12 +22,42 @@ namespace Zaagl.Modules.Files.Application;
 /// <summary>Who uploads. Slice 1 accepts accounts only (JWT, device session, API key with <c>files:write</c>); the guest key is slice 2.</summary>
 public sealed record UploadActor(
     Guid? UserId, byte[]? GuestCreatorKey, CreatedVia Via,
-    Func<CancellationToken, Task<bool>>? AdmitGuest = null, Func<Task>? RefundGuest = null)
+    Func<CancellationToken, Task<bool>>? AdmitGuest = null, Func<Task>? RefundGuest = null, DropUpload? Drop = null)
 {
     public ContentOwner Owner => new(UserId, GuestCreatorKey);
 }
 
+/// <summary>
+/// Phase 2 E2.3 (docs/phase2/drop-portals.md): an upload sent by someone without an account into a drop-off portal. The actor's
+/// <see cref="UploadActor.UserId"/> is the portal owner (quota and library); the session is reachable only with the uploader's token
+/// (<paramref name="TokenHash"/> = SHA-256 of it). Caps are enforced under a per-portal advisory lock at create.
+/// </summary>
+/// <param name="PortalId">The portal's resource id.</param>
+/// <param name="MaxFiles">Upload sessions the portal accepts in total (open, complete and finished ones count).</param>
+/// <param name="MaxBytes">Total declared bytes the portal accepts.</param>
+/// <param name="MaxPerHour">Upload sessions the portal accepts per rolling hour.</param>
+/// <param name="MaxFileBytes">Per file (further capped by the owner's plan).</param>
+/// <param name="AllowedTypes"><see cref="UploadTypeCategories"/>; empty = any.</param>
+public sealed record DropUpload(
+    Guid PortalId, byte[] TokenHash, int MaxFiles, long MaxBytes, int MaxPerHour, long MaxFileBytes, IReadOnlyList<string> AllowedTypes);
+
 public sealed record UploadCreated(Guid Id, DateTime ExpiresAt);
+
+/// <summary><see cref="IDropUploadUsage"/>: the same counting as the create-time caps (aborted and expired sessions do not count).</summary>
+public sealed class DropUploadUsage(FilesDbContext db, TimeProvider time) : IDropUploadUsage
+{
+    public async Task<DropUsage> GetAsync(Guid portalId, CancellationToken cancellationToken)
+    {
+        var now = time.GetUtcNow().UtcDateTime;
+        var portal = db.UploadSessions.AsNoTracking().Where(s => s.DropPortalId == portalId);
+        var live = portal.Where(s => s.Status == UploadSessionStatus.Finalized || s.Status == UploadSessionStatus.Complete
+            || (s.Status == UploadSessionStatus.Open && s.ExpiresAt > now));
+        var files = await live.CountAsync(cancellationToken);
+        var bytes = await live.SumAsync(s => (long?)s.DeclaredLength, cancellationToken) ?? 0;
+        var hourAgo = now.AddHours(-1);
+        return new DropUsage(files, bytes, await portal.CountAsync(s => s.CreatedAt > hourAgo, cancellationToken));
+    }
+}
 
 public sealed record UploadOffset(long Offset, long Length, DateTime ExpiresAt);
 
@@ -89,6 +119,13 @@ public sealed class UploadService(
             return Error.Validation("Upload-Metadata is at most 4,096 bytes.");
         var metadata = FileNames.ParseTusMetadata(metadataHeader);
         if (metadata is null) return Error.Validation("Upload-Metadata is not valid (key, space, base64 value; comma separated).");
+        var drop = actor.Drop;
+        if (drop is not null)
+        {
+            if (userId is null) return Error.NotFound();
+            // A drop uploader need not know about kinds: media when enabled (a non-image is re-kinded to file at /complete).
+            metadata.TryAdd(UploadProtocol.MetadataKind, options.KindEnabled("media") ? "media" : "file");
+        }
         if (!metadata.TryGetValue(UploadProtocol.MetadataKind, out var kind) || kind is not ("file" or "media"))
             return Error.Validation("Upload-Metadata needs kind=media or kind=file.");
         if (!options.KindEnabled(kind))
@@ -100,7 +137,7 @@ public sealed class UploadService(
 
         // 4. Idempotency (optional on create): the same key with the same length returns the same session.
         byte[]? keyHash = null;
-        if (!string.IsNullOrEmpty(idempotencyKey) && userId is not null)
+        if (!string.IsNullOrEmpty(idempotencyKey) && userId is not null && drop is null)
         {
             keyHash = SHA256.HashData(Encoding.UTF8.GetBytes(idempotencyKey));
             var existing = await db.UploadSessions.AsNoTracking()
@@ -115,6 +152,10 @@ public sealed class UploadService(
         var plan = userId is { } uid ? await plans.GetForUserAsync(uid, ct) : plans.Guest;
         if (length > plan.Limits.MaxFileBytes)
             return Error.Of(ErrorCodes.FileTooLarge, $"A file can be at most {plan.Limits.MaxFileBytes} bytes on your plan.");
+        if (drop is not null && length > drop.MaxFileBytes)
+            return Error.Of(ErrorCodes.FileTooLarge, $"This portal accepts files of at most {drop.MaxFileBytes} bytes.");
+        if (drop is not null && metadata.TryGetValue(UploadProtocol.MetadataBurn, out var dropBurn) && dropBurn is "1" or "true")
+            return Error.Validation("Drop-off uploads cannot be burn-after-download.");
 
         // Burn (ARC-019 section 1) is refused before any byte: files only, and only with the capability. /complete checks again.
         if (metadata.TryGetValue(UploadProtocol.MetadataBurn, out var burnValue) && burnValue is "1" or "true")
@@ -125,14 +166,28 @@ public sealed class UploadService(
 
         // 5b. Guest counters (PD-14, 429 quota), after the plan checks; refunded when the create fails.
         var admitted = false;
-        if (userId is null && actor.AdmitGuest is { } admit)
+        if ((userId is null || drop is not null) && actor.AdmitGuest is { } admit)
         {
-            if (!await admit(ct)) return Error.Of(ErrorCodes.Quota, "Guest limit reached (30 per hour, 60 per day). Sign in or try again later.");
+            if (!await admit(ct))
+                return Error.Of(ErrorCodes.Quota, drop is not null
+                    ? "Too many uploads from your network. Try again later."
+                    : "Guest limit reached (30 per hour, 60 per day). Sign in or try again later.");
             admitted = true;
         }
 
         // 6. Disk admission.
         if (await admission.CheckAsync(length, ct) is { } full) { await RefundAsync(admitted, actor); return full; }
+
+        // 6b. Drop-off portal caps (E2.3): counted from this table under a per-portal advisory lock that is held until the new session
+        // is committed, so concurrent uploads can never pass the file, byte or hourly cap together.
+        await using var portalGate = drop is null ? null
+            : await AdvisoryLock.TryAcquireAsync(ConnectionString, AdvisoryLock.KeyFor(drop.PortalId), TimeSpan.FromSeconds(5), time, ct);
+        if (drop is not null)
+        {
+            if (portalGate is null) { await RefundAsync(admitted, actor); return Error.Of(ErrorCodes.Busy, "The portal is busy. Try again in a second."); }
+            var refusal = await DropCapsAsync(drop, length, now, ct);
+            if (refusal is not null) { await RefundAsync(admitted, actor); return refusal; }
+        }
 
         // 7. Reserve the declared bytes (403 quota-exceeded) and record the session.
         var reserved = await quota.ReserveAsync(actor.Owner, length, ct);
@@ -157,6 +212,8 @@ public sealed class UploadService(
             CreatedAt = now,
             LastActivityAt = now,
             ExpiresAt = now.AddHours(Math.Max(1, options.SessionIdleHours)),
+            DropPortalId = drop?.PortalId,
+            DropTokenHash = drop?.TokenHash,
         };
         try
         {
@@ -190,6 +247,23 @@ public sealed class UploadService(
             return Error.Of(ErrorCodes.InsufficientStorage, "The server cannot take this upload right now. Try again later.");
         }
         return new UploadCreated(session.Id, session.ExpiresAt);
+    }
+
+    /// <summary>The portal's caps, read under its advisory lock. Aborted and expired sessions do not count; finished ones do (the
+    /// portal's file cap counts what was received, even if the owner later deleted a file).</summary>
+    private async Task<Error?> DropCapsAsync(DropUpload drop, long length, DateTime now, CancellationToken ct)
+    {
+        var portal = db.UploadSessions.AsNoTracking().Where(s => s.DropPortalId == drop.PortalId);
+        var live = portal.Where(s => s.Status == UploadSessionStatus.Finalized || s.Status == UploadSessionStatus.Complete
+            || (s.Status == UploadSessionStatus.Open && s.ExpiresAt > now));
+        var files = await live.CountAsync(ct);
+        if (files >= drop.MaxFiles) return Error.Of(ErrorCodes.DropClosed, "This portal has received all the files it accepts.");
+        var bytes = await live.SumAsync(s => (long?)s.DeclaredLength, ct) ?? 0;
+        if (bytes + length > drop.MaxBytes) return Error.Of(ErrorCodes.DropClosed, "This portal does not have room for a file this large.");
+        var hourAgo = now.AddHours(-1);
+        if (await portal.CountAsync(s => s.CreatedAt > hourAgo, ct) >= drop.MaxPerHour)
+            return Error.TooManyRequests("This portal is receiving too many uploads right now. Try again later.");
+        return null;
     }
 
     // ---------------------------------------------------------------------------------------------------
@@ -322,6 +396,8 @@ public sealed class UploadService(
         UploadActor actor, Guid id, CompleteUploadRequest request, string idempotencyKey, CancellationToken ct)
     {
         var now = time.GetUtcNow().UtcDateTime;
+        // E2.3: a drop uploader sets nothing on the owner's file (no title, expiry, password, alias, public, burn).
+        if (actor.Drop is not null) request = new CompleteUploadRequest(null, null, false, null, null, false);
 
         // 1. Principal and session (404 for another principal).
         var preview = await LoadAsync(actor, id, ct);
@@ -420,6 +496,18 @@ public sealed class UploadService(
             if (classified.Class == FileClass.EncryptedArchive) return Error.Of(ErrorCodes.ContentRejected, "Encrypted archives are not accepted.");
             var blocked = classified.Class == FileClass.Executable
                 || FileTypePolicy.HasBlockedExtension(FileNames.Sanitize(session.DeclaredName, type?.Extension)); // the display name, never a path
+            if (actor.Drop is { } drop)
+            {
+                // E2.3: an anonymous uploader never gets an executable into someone's library, and the portal's type families apply.
+                // A refused drop upload is aborted at once (temp bytes deleted, reservation released, the portal's slot freed).
+                var refusal = blocked ? "Executable files are not accepted."
+                    : !UploadTypeCategories.Allows(drop.AllowedTypes, type?.Mime) ? "This portal does not accept this type of file." : null;
+                if (refusal is not null)
+                {
+                    await AbortCoreAsync(id, CancellationToken.None);
+                    return Error.Of(ErrorCodes.ContentRejected, refusal);
+                }
+            }
             if (blocked && uploads.Value.BlocksExecutablesFor(isGuest: userId is null, isPaid: plan.Capabilities.IsPaid))
                 return Error.Of(ErrorCodes.ContentRejected, "Executable files are not accepted on your plan.");
             detected = type?.Mime;
@@ -444,7 +532,7 @@ public sealed class UploadService(
         // 5. The link (idempotent per resource id; a replay comes back without its key), then bind.
         var issued = await issuer.CreateContentLinkAsync(new ContentLinkRequest(
             resource.ResourceId, resource.Kind == ResourceKind.File ? LinkTargetKind.File : LinkTargetKind.Media, userId, userId is null ? actor.GuestCreatorKey : null, linkExpiry,
-            customSlug, title, request.Password, RequireLinkKey: !request.Public), ct);
+            customSlug, title, request.Password, RequireLinkKey: !request.Public || actor.Drop is not null), ct);
         if (!issued.IsSuccess) return issued.Error!;
         var link = issued.Value!;
         var bound = await resources.BindLinkAsync(resource.ResourceId, link.LinkId, ct);
@@ -543,8 +631,12 @@ public sealed class UploadService(
 
     private async Task<UploadSessionRow?> LoadAsync(UploadActor actor, Guid id, CancellationToken ct)
     {
+        // E2.3: a drop session is reachable with its uploader token only; the owner's own routes never see it (nor the reverse).
+        if (actor.Drop is { } drop)
+            return await db.UploadSessions.AsNoTracking()
+                .FirstOrDefaultAsync(s => s.Id == id && s.DropPortalId == drop.PortalId && s.DropTokenHash == drop.TokenHash, ct);
         if (actor.UserId is { } userId)
-            return await db.UploadSessions.AsNoTracking().FirstOrDefaultAsync(s => s.Id == id && s.OwnerId == userId, ct);
+            return await db.UploadSessions.AsNoTracking().FirstOrDefaultAsync(s => s.Id == id && s.OwnerId == userId && s.DropPortalId == null, ct);
         if (actor.GuestCreatorKey is { } key)
             return await db.UploadSessions.AsNoTracking().FirstOrDefaultAsync(s => s.Id == id && s.GuestCreatorKey == key, ct);
         return null;

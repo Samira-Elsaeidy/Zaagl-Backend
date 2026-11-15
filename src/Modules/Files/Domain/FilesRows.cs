@@ -31,6 +31,11 @@ public sealed class UploadSessionRow
     public DateTime CreatedAt { get; set; }
     public DateTime LastActivityAt { get; set; }
     public DateTime ExpiresAt { get; set; }
+    /// <summary>Phase 2 E2.3 (docs/phase2/drop-portals.md): the drop-off portal (its resource id) this upload was sent into. The
+    /// session is owned by the portal owner (quota, library) but reachable only with <see cref="DropTokenHash"/>.</summary>
+    public Guid? DropPortalId { get; set; }
+    /// <summary>SHA-256 of the uploader's per-session token (returned once by the portal's tus create).</summary>
+    public byte[]? DropTokenHash { get; set; }
 }
 
 /// <summary><c>files.storage_objects</c>: one object per upload, no cross-owner dedup in Phase 1.</summary>

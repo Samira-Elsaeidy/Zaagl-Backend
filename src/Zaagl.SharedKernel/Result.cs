@@ -96,6 +96,10 @@ public static class ErrorCodes
     public const string LimitReached = "limit-reached";
     /// <summary>422: a referenced resource cannot be used (not yours, not an image, not ready, closed).</summary>
     public const string ResourceUnusable = "resource-unusable";
+    /// <summary>409: a drop-off portal is closed, full or no longer accepting uploads (E2.3).</summary>
+    public const string DropClosed = "drop-closed";
+    /// <summary>413: pasted table input (or a brief timeline) over the plan cap (E2.3).</summary>
+    public const string InputTooLarge = "input-too-large";
 }
 
 public readonly record struct Result<T>(T? Value, Error? Error)

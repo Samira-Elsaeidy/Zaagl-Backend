@@ -10,7 +10,8 @@ using Zaagl.SharedKernel.Persistence;
 
 namespace Zaagl.Modules.Collaboration;
 
-/// <summary>Phase 2 E2.2 (docs/phase2): the <c>collab</c> schema: before/after comparisons, pinned comments, approval gates.
+/// <summary>Phase 2 E2.2/E2.3 (docs/phase2): the <c>collab</c> schema: before/after comparisons, pinned comments, approval gates,
+/// drop-off portals.
 /// Endpoints are mapped by the Api project (CollaborationEndpoints).</summary>
 public static class CollaborationModule
 {
@@ -29,6 +30,11 @@ public static class CollaborationModule
         services.TryAddSingleton(TimeProvider.System);
         services.AddScoped<IResourceKindHandler, ComparisonKindHandler>();
         services.AddScoped<IResourceKindHandler, ApprovalKindHandler>();
+        services.AddScoped<IResourceKindHandler, DropPortalKindHandler>();
+        services.AddScoped<IResourceKindHandler, TableKindHandler>();
+        services.AddScoped<IResourceKindHandler, BriefKindHandler>();
+        services.AddScoped<IResourceKindHandler>(sp => new DropFilePurgeHandler(sp.GetRequiredService<CollabDbContext>(), ResourceKind.File));
+        services.AddScoped<IResourceKindHandler>(sp => new DropFilePurgeHandler(sp.GetRequiredService<CollabDbContext>(), ResourceKind.Media));
         foreach (var kind in CommentService.Targets)
             services.AddScoped<IResourceKindHandler>(sp => new CommentPurgeHandler(sp.GetRequiredService<CollabDbContext>(), kind));
         if (workerOnly) return services;
@@ -39,6 +45,9 @@ public static class CollaborationModule
         services.Configure<CommentOptions>(configuration.GetSection(CommentOptions.Section));
         services.AddScoped<CommentService>();
         services.AddScoped<ApprovalService>();
+        services.AddScoped<DropPortalService>();
+        services.AddScoped<TableService>();
+        services.AddScoped<BriefService>();
         services.AddSingleton<IModuleMigrator>(sp =>
             new ModuleMigrator<CollabDbContext>("collab", sp.GetRequiredService<IServiceScopeFactory>()));
         return services;

@@ -1,5 +1,17 @@
 namespace Zaagl.Modules.Identity.Contracts;
 
+/// <summary>
+/// Phase 2 E2.3: account notices other modules may queue through the Identity email outbox (spec §7.10: queued, sent by the
+/// dispatcher with its retry, suppression and disabled-user rules). The text carries only owner-chosen data, never what an
+/// anonymous visitor typed (no phishing vector through Zaagl mail).
+/// </summary>
+public interface IOwnerNotices
+{
+    /// <param name="portalTitle">The owner's own portal title (may be null).</param>
+    /// <param name="newFiles">Files received since the previous notice.</param>
+    Task QueueDropReceivedAsync(Guid userId, Guid portalId, string? portalTitle, int newFiles, CancellationToken cancellationToken);
+}
+
 public sealed record UserDto(Guid Id, string Email, string DisplayName, string? Role, bool EmailConfirmed);
 
 /// <summary>Issued after a successful login (or confirmed-admin TOTP step). Carries both tokens, per

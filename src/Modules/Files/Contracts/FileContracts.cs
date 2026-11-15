@@ -31,6 +31,47 @@ public static class UploadProtocol
     public const string MetadataBurn = "burn";
 }
 
+/// <summary>
+/// Phase 2 E2.3 (docs/phase2/drop-portals.md): the coarse type families a drop-off portal may restrict uploads to. Always decided from
+/// the type detected in the bytes at <c>/complete</c> (never the declared type or the name). Office documents (docx, xlsx, pptx, odt)
+/// are ZIP containers and fall under <see cref="Archive"/>; anything not recognised is <see cref="Other"/>.
+/// </summary>
+public static class UploadTypeCategories
+{
+    public const string Image = "image";
+    public const string Video = "video";
+    public const string Audio = "audio";
+    public const string Pdf = "pdf";
+    public const string Archive = "archive";
+    public const string Model = "model";
+    public const string Other = "other";
+
+    public static readonly IReadOnlyList<string> All = [Image, Video, Audio, Pdf, Archive, Model, Other];
+
+    public static string Of(string? detectedMime) => detectedMime switch
+    {
+        "image/png" or "image/jpeg" or "image/gif" or "image/webp" => Image,
+        "application/pdf" => Pdf,
+        "application/zip" or "application/gzip" or "application/x-7z-compressed" => Archive,
+        { } m when m.StartsWith("video/", StringComparison.Ordinal) => Video,
+        { } m when m.StartsWith("audio/", StringComparison.Ordinal) => Audio,
+        { } m when m.StartsWith("model/", StringComparison.Ordinal) => Model,
+        _ => Other,
+    };
+
+    /// <summary>An empty list allows every family (executables and encrypted archives are refused for drop uploads regardless).</summary>
+    public static bool Allows(IReadOnlyCollection<string> allowed, string? detectedMime) =>
+        allowed.Count == 0 || allowed.Contains(Of(detectedMime), StringComparer.Ordinal);
+}
+
+/// <summary>What a drop-off portal has received so far (Phase 2 E2.3), counted exactly as the create-time caps count it.</summary>
+public sealed record DropUsage(int Files, long Bytes, int LastHour);
+
+public interface IDropUploadUsage
+{
+    Task<DropUsage> GetAsync(Guid portalId, CancellationToken cancellationToken);
+}
+
 public enum UploadSessionStatus : short
 {
     Open = 0,

@@ -13,6 +13,10 @@ public sealed class CollabDbContext(DbContextOptions<CollabDbContext> options) :
     public DbSet<CommentSettingsRow> CommentSettings => Set<CommentSettingsRow>();
     public DbSet<CommentRow> Comments => Set<CommentRow>();
     public DbSet<ApprovalRow> Approvals => Set<ApprovalRow>();
+    public DbSet<DropPortalRow> DropPortals => Set<DropPortalRow>();
+    public DbSet<DropFileRow> DropFiles => Set<DropFileRow>();
+    public DbSet<TableRow> Tables => Set<TableRow>();
+    public DbSet<BriefRow> Briefs => Set<BriefRow>();
 
     protected override void OnModelCreating(ModelBuilder b)
     {
@@ -79,6 +83,68 @@ public sealed class CollabDbContext(DbContextOptions<CollabDbContext> options) :
             e.Property(x => x.PaymentProvider).HasMaxLength(32);
             e.Property(x => x.PaymentReference).HasMaxLength(128);
             e.HasIndex(x => x.DraftResourceId).HasDatabaseName("ix_approvals_draft");
+        });
+
+        b.Entity<DropPortalRow>(e =>
+        {
+            e.ToTable("drop_portals", t =>
+            {
+                t.HasCheckConstraint("ck_drop_portals_caps", "max_files BETWEEN 1 AND 10000 AND max_bytes >= 1 AND max_file_bytes >= 1");
+                t.HasCheckConstraint("ck_drop_portals_instructions", "instructions IS NULL OR char_length(instructions) <= 2000");
+                t.HasCheckConstraint("ck_drop_portals_types", "char_length(allowed_types) <= 100");
+            });
+            e.HasKey(x => x.ResourceId);
+            e.Property(x => x.ResourceId).ValueGeneratedNever();
+            e.Property(x => x.Instructions).HasMaxLength(2000);
+            e.Property(x => x.AllowedTypes).HasMaxLength(100).IsRequired();
+            e.HasIndex(x => new { x.OwnerId, x.CreatedAt }).HasDatabaseName("ix_drop_portals_owner");
+        });
+
+        b.Entity<DropFileRow>(e =>
+        {
+            e.ToTable("drop_files", t =>
+            {
+                t.HasCheckConstraint("ck_drop_files_name", "uploader_name IS NULL OR char_length(uploader_name) <= 100");
+                t.HasCheckConstraint("ck_drop_files_email", "uploader_email IS NULL OR char_length(uploader_email) <= 254");
+                t.HasCheckConstraint("ck_drop_files_note", "note IS NULL OR char_length(note) <= 1000");
+            });
+            e.HasKey(x => x.ResourceId);
+            e.Property(x => x.ResourceId).ValueGeneratedNever();
+            e.Property(x => x.UploaderName).HasMaxLength(100);
+            e.Property(x => x.UploaderEmail).HasMaxLength(254);
+            e.Property(x => x.Note).HasMaxLength(1000);
+            e.HasIndex(x => new { x.PortalId, x.ReceivedAt }).HasDatabaseName("ix_drop_files_portal");
+            e.HasIndex(x => x.UploadSessionId).IsUnique().HasDatabaseName("ux_drop_files_session");
+        });
+
+        b.Entity<TableRow>(e =>
+        {
+            e.ToTable("tables", t =>
+            {
+                t.HasCheckConstraint("ck_tables_format", "source_format IN ('json', 'csv')");
+                t.HasCheckConstraint("ck_tables_size", "column_count BETWEEN 1 AND 500 AND row_count BETWEEN 0 AND 200000 AND document_bytes BETWEEN 2 AND 33554432");
+            });
+            e.HasKey(x => x.ResourceId);
+            e.Property(x => x.ResourceId).ValueGeneratedNever();
+            e.Property(x => x.SourceFormat).HasMaxLength(4).IsRequired();
+            e.Property(x => x.Document).HasColumnType("jsonb").IsRequired();
+            e.HasIndex(x => new { x.OwnerId, x.CreatedAt }).HasFilter("owner_id IS NOT NULL").HasDatabaseName("ix_tables_owner");
+        });
+
+        b.Entity<BriefRow>(e =>
+        {
+            e.ToTable("briefs", t =>
+            {
+                t.HasCheckConstraint("ck_briefs_subject_kind", "subject_kind IN ('image', 'document')");
+                t.HasCheckConstraint("ck_briefs_parts", "subject_resource_id <> audio_resource_id");
+                t.HasCheckConstraint("ck_briefs_duration", "duration_ms BETWEEN 1 AND 300000");
+                t.HasCheckConstraint("ck_briefs_events", "event_count BETWEEN 0 AND 20000");
+            });
+            e.HasKey(x => x.ResourceId);
+            e.Property(x => x.ResourceId).ValueGeneratedNever();
+            e.Property(x => x.SubjectKind).HasMaxLength(8).IsRequired();
+            e.Property(x => x.Timeline).HasColumnType("jsonb").IsRequired();
+            e.HasIndex(x => new { x.OwnerId, x.CreatedAt }).HasDatabaseName("ix_briefs_owner");
         });
     }
 }

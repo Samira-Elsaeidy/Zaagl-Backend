@@ -36,7 +36,7 @@ public sealed class GuestSettingsStore(
             var on = new GuestFeatureSettings(Enabled: true, CaptchaRequired: true);
             return new GuestSettings(on, on, on,
                 new GuestLimitSettings(o.PerMinute, o.GlobalPerHour, o.ContentPerHour, o.ContentPerDay, o.LinksPerDay),
-                Version: 0, UpdatedAt: null, UpdatedBy: null);
+                Version: 0, UpdatedAt: null, UpdatedBy: null, Drop: on, Table: on);
         }
     }
 
@@ -89,7 +89,9 @@ public sealed class GuestSettingsStore(
         new GuestFeatureSettings(r.UploadEnabled, r.UploadCaptcha),
         new GuestFeatureSettings(r.SnippetEnabled, r.SnippetCaptcha),
         new GuestLimitSettings(r.PerMinute, r.GlobalPerHour, r.ContentPerHour, r.ContentPerDay, r.LinksPerDay),
-        r.Version, DateTime.SpecifyKind(r.UpdatedAt, DateTimeKind.Utc), r.UpdatedByEmail);
+        r.Version, DateTime.SpecifyKind(r.UpdatedAt, DateTimeKind.Utc), r.UpdatedByEmail,
+        new GuestFeatureSettings(r.DropEnabled, r.DropCaptcha),
+        new GuestFeatureSettings(r.TableEnabled, r.TableCaptcha));
 }
 
 /// <summary>
@@ -147,18 +149,27 @@ public sealed class GuestControlService(
         var problem = Validate(request);
         if (problem is not null) return Task.FromResult<Result<GuestSettings>>(Error.Validation(problem));
         return SaveAsync(GuestAuditActions.Update, actorId, actorEmail, request.Reason, request.Version,
-            _ => new GuestSettings(request.Link!, request.Upload!, request.Snippet!, request.Limits!, 0, null, null), ct);
+            s => new GuestSettings(request.Link!, request.Upload!, request.Snippet!, request.Limits!, 0, null, null,
+                request.Drop ?? s.DropOrDefault, request.Table ?? s.TableOrDefault), ct);
     }
 
     /// <summary>Turns every guest feature off (CAPTCHA and limits unchanged).</summary>
     public Task<Result<GuestSettings>> PauseAllAsync(Guid actorId, string? actorEmail, string? reason, CancellationToken ct) =>
         SaveAsync(GuestAuditActions.PauseAll, actorId, actorEmail, reason, expectedVersion: null,
-            s => s with { Link = s.Link with { Enabled = false }, Upload = s.Upload with { Enabled = false }, Snippet = s.Snippet with { Enabled = false } }, ct);
+            s => s with
+            {
+                Link = s.Link with { Enabled = false }, Upload = s.Upload with { Enabled = false }, Snippet = s.Snippet with { Enabled = false },
+                Drop = s.DropOrDefault with { Enabled = false }, Table = s.TableOrDefault with { Enabled = false },
+            }, ct);
 
     /// <summary>Turns every guest feature back on (CAPTCHA and limits unchanged).</summary>
     public Task<Result<GuestSettings>> ResumeAllAsync(Guid actorId, string? actorEmail, string? reason, CancellationToken ct) =>
         SaveAsync(GuestAuditActions.ResumeAll, actorId, actorEmail, reason, expectedVersion: null,
-            s => s with { Link = s.Link with { Enabled = true }, Upload = s.Upload with { Enabled = true }, Snippet = s.Snippet with { Enabled = true } }, ct);
+            s => s with
+            {
+                Link = s.Link with { Enabled = true }, Upload = s.Upload with { Enabled = true }, Snippet = s.Snippet with { Enabled = true },
+                Drop = s.DropOrDefault with { Enabled = true }, Table = s.TableOrDefault with { Enabled = true },
+            }, ct);
 
     private async Task<Result<GuestSettings>> SaveAsync(
         string action, Guid actorId, string? actorEmail, string? reason, int? expectedVersion,
@@ -195,6 +206,10 @@ public sealed class GuestControlService(
         row.UploadCaptcha = after.Upload.CaptchaRequired;
         row.SnippetEnabled = after.Snippet.Enabled;
         row.SnippetCaptcha = after.Snippet.CaptchaRequired;
+        row.DropEnabled = after.DropOrDefault.Enabled;
+        row.DropCaptcha = after.DropOrDefault.CaptchaRequired;
+        row.TableEnabled = after.TableOrDefault.Enabled;
+        row.TableCaptcha = after.TableOrDefault.CaptchaRequired;
         row.PerMinute = after.Limits.PerMinute;
         row.GlobalPerHour = after.Limits.GlobalPerHour;
         row.ContentPerHour = after.Limits.ContentPerHour;
@@ -291,6 +306,9 @@ public sealed class GuestControlService(
                 For(GuestFeatures.Link, LinkTargetKind.Url),
                 For(GuestFeatures.Upload, LinkTargetKind.File, LinkTargetKind.Media),
                 For(GuestFeatures.Snippet, LinkTargetKind.Snippet),
+                // Drop uploads land in the owner's library (owner rows, not guest rows): no creation counts, only the panel counters.
+                For(GuestFeatures.Drop),
+                For(GuestFeatures.Table, LinkTargetKind.Table),
             ],
             settings.AllPaused, counters.Since, now);
     }
