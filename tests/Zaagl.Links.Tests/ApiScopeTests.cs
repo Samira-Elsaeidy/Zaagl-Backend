@@ -161,6 +161,7 @@ public sealed class ApiScopeTests(RealApiFactory real) : IAsyncLifetime, IClassF
                              typeof(Zaagl.Modules.Collaboration.Application.DropPortalService), typeof(Zaagl.Modules.Files.Application.UploadService),
                              typeof(Zaagl.Modules.Files.Infrastructure.DiskAdmission), typeof(Zaagl.Modules.Identity.Contracts.IOwnerNotices),
                              typeof(Zaagl.Modules.Collaboration.Application.TableService), typeof(Zaagl.Modules.Collaboration.Application.BriefService),
+                             typeof(Zaagl.Modules.Files.Application.RedactionService),
                          })
                     services.AddPlaceholder(type);
             },
@@ -177,6 +178,7 @@ public sealed class ApiScopeTests(RealApiFactory real) : IAsyncLifetime, IClassF
                 app.MapDrops();
                 app.MapTables();
                 app.MapBriefs();
+                app.MapRedactions();
             });
         _client = _host.GetTestClient();
     }

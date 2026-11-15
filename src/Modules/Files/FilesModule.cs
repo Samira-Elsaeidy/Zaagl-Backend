@@ -35,6 +35,7 @@ public static class FilesModule
         services.Configure<ClamAvOptions>(configuration.GetSection(ClamAvOptions.Section));
         services.Configure<MediaOptions>(configuration.GetSection(MediaOptions.Section));
         services.Configure<ViewerOptions>(configuration.GetSection(ViewerOptions.Section));
+        services.Configure<RedactionOptions>(configuration.GetSection(RedactionOptions.Section)); // Phase 2 E2.3
         services.AddSingleton<LocalObjectStorage>();
         services.AddSingleton<IObjectStorage>(sp => sp.GetRequiredService<LocalObjectStorage>());
         services.AddSingleton<TempUploadFiles>();
@@ -63,6 +64,8 @@ public static class FilesModule
     {
         services.AddScoped<DiskAdmission>();
         services.AddScoped<UploadService>();
+        services.AddSingleton<RedactionGate>();      // Phase 2 E2.3 PII redaction guard
+        services.AddScoped<RedactionService>();
         services.AddScoped<UploadSessionExpiry>();
         return services;
     }

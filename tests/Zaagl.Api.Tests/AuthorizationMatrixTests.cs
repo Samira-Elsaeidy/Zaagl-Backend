@@ -315,6 +315,9 @@ public static class AuthzOracle
         ["GET /api/briefs/{id:guid}"] = new(Access.Scoped, "resources:read", Execute: false, Note: "owner, other user 404; VoiceBriefTests"),
         ["DELETE /api/briefs/{id:guid}"] = new(Access.Scoped, "tools:write", Execute: false, Note: "owner, other user 404; VoiceBriefTests"),
         ["GET /api/public/briefs/{code}"] = new(Access.Anyone, AllowedMayBe404: true, Execute: false, Note: "link key gate; VoiceBriefTests"),
+        // Phase 2 E2.3 PII redaction guard: PiiRedactionTests.
+        ["POST /api/redactions/"] = new(Access.Scoped, "tools:write", Execute: false, Note: "accounts only, own images; PiiRedactionTests"),
+        ["POST /api/redactions/detect"] = new(Access.Scoped, "tools:write", Execute: false, Note: "text check, no storage; PiiRedactionTests"),
         ["POST /api/vault/secrets/"] = new(Access.ScopedOrGuest, "tools:write", Execute: false, Note: "guest with CAPTCHA, failed credential 401, scope; VaultApiTests"),
         ["GET /api/vault/secrets/"] = new(Access.Scoped, "resources:read", Execute: false, Note: "VaultApiTests"),
         ["GET /api/vault/secrets/{id:guid}"] = new(Access.Scoped, "resources:read", Execute: false, Note: "owner, other user 404; VaultApiTests"),
