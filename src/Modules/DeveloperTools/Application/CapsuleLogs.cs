@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Text;
 using System.Text.Json;
 using Zaagl.SharedKernel;
@@ -32,7 +33,8 @@ public static class CapsuleLogs
     public static readonly IReadOnlySet<string> SensitiveQueryKeys = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
     {
         "token", "access_token", "refresh_token", "id_token", "key", "api_key", "apikey", "secret", "client_secret", "password", "pass",
-        "pwd", "auth", "code", "session", "sessionid", "sig", "signature", "credential",
+        "pwd", "auth", "code", "session", "sessionid", "sig", "signature", "credential", "api-key", "x-api-key", "access-token",
+        "auth_token", "authtoken", "jwt", "bearer", "private_key", "passwd", "x-amz-signature", "x-amz-credential", "x-amz-security-token",
     };
 
     /// <summary>Validates <paramref name="logs"/> and returns the normalised, redacted JSON and its summary.</summary>
@@ -256,14 +258,23 @@ public static class CapsuleLogs
     private static Error? Number(Utf8JsonWriter w, JsonProperty p, double min, double max)
     {
         if (p.Value.ValueKind != JsonValueKind.Number || !p.Value.TryGetDouble(out var n) || !double.IsFinite(n) || n < min || n > max)
-            return Error.Validation($"'{Trim(p.Name)}' must be a number between {min} and {max}.");
+            return Error.Validation(double.IsPositiveInfinity(max) || max == double.MaxValue
+                ? $"'{Trim(p.Name)}' must be a finite number, {min.ToString(CultureInfo.InvariantCulture)} or more."
+                : $"'{Trim(p.Name)}' must be a number between {min.ToString(CultureInfo.InvariantCulture)} and {max.ToString(CultureInfo.InvariantCulture)}.");
         w.WriteNumber(p.Name, n);
         return null;
     }
 
-    /// <summary>Replaces the values of sensitive query parameters (and the fragment) by <see cref="Redacted"/>; everything else is kept.</summary>
+    /// <summary>
+    /// Replaces the values of sensitive query parameters (and the fragment, and any user:password before the host) by
+    /// <see cref="Redacted"/>; everything else is kept byte for byte. Parameters are split on <c>&amp;</c> and <c>;</c>; a key is
+    /// percent-decoded (repeatedly, so double encoding does not hide it, and <c>+</c> as a space), trimmed, and matched
+    /// case-insensitively by its base name and by every bracket segment, so <c>token[]</c>, <c>api_key[0]</c>, <c>auth[token]</c>,
+    /// <c>user[password]</c> and <c>%74oken</c> are all caught.
+    /// </summary>
     public static string RedactUrl(string url)
     {
+        url = RedactUserInfo(url);
         var hash = url.IndexOf('#');
         if (hash >= 0) url = url[..hash] + (hash < url.Length - 1 ? "#" + Redacted : "");
         var q = url.IndexOf('?');
@@ -273,13 +284,51 @@ public static class CapsuleLogs
         var fragment = "";
         var h = tail.IndexOf('#');
         if (h >= 0) { fragment = tail[h..]; tail = tail[..h]; }
-        var parts = tail.Split('&').Select(part =>
+        var output = new StringBuilder(url.Length);
+        var start = 0;
+        for (var i = 0; i <= tail.Length; i++)
         {
+            if (i < tail.Length && tail[i] is not ('&' or ';')) continue;
+            var part = tail[start..i];
             var eq = part.IndexOf('=');
-            var key = Uri.UnescapeDataString(eq < 0 ? part : part[..eq]);
-            return eq >= 0 && SensitiveQueryKeys.Contains(key) ? part[..(eq + 1)] + Redacted : part;
-        });
-        return head + string.Join('&', parts) + fragment;
+            output.Append(eq >= 0 && IsSensitiveKey(part[..eq]) ? part[..(eq + 1)] + Redacted : part);
+            if (i < tail.Length) output.Append(tail[i]);
+            start = i + 1;
+        }
+        return head + output + fragment;
+    }
+
+    /// <summary>True when the raw query key names a sensitive parameter (see <see cref="RedactUrl"/>).</summary>
+    public static bool IsSensitiveKey(string rawKey)
+    {
+        var key = rawKey;
+        for (var round = 0; round < 3; round++)
+        {
+            var decoded = Uri.UnescapeDataString(key.Replace('+', ' '));
+            if (decoded == key) break;
+            key = decoded;
+        }
+        key = key.Trim();
+        // "a[b][0]" -> segments "a", "b", "0"; "token[]" -> "token".
+        foreach (var segment in key.Split('[', ']'))
+        {
+            var name = segment.Trim();
+            if (name.Length > 0 && SensitiveQueryKeys.Contains(name)) return true;
+        }
+        return false;
+    }
+
+    /// <summary>scheme://user:password@host... -> scheme://[redacted]@host...</summary>
+    private static string RedactUserInfo(string url)
+    {
+        var scheme = url.IndexOf("://", StringComparison.Ordinal);
+        if (scheme < 0) return url;
+        var authorityStart = scheme + 3;
+        var authorityEnd = url.IndexOfAny(['/', '?', '#'], authorityStart);
+        var authority = authorityEnd < 0 ? url[authorityStart..] : url[authorityStart..authorityEnd];
+        var at = authority.LastIndexOf('@');
+        if (at < 0) return url;
+        return url[..authorityStart] + Redacted + url[(authorityStart + at)..];
     }
 
     private static string Trim(string name) => name.Length <= 40 ? name : name[..40];

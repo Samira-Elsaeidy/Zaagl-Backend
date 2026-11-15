@@ -15,8 +15,10 @@ using LinkOptions = Zaagl.Modules.Links.Application.LinkOptions;
 namespace Zaagl.Api.Endpoints;
 
 /// <summary>openapi HookCreateRequest / HookUpdateRequest (docs/phase2/webhook-catcher.md).</summary>
+[System.Text.Json.Serialization.JsonNumberHandling(System.Text.Json.Serialization.JsonNumberHandling.Strict)]
 public sealed record HookCreateRequest(string? Label, int? ResponseStatus, int? LifetimeHours);
 
+[System.Text.Json.Serialization.JsonNumberHandling(System.Text.Json.Serialization.JsonNumberHandling.Strict)]
 public sealed record HookUpdateRequest(string? Label, int? ResponseStatus, bool ClearLabel = false);
 
 /// <summary>

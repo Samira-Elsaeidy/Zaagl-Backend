@@ -2,6 +2,8 @@
 
 PRD: "Overlay a protective watermark on creative drafts until the client clicks 'Approve' or completes payment."
 Payments are **not built**; the gate is a state machine with a payment seam a provider can be plugged into later.
+**Owner decision 2026-11-15: payments and the Pro plan tier are postponed to Phase 3.** The `MarkPaidAsync` seam stays as it is
+(no route calls it); in Phase 2 an approval is released by approval (release-on-approval) or by the owner.
 
 ## Model
 An approval is a **content link of kind `approval` (7)** (viewer `app.zaa.gl/a/<code>`) whose row in `collab.approvals` points at
@@ -28,16 +30,28 @@ POSTs: one `approvedAt`, one approver). Nothing ever goes from `draft` to `relea
 - At creation the module asks Files (`IWatermarkDerivatives.RequestAsync`, contract in `Files/Contracts/FileContracts.cs`) to
   render the watermark; the worker task `watermark` (`WatermarkTaskHandler`) reads the **original read-only** through the same
   bomb-safe decode as thumbnails (`ImageThumbnailer`, `Media:MaxPixels`/`MaxDecodePixels`, wall-clock limit), scales it to at most
-  **1,600 px** on the long edge, and burns in two layers (`WatermarkRenderer`): a diagonal stripe lattice that needs **no font**
-  (so the copy is marked even on a host without fonts) and the tiled text when a font is available. Output: WebP, EXIF stripped,
+  **1,600 px** on the long edge, and burns in two layers (`WatermarkRenderer`): a diagonal stripe lattice (dark and light lines,
+  visible on light, dark and busy images) and the tiled text. Output: WebP, EXIF stripped,
   stored as a derivative in `previews/` (`files.media_derivatives`, kind `wm-…`). The original is never modified (addendum §6.7).
+- **Fonts and shaping**: the text never depends on system fonts (the worker image has none and no fontconfig). Noto Sans Bold and
+  Noto Sans Arabic Bold (SIL OFL 1.1, `src/Modules/Files/Fonts/`, licence in `Fonts/OFL.txt`) are embedded in the Files assembly
+  and loaded from it (`WatermarkFonts`). `WatermarkTextLayout` picks the font per character (Arabic letters → Noto Sans Arabic,
+  everything else → Noto Sans when it has the glyph), shapes each run with HarfBuzz (`SkiaSharp.HarfBuzz`), so Arabic letters
+  join, and lays mixed text out in visual order (a small bidi pass: paragraph direction from the first strong character, digit
+  runs stay left-to-right). Covered: Latin, Greek, Cyrillic, Arabic, digits, common punctuation and symbols. **Emoji and other
+  scripts (CJK, Hebrew, Devanagari, ...) are dropped** from the drawn text, not replaced by boxes.
+- **Never a silent text-less copy**: `POST /api/approvals` answers `400` when the watermark text has no character the fonts can
+  draw (for example emoji only); if a queued render still cannot draw its text, the task fails loudly (error log
+  `watermark_text_unrenderable`, a failed derivative with reason `text-unrenderable`), and the preview stays `unavailable`.
+  Tests: `tests/Zaagl.Files.Tests/WatermarkRendererTests.cs` (pixels of the text layer for Latin, Arabic and mixed text,
+  joined Arabic forms, visual order), `ApprovalGateTests.Arabic_watermark_text_renders_and_undrawable_text_is_refused`.
 - Before release the descriptor carries **only** a Preview ticket on that derivative (`preview.inlineUrl`), `previewState` =
   `processing` until the worker is done, `unavailable` if the draft image is gone or the render failed. The original is never
   ticketed and `POST .../download` is `403` before release.
 - After release the descriptor carries the **original** (inline ticket) and `POST /api/public/approvals/{code}/download` mints a
   normal download ticket (120 s) for it.
 
-### Payment seam (not built)
+### Payment seam (not built; payments postponed to Phase 3)
 `ApprovalService.MarkPaidAsync(resourceId, provider, reference)` performs `draft|approved → paid` (or straight to `released`
 with release-on-approval), idempotent per `payment_reference`. A provider integration would add: a checkout-session route on the
 approval link, a signed webhook (verified like the Stripe one in Billing) that calls `MarkPaidAsync`, and a price on the approval
@@ -51,7 +65,7 @@ Code: `src/Zaagl.Api/Endpoints/CollaborationEndpoints.cs` (`MapApprovals`), `src
 |---|---|---|
 | `POST /api/approvals` | JWT or API key `tools:write` (Starter) | `{draftResourceId, watermarkText?, releaseOnApproval? (true), title?, expiresAt?, password?, customSlug?, public?}` → `201 {resourceId, code, shortUrl, linkKey?, expiresAt}` |
 | `GET /api/approvals/{id}` | owner | State, approval record including `approverEmail` and `approvalNote`, `previewState`. |
-| `POST /api/approvals/{id}/release` | owner (`tools:write`) | `approved|paid → released`; `409` otherwise. |
+| `POST /api/approvals/{id}/release` | owner (`tools:write`) | `approved|paid → released`; an already released approval answers `200` with the same released state (idempotent by design); `409` for a draft (not approved). |
 | `DELETE /api/approvals/{id}` | owner | Link deleted (410); the draft image is untouched. |
 | `GET /api/public/approvals/{code}` | link holder | `{kind:"approval", title, expiresAt, hasPassword, approval:{state, approvedAt, approverName, paidAt, releasedAt}, previewState, preview, original, canApprove}` |
 | `POST /api/public/approvals/{code}/approve` | link holder (signed in, or anonymous with `Captcha-Token`, action `guest-approve`) | `{name?, email?, note?}` → `ApprovalInfoDto`; idempotent. |
@@ -72,7 +86,8 @@ Content retention (Starter 30 days), capped by the draft image's expiry. Purge r
 `wm-…` derivative is deleted with the draft image's bytes.
 
 ## Plan gating (PROPOSED)
-Starter only (`Tools.ApprovalEnabled`; the PRD lists watermarks under Pro).
+Starter only (`Tools.ApprovalEnabled`; the PRD lists watermarks under Pro, and the Pro tier is postponed to Phase 3 by the owner
+decision of 2026-11-15).
 
 ## What the UI needs
 1. **Owner create**: pick/upload the draft image, watermark text, "release automatically when approved" toggle, title, expiry,
@@ -86,5 +101,6 @@ Starter only (`Tools.ApprovalEnabled`; the PRD lists watermarks under Pro).
 ## Open questions
 1. Should approval require the approver to be signed in (stronger record) instead of an optional name/email?
 2. Notify the owner by email on approval?
-3. Payments: provider, pricing on the link, refunds, and whether "pay" implies "approve".
+3. Payments: provider, pricing on the link, refunds, and whether "pay" implies "approve". **Postponed to Phase 3** (owner decision
+   2026-11-15).
 4. Should a released approval keep serving the original until expiry, or should the owner be able to revoke it?

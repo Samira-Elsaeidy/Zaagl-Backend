@@ -207,6 +207,10 @@ public interface IWatermarkDerivatives
     /// <summary>The derivative kind for a watermark text: <c>wm-</c> plus 16 hex characters of SHA-256(text).</summary>
     string KindFor(string text);
 
+    /// <summary>True when the embedded watermark fonts can draw at least one visible character of <paramref name="text"/>
+    /// (Latin, Greek, Cyrillic, Arabic, digits, common punctuation; emoji and other scripts are dropped).</summary>
+    bool CanRender(string text);
+
     /// <summary>Queues the render (idempotent per resource and text) and returns the derivative kind.</summary>
     Task<string> RequestAsync(Guid resourceId, string text, CancellationToken cancellationToken);
 }

@@ -30,7 +30,18 @@ public static class ApiScopes
     public static readonly IReadOnlyList<string> All =
         [LinksRead, LinksWrite, StatsRead, SnippetsWrite, FilesWrite, ResourcesRead, ToolsWrite];
 
+    /// <summary>Owner PATCH/DELETE on <c>/api/resources/{id}</c>: any one of these passes the endpoint policy, then the handler checks the
+    /// resource kind's own scope (<c>files:write</c> for files and media, plus <c>snippets:write</c> for snippets, <c>tools:write</c> or
+    /// <c>files:write</c> for tool links).</summary>
+    public static readonly IReadOnlyList<string> ResourceWriteScopes = [FilesWrite, ToolsWrite];
+
     public static string Policy(string scope) => "scope:" + scope;
+
+    /// <summary>The policy name for "any one of <paramref name="scopes"/>": <c>scope:a|b</c>.</summary>
+    public static string AnyPolicy(IReadOnlyList<string> scopes) => "scope:" + string.Join('|', scopes);
+
+    /// <summary>True when the caller is a JWT session or an API key holding at least one of <paramref name="scopes"/>.</summary>
+    public static bool AllowsAny(ClaimsPrincipal user, IReadOnlyList<string> scopes) => scopes.Any(s => Allows(user, s));
 
     public static bool IsApiKey(ClaimsPrincipal user) => user.HasClaim("auth_method", "api_key");
 
@@ -52,6 +63,9 @@ public static class ApiScopes
                 .RequireAuthenticatedUser()
                 .AddRequirements(new ScopeRequirement(scope)));
         }
+        builder.AddPolicy(AnyPolicy(ResourceWriteScopes), p => p
+            .RequireAuthenticatedUser()
+            .AddRequirements(new ScopeRequirement([.. ResourceWriteScopes])));
         return builder;
     }
 
@@ -59,6 +73,11 @@ public static class ApiScopes
     public static TBuilder RequireScope<TBuilder>(this TBuilder builder, string scope)
         where TBuilder : IEndpointConventionBuilder =>
         builder.RequireAuthorization(Policy(scope));
+
+    /// <summary>Requires any one of <paramref name="scopes"/> (a policy registered in <see cref="AddScopePolicies"/>).</summary>
+    public static TBuilder RequireAnyScope<TBuilder>(this TBuilder builder, IReadOnlyList<string> scopes)
+        where TBuilder : IEndpointConventionBuilder =>
+        builder.RequireAuthorization(AnyPolicy(scopes));
 
     /// <summary>
     /// For endpoints that also allow anonymous callers (guest link creation): <c>AllowAnonymous</c> skips
@@ -75,16 +94,20 @@ public static class ApiScopes
         });
 }
 
-public sealed class ScopeRequirement(string scope) : IAuthorizationRequirement
+public sealed class ScopeRequirement(params string[] scopes) : IAuthorizationRequirement
 {
-    public string Scope { get; } = scope;
+    /// <summary>Any one of these passes.</summary>
+    public IReadOnlyList<string> Scopes { get; } = scopes;
+
+    /// <summary>For the 403 message: <c>files:write</c>, or <c>files:write' or 'tools:write</c>.</summary>
+    public string Scope => string.Join("' or '", Scopes);
 }
 
 public sealed class ScopeAuthorizationHandler : AuthorizationHandler<ScopeRequirement>
 {
     protected override Task HandleRequirementAsync(AuthorizationHandlerContext context, ScopeRequirement requirement)
     {
-        if (ApiScopes.Allows(context.User, requirement.Scope))
+        if (ApiScopes.AllowsAny(context.User, requirement.Scopes))
             context.Succeed(requirement);
         return Task.CompletedTask;
     }

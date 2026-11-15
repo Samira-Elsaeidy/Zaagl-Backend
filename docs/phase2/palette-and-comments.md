@@ -32,7 +32,12 @@ No IP, no user agent, no email is stored.
 - **Who can read**: anyone who passes the target link's gate (state, `#k=` link key, password grant), exactly like viewing it.
 - **Who can post**: the owner, and visitors holding the link, **only after the owner turned comments on** for that resource
   (`PUT /api/resources/{id}/comments/settings`, plan `Tools.CommentsEnabled`). Anonymous visitors only when
-  `allowAnonymous`, and they must pass the spec §7.12 CAPTCHA (action `guest-comment`) and the per-minute brake.
+  `allowAnonymous`, and they must pass the spec §7.12 CAPTCHA (action `guest-comment`) and the per-minute brake. The settings
+  are checked **before** the CAPTCHA: comments off is `403`, an anonymous visitor where anonymous posting is off is `401` "Sign in
+  to comment on this content." (never `400 captcha-required`), and such a request spends no CAPTCHA verification and no guest-brake
+  slot. The website shows the Turnstile widget only to an anonymous visitor on a thread with `allowAnonymous: true`.
+- **Coordinates**: `x` and `y` are required JSON numbers in `0..1`; a missing or `null` coordinate is `400` (it used to pin at 0),
+  as are numbers sent as strings (`"x": "0.5"`), `NaN`/`Infinity` and out-of-range values.
 - **Limits**: per-IP `comment-write` limiter (`RateLimits:CommentWritePerMinute`, 20), the guest brake for anonymous visitors,
   `Comments:MaxPerResource` (500) enforced under the settings row lock (no race past the cap), 16 KB request body.
 - **Content**: plain text, trimmed, 1..1,000 characters, no control characters except newline, NUL refused at the edge. Never
@@ -47,7 +52,7 @@ Tests: `tests/Zaagl.Api.Tests/Phase2/PaletteAndCommentsTests.cs`, `tests/Zaagl.F
 | Method and route | Who | What |
 |---|---|---|
 | `GET /api/public/comments/{code}` | link holder | `{enabled, allowAnonymous, count, maxComments, items:[{id, x, y, side, body, author, authorName, status, createdAt, resolvedAt, mine}]}` |
-| `POST /api/public/comments/{code}` | link holder (owner, signed-in or anonymous with `Captcha-Token`) | `{x, y, body, side?, authorName?}` → `201 CommentDto`; `403` comments off, `401` anonymous not allowed, `409 limit-reached`. |
+| `POST /api/public/comments/{code}` | link holder (owner, signed-in or anonymous with `Captcha-Token`) | `{x, y, body, side?, authorName?}` (x, y required numbers) → `201 CommentDto`; `400` invalid body, `403` comments off, `401` anonymous not allowed (checked before the CAPTCHA), `409 limit-reached`. |
 | `DELETE /api/public/comments/{code}/{commentId}` | signed-in author | Own comment only (`404` otherwise). |
 | `PUT /api/resources/{id}/comments/settings` | owner (`tools:write`) | `{enabled, allowAnonymous}` → `CommentSettingsDto`. |
 | `GET /api/resources/{id}/comments` | owner (`resources:read`) | Full thread. |

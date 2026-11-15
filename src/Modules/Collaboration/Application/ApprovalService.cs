@@ -80,6 +80,8 @@ public sealed class ApprovalService(
         var text = ToolOwnership.Label(command.WatermarkText, 60, "watermarkText");
         if (!text.IsSuccess) return text.Error!;
         var watermark = text.Value ?? DefaultWatermark;
+        if (!watermarks.CanRender(watermark))
+            return Error.Validation("The watermark text must contain letters or digits the watermark font can draw (Latin or Arabic script; emoji are not drawn).");
         var title = ToolOwnership.Label(command.Title, 200, "title");
         if (!title.IsSuccess) return title.Error!;
         if (command.Password is { } pw)

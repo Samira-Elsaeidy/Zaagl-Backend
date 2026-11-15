@@ -1,4 +1,4 @@
-﻿<Project Sdk="Microsoft.NET.Sdk">
+<Project Sdk="Microsoft.NET.Sdk">
 
   <ItemGroup>
     <ProjectReference Include="..\..\Zaagl.SharedKernel\Zaagl.SharedKernel.csproj" />
@@ -19,16 +19,27 @@
 
   <ItemGroup>
     <PackageReference Include="EFCore.NamingConventions" Version="10.0.1" />
+    <PackageReference Include="HarfBuzzSharp.NativeAssets.Linux" Version="8.3.1.2" />
     <PackageReference Include="Npgsql.EntityFrameworkCore.PostgreSQL" Version="10.0.3" />
     <!-- Image thumbnails (S3, ARC-011): SkiaSharp is MIT (Skia: BSD-3-Clause), no copyleft, no commercial-use split licence.
          NoDependencies keeps the Linux worker image free of fontconfig; Win32 is the dev/test native. -->
     <PackageReference Include="SkiaSharp" Version="3.119.1" />
+    <!-- Watermark text shaping (Phase 2 bug-fix): HarfBuzz (MIT) joins Arabic and orders RTL runs. HarfBuzzSharp's Linux native has
+         no fontconfig dependency either; the fonts themselves are embedded below, so no system font is ever needed. -->
+    <PackageReference Include="SkiaSharp.HarfBuzz" Version="3.119.1" />
     <PackageReference Include="SkiaSharp.NativeAssets.Win32" Version="3.119.1" />
     <PackageReference Include="SkiaSharp.NativeAssets.Linux.NoDependencies" Version="3.119.1" />
     <PackageReference Include="Microsoft.EntityFrameworkCore.Design" Version="10.0.13">
       <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
       <PrivateAssets>all</PrivateAssets>
     </PackageReference>
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Watermark fonts: Noto Sans Bold + Noto Sans Arabic Bold (SIL OFL 1.1, Fonts/OFL.txt), loaded from the assembly so rendering
+         is identical on dev, tests and the font-less worker image. -->
+    <EmbeddedResource Include="Fonts\*.ttf" LogicalName="Zaagl.Fonts.%(Filename)%(Extension)" />
+    <None Include="Fonts\OFL.txt" />
   </ItemGroup>
 
 </Project>

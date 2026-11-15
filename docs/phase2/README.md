@@ -41,7 +41,9 @@ multi-segment prefix `zaa.gl/hook/` (spec §4.5 rule 6: multi-segment paths are 
 
 ### Plan gating (PROPOSED, configuration `Plans:<Plan>:Tools:*`)
 The PRD places "webhook catcher, A/B diff, watermarks" in a **Pro** tier, which does not exist in Phase 1 (PD-04: Free and
-Starter only, "premium" means a capability flag). Code never compares tiers: it reads `ContentPlan.Tools`
+Starter only, "premium" means a capability flag). **Owner decision 2026-11-15: the Pro plan tier and payments are postponed to
+Phase 3**; Phase 2 ships on Guest/Free/Starter, and the approval gate's payment seam (`ApprovalService.MarkPaidAsync`) stays
+unrouted. Code never compares tiers: it reads `ContentPlan.Tools`
 (`Billing/Contracts/ContentPlanContracts.cs`, record `ToolLimits`), resolved per plan in `PlanCatalog` from configuration with
 the defaults below. **None of these values is approved**; they are the proposal for the owner.
 
@@ -68,7 +70,14 @@ Hard ceilings no configuration can exceed are in `Billing/Application/ContentPla
 - Create routes: a failing credential is `401`, never a guest (PD-36, `RejectFailedCredentials`); API keys need `tools:write`
   (new scope, `Zaagl.Api/Infrastructure/ApiScopes.cs`), reads `resources:read`.
 - Public routes run `IAccessGate` on every call (state, `X-Zaagl-Link-Key`, `X-Zaagl-Grant`); a wrong key is the same `404`
-  as an unknown code. Only `POST` consumes anything (a view, a comment slot, an approval); `GET`/`HEAD` never do.
+  as an unknown code. Only `POST` consumes anything (a view, a comment slot, an approval); `GET`/`HEAD` never do. The public
+  descriptor routes (`/api/public/vault|compare|capsules|comments|approvals/{code}`) answer `HEAD` exactly like `GET` (same gate,
+  same status and headers, no body).
+- Phase 2 request bodies take numbers only as JSON numbers: `"maxViews": "3"` or `"x": "0.5"` is a `400` (strict number handling
+  on the Phase 2 request records; the global API JSON options keep the ASP.NET default for Phase 1 clients).
+- `PATCH`/`DELETE /api/resources/{id}` take the resource kind's write scope for an API key: `files:write` for files and media,
+  `files:write` + `snippets:write` for snippets, `tools:write` (or `files:write`, as before) for secrets, capsules, comparisons and
+  approvals. Reads stay `resources:read`.
 - Bytes are only ever served from `usercontent.zaa.gl` by ticket (addendum §8); tool descriptors contain inline/preview
   tickets only, never a download ticket.
 - Every JSON string is NUL-checked (global `NulRejectingStringConverter`); every cap that must hold under concurrency is a
@@ -115,10 +124,17 @@ Every VALIDATE runs in its own migration outside a transaction (SHARE UPDATE EXC
    (`src/Modules/Files/Application/ScanTaskHandler.cs:139` with `:252`), so PDF/ZIP/GZ/7z files end with `detected_mime = null`
    (served as octet-stream attachments, which is safe) even though `/complete` detected them
    (`src/Modules/Files/Application/UploadService.cs:425`). Left unchanged to keep Phase 1 behaviour; worth a Phase 1 ticket.
+6. **Payments and the Pro tier**: postponed to Phase 3 (owner decision 2026-11-15); the approval payment seam stays unrouted.
+
+Fixed in the Phase 2 test and pen-test bug-fix round (2026-11-15), so no longer gaps: watermark text not drawn on the font-less
+worker (embedded Noto fonts + HarfBuzz, loud failure), comment CAPTCHA checked before the anonymous rule, missing comment
+coordinates and numbers-as-strings accepted, `tools:write` keys refused on `PATCH`/`DELETE /api/resources/{id}`, capsule URL
+redaction missing bracket/`;` keys, `HEAD` 404 on the public descriptors, the release-twice status in approval-gate.md.
 
 ## Open questions for the owner (all features)
 Collected in each note; the cross-cutting ones:
-1. Approve or change the plan table above (the PRD's Pro tier does not exist in Phase 1).
+1. Approve or change the plan table above (the PRD's Pro tier does not exist in Phase 1; Pro and payments are postponed to Phase 3,
+   owner decision 2026-11-15).
 2. Guests and the vault: allowed as proposed (one view, 7 days, 16 KB, CAPTCHA), or accounts only?
 3. Do Phase 2 tool creations count toward the guest PD-14 budget (proposed: yes, one shared budget) and toward Free's monthly
    link cap (PD-08 says no for content; proposed the same for tools)?

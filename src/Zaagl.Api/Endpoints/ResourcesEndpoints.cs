@@ -162,7 +162,7 @@ public static class ResourcesEndpoints
                 var meta = (await mediaMeta.GetAsync([id], ct)).GetValueOrDefault(id);
                 return Results.Ok(ToDto(updated.Value!.Owned, summary, links.Value.BaseUrl, detail: true, meta, await ThumbnailTicketAsync(grants, updated.Value.Owned, meta, ct)) with { LinkKey = updated.Value.LinkKey });
             })
-            .RequireScope(ApiScopes.FilesWrite)
+            .RequireAnyScope(ApiScopes.ResourceWriteScopes)
             .RequireRateLimiting("content-write");
 
         resources.MapDelete("/{id:guid}", async (Guid id, ClaimsPrincipal user, OwnerResources owner, CancellationToken ct) =>
@@ -174,7 +174,7 @@ public static class ResourcesEndpoints
                 var deleted = await owner.DeleteAsync(id, userId, ct);
                 return deleted.IsSuccess ? Results.NoContent() : ApiResults.Problem(deleted.Error!);
             })
-            .RequireScope(ApiScopes.FilesWrite)
+            .RequireAnyScope(ApiScopes.ResourceWriteScopes)
             .RequireRateLimiting("content-write");
 
         resources.MapGet("/{id:guid}/status", async (
@@ -252,10 +252,21 @@ public static class ResourcesEndpoints
             .RequireScope(ApiScopes.ResourcesRead);
     }
 
-    /// <summary>The kind's write scope (snippets:write for snippets) on top of files:write for an API key; a session JWT has every
-    /// scope. Interim rule (contracts.md C9): a separate resources:write scope is OPEN (ARC-014 Q3).</summary>
-    private static IResult? KindScopeError(ClaimsPrincipal user, ResourceKind kind) =>
-        kind == ResourceKind.Snippet && !ApiScopes.Allows(user, ApiScopes.SnippetsWrite) ? ApiScopes.InsufficientScope(ApiScopes.SnippetsWrite) : null;
+    /// <summary>
+    /// The kind's write scope for an API key (a session JWT has every scope), checked after the endpoint policy (files:write or
+    /// tools:write): files and media need files:write; snippets files:write plus snippets:write; Phase 2 tool links (secret, capsule,
+    /// comparison, approval) tools:write, the scope that created them (files:write is still accepted there, as before). Interim rule
+    /// (contracts.md C9): a separate resources:write scope is OPEN (ARC-014 Q3).
+    /// </summary>
+    internal static IResult? KindScopeError(ClaimsPrincipal user, ResourceKind kind) => kind switch
+    {
+        ResourceKind.Snippet when !ApiScopes.Allows(user, ApiScopes.FilesWrite) => ApiScopes.InsufficientScope(ApiScopes.FilesWrite),
+        ResourceKind.Snippet when !ApiScopes.Allows(user, ApiScopes.SnippetsWrite) => ApiScopes.InsufficientScope(ApiScopes.SnippetsWrite),
+        ResourceKind.File or ResourceKind.Media when !ApiScopes.Allows(user, ApiScopes.FilesWrite) => ApiScopes.InsufficientScope(ApiScopes.FilesWrite),
+        ResourceKind.Secret or ResourceKind.Capsule or ResourceKind.Compare or ResourceKind.Approval
+            when !ApiScopes.AllowsAny(user, ApiScopes.ResourceWriteScopes) => ApiScopes.InsufficientScope(ApiScopes.ToolsWrite),
+        _ => null,
+    };
 
     /// <summary>True when the probe measured more pixels than <c>Media:MaxInlinePixels</c>: the original is then download-only (ARC-011 section 6).</summary>
     internal static bool ExceedsInlinePixels(StoredMedia? meta, MediaOptions options) =>

@@ -1,5 +1,6 @@
 using System.Net;
 using System.Text.Json;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using SkiaSharp;
 using Zaagl.Api.Tests.Harness;
@@ -159,6 +160,57 @@ public sealed class ApprovalGateTests(Phase2MediaFactory api) : IClassFixture<Ph
         Assert.Equal(HttpStatusCode.OK, released);
         Assert.Equal("released", info.GetProperty("state").GetString());
         Assert.Equal(HttpStatusCode.OK, (await P2.SendAsync(visitor, HttpMethod.Post, $"/api/public/approvals/{code}/download", headers: P2.Key(key))).Status);
+        // Releasing again is idempotent by design: 200 with the same released state (docs/phase2/approval-gate.md).
+        var (again, againInfo) = await P2.SendAsync(owner, HttpMethod.Post, $"/api/approvals/{id}/release");
+        Assert.Equal(HttpStatusCode.OK, again);
+        Assert.Equal("released", againInfo.GetProperty("state").GetString());
+    }
+
+    /// <summary>Phase 2 bug-fix (watermark text never drawn): Arabic and mixed text render through the worker task with the embedded
+    /// fonts (WatermarkRendererTests checks the pixels), and text with nothing the fonts can draw is refused up front (400) instead of
+    /// producing a stripes-only preview.</summary>
+    [Fact]
+    public async Task Arabic_watermark_text_renders_and_undrawable_text_is_refused()
+    {
+        var user = await P.CreateUserAsync(starter: true);
+        using var owner = api.ApiClient(bearer: user.AccessToken);
+        var draft = await MediaHelper.ReadyAsync(api, owner, MediaHelper.Image(640, 480, color: Base), "ar.png");
+
+        foreach (var undrawable in new[] { "🔒🔒", "​‎" })
+        {
+            var (status, body) = await P2.SendAsync(owner, HttpMethod.Post, "/api/approvals", new { draftResourceId = draft.ResourceId, watermarkText = undrawable });
+            Assert.True(status == HttpStatusCode.BadRequest, $"'{undrawable}' -> {(int)status}: {body}");
+        }
+
+        const string text = "مسودة DRAFT";
+        var (created, approval) = await P2.SendAsync(owner, HttpMethod.Post, "/api/approvals", new { draftResourceId = draft.ResourceId, watermarkText = text });
+        Assert.Equal(HttpStatusCode.Created, created);
+        using (var scope = api.Services.CreateScope())
+        {
+            var kind = scope.ServiceProvider.GetRequiredService<IWatermarkDerivatives>().KindFor(text);
+            await MediaHelper.RunTaskAsync(api, $"watermark:{draft.ResourceId}:{kind}");
+        }
+        using var visitor = api.ApiClient();
+        var (_, desc) = await P2.SendAsync(visitor, HttpMethod.Get, $"/api/public/approvals/{approval.Code()}", headers: P2.Key(approval.GetProperty("linkKey").GetString()));
+        Assert.Equal("ready", desc.GetProperty("previewState").GetString());
+        var (_, owned) = await P2.SendAsync(owner, HttpMethod.Get, $"/api/approvals/{approval.ResourceId()}");
+        Assert.Equal(text, owned.GetProperty("watermarkText").GetString());
+
+        // Defence in depth: a queued render whose text cannot be drawn fails loudly (failed derivative, reason text-unrenderable),
+        // so the preview stays unavailable; it is never stored as a stripes-only copy.
+        string undrawableKind;
+        using (var scope = api.Services.CreateScope())
+        {
+            undrawableKind = await scope.ServiceProvider.GetRequiredService<IWatermarkDerivatives>().RequestAsync(draft.ResourceId, "🔒🔒", CancellationToken.None);
+        }
+        await MediaHelper.RunTaskAsync(api, $"watermark:{draft.ResourceId}:{undrawableKind}");
+        using (var scope = api.Services.CreateScope())
+        {
+            var row = await scope.ServiceProvider.GetRequiredService<Zaagl.Modules.Files.Infrastructure.FilesDbContext>().MediaDerivatives
+                .AsNoTracking().SingleAsync(d => d.ResourceId == draft.ResourceId && d.Kind == undrawableKind);
+            Assert.Equal((short)Zaagl.Modules.Files.Application.DerivativeState.Failed, row.Status);
+            Assert.Equal("text-unrenderable", row.Reason);
+        }
     }
 
     [Fact]

@@ -231,6 +231,83 @@ public sealed class VaultApiTests(Phase2Factory api) : IClassFixture<Phase2Facto
         Assert.Equal(HttpStatusCode.Created, (await P2.SendAsync(w, HttpMethod.Post, "/api/vault/secrets", Body(env))).Status);
     }
 
+    /// <summary>Phase 2 bug-fix: a tools:write-only key manages the tool links it created through /api/resources/{id} (it used to get
+    /// 403 "missing files:write"), but still cannot touch snippets, files or media; resources:read alone cannot write.</summary>
+    [Fact]
+    public async Task A_tools_write_key_patches_and_deletes_its_tool_links_through_the_library_but_not_content()
+    {
+        var user = await P.CreateUserAsync(starter: true);
+        var toolsKey = await P.CreateApiKeyAsync(user, "tools:write", "resources:read");
+        using var tools = api.ApiClient(apiKey: toolsKey);
+        var (created, _, _) = await CreateAsync(tools);
+        var id = created.ResourceId();
+
+        var (read, detail) = await P2.SendAsync(tools, HttpMethod.Get, $"/api/resources/{id}");
+        Assert.True(read == HttpStatusCode.OK, $"GET -> {(int)read}: {detail}");
+        var (patched, patchBody) = await P2.SendAsync(tools, HttpMethod.Patch, $"/api/resources/{id}", new { title = "renamed by key" });
+        Assert.True(patched == HttpStatusCode.OK, $"PATCH -> {(int)patched}: {patchBody}");
+
+        var readOnly = await P.CreateApiKeyAsync(user, "resources:read");
+        using var ro = api.ApiClient(apiKey: readOnly);
+        var (roStatus, roBody) = await P2.SendAsync(ro, HttpMethod.Patch, $"/api/resources/{id}", new { title = "nope" });
+        Assert.Equal(HttpStatusCode.Forbidden, roStatus);
+        Assert.Equal("insufficient-scope", roBody.ProblemCode());
+
+        // Content kinds keep their scopes: a tools:write key cannot rename or delete a snippet.
+        using var session = api.ApiClient(bearer: user.AccessToken);
+        var (snippetStatus, snippet) = await P2.SendAsync(session, HttpMethod.Post, "/api/snippets", new { content = "hello" },
+            new Dictionary<string, string> { ["Idempotency-Key"] = Guid.NewGuid().ToString("N") });
+        Assert.True(snippetStatus == HttpStatusCode.Created, $"snippet -> {(int)snippetStatus}: {snippet}");
+        var snippetId = snippet.ResourceId();
+        var (s1, b1) = await P2.SendAsync(tools, HttpMethod.Patch, $"/api/resources/{snippetId}", new { title = "x" });
+        Assert.Equal((HttpStatusCode.Forbidden, "insufficient-scope"), (s1, b1.ProblemCode()));
+        var (s2, b2) = await P2.SendAsync(tools, HttpMethod.Delete, $"/api/resources/{snippetId}");
+        Assert.Equal((HttpStatusCode.Forbidden, "insufficient-scope"), (s2, b2.ProblemCode()));
+
+        Assert.Equal(HttpStatusCode.NoContent, (await P2.RawAsync(tools, HttpMethod.Delete, $"/api/resources/{id}")).StatusCode);
+    }
+
+    /// <summary>Phase 2 doc-fix: HEAD on a public descriptor answers like GET (it used to be a 404 because MapGet ignores HEAD) and,
+    /// like GET, never consumes anything. Covered on the vault, where consumption is easiest to observe; that the compare, capsule,
+    /// comment and approval descriptors map HEAD too is enforced by the route allow-lists (ApiScopeTests, AuthorizationMatrixTests).</summary>
+    [Fact]
+    public async Task Head_on_the_descriptor_answers_like_get_and_never_consumes()
+    {
+        var user = await P.CreateUserAsync(starter: false);
+        using var owner = api.ApiClient(bearer: user.AccessToken);
+        var (created, _, envelope) = await CreateAsync(owner);
+        var code = created.Code();
+        var linkKey = created.GetProperty("linkKey").GetString()!;
+        using var visitor = api.ApiClient();
+
+        Assert.Equal(HttpStatusCode.NotFound, (await P2.RawAsync(visitor, HttpMethod.Head, $"/api/public/vault/{code}")).StatusCode);
+        for (var i = 0; i < 3; i++)
+        {
+            using var head = await P2.RawAsync(visitor, HttpMethod.Head, $"/api/public/vault/{code}", headers: P2.Key(linkKey));
+            Assert.Equal(HttpStatusCode.OK, head.StatusCode);
+            Assert.True(head.Headers.CacheControl!.NoStore);
+        }
+        var (_, desc) = await P2.SendAsync(visitor, HttpMethod.Get, $"/api/public/vault/{code}", headers: P2.Key(linkKey));
+        Assert.Equal(1, desc.GetProperty("viewsRemaining").GetInt32());
+        var (revealed, body) = await P2.SendAsync(visitor, HttpMethod.Post, $"/api/public/vault/{code}/reveal", headers: P2.Key(linkKey));
+        Assert.Equal(HttpStatusCode.OK, revealed);
+        Assert.Equal(envelope, body.GetProperty("ciphertext").GetString());
+        // After the burn HEAD reports the same 410 as GET.
+        Assert.Equal(HttpStatusCode.Gone, (await P2.RawAsync(visitor, HttpMethod.Head, $"/api/public/vault/{code}", headers: P2.Key(linkKey))).StatusCode);
+    }
+
+    /// <summary>Phase 2 bug-fix: numbers sent as JSON strings are refused on Phase 2 request bodies.</summary>
+    [Fact]
+    public async Task Numbers_sent_as_strings_are_refused()
+    {
+        var user = await P.CreateUserAsync(starter: true);
+        using var owner = api.ApiClient(bearer: user.AccessToken);
+        var (envelope, _) = VaultCrypto.Encrypt("{\"v\":1,\"type\":\"env\",\"content\":\"x\"}");
+        var (status, body) = await P2.SendAsync(owner, HttpMethod.Post, "/api/vault/secrets", new { ciphertext = envelope, maxViews = "3" });
+        Assert.True(status == HttpStatusCode.BadRequest, $"maxViews as a string -> {(int)status}: {body}");
+        Assert.Equal(HttpStatusCode.Created, (await P2.SendAsync(owner, HttpMethod.Post, "/api/vault/secrets", new { ciphertext = envelope, maxViews = 3 })).Status);
+    }
+
     [Fact]
     public async Task Expiry_closes_the_secret_and_the_sweep_wipes_the_ciphertext()
     {

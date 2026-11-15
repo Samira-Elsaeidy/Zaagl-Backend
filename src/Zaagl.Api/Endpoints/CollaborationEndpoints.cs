@@ -15,6 +15,7 @@ using LinkOptions = Zaagl.Modules.Links.Application.LinkOptions;
 namespace Zaagl.Api.Endpoints;
 
 /// <summary>openapi CompareCreateRequest (docs/phase2/compare-slider.md).</summary>
+[System.Text.Json.Serialization.JsonNumberHandling(System.Text.Json.Serialization.JsonNumberHandling.Strict)]
 public sealed record CompareCreateRequest(
     Guid BeforeResourceId,
     Guid AfterResourceId,
@@ -27,15 +28,20 @@ public sealed record CompareCreateRequest(
     bool Public = false);
 
 /// <summary>openapi CompareUpdateRequest: a label sent as "" clears it; absent leaves it unchanged.</summary>
+[System.Text.Json.Serialization.JsonNumberHandling(System.Text.Json.Serialization.JsonNumberHandling.Strict)]
 public sealed record CompareUpdateRequest(string? BeforeLabel = null, string? AfterLabel = null, bool Swap = false);
 
-/// <summary>openapi CommentPostRequest (docs/phase2/palette-and-comments.md).</summary>
-public sealed record CommentPostRequest(double X, double Y, string? Body, string? Side = null, string? AuthorName = null);
+/// <summary>openapi CommentPostRequest (docs/phase2/palette-and-comments.md). <c>x</c> and <c>y</c> are required JSON numbers (a missing
+/// coordinate is a 400, never a pin at 0).</summary>
+[System.Text.Json.Serialization.JsonNumberHandling(System.Text.Json.Serialization.JsonNumberHandling.Strict)]
+public sealed record CommentPostRequest(double? X, double? Y, string? Body, string? Side = null, string? AuthorName = null);
 
 /// <summary>openapi CommentSettingsRequest.</summary>
+[System.Text.Json.Serialization.JsonNumberHandling(System.Text.Json.Serialization.JsonNumberHandling.Strict)]
 public sealed record CommentSettingsRequest(bool Enabled, bool AllowAnonymous = false);
 
 /// <summary>openapi ApprovalCreateRequest (docs/phase2/approval-gate.md).</summary>
+[System.Text.Json.Serialization.JsonNumberHandling(System.Text.Json.Serialization.JsonNumberHandling.Strict)]
 public sealed record ApprovalCreateRequest(
     Guid DraftResourceId,
     string? WatermarkText = null,
@@ -47,6 +53,7 @@ public sealed record ApprovalCreateRequest(
     bool Public = false);
 
 /// <summary>openapi ApproveRequest.</summary>
+[System.Text.Json.Serialization.JsonNumberHandling(System.Text.Json.Serialization.JsonNumberHandling.Strict)]
 public sealed record ApproveRequest(string? Name = null, string? Email = null, string? Note = null);
 
 /// <summary>
@@ -115,7 +122,7 @@ public static class CollaborationEndpoints
 
         var open = app.MapGroup("/api/public/approvals").WithTags("Approval gate (public)").AllowAnonymous();
 
-        open.MapGet("/{code}", async (string code, HttpContext http, IAccessGate gate, ILinkResolver links, IResourceRegistry registry,
+        open.MapGetAndHead("/{code}", async (string code, HttpContext http, IAccessGate gate, ILinkResolver links, IResourceRegistry registry,
                 ApprovalService service, CancellationToken ct) =>
             {
                 DeveloperToolsEndpoints.NoStore(http);
@@ -176,7 +183,7 @@ public static class CollaborationEndpoints
         // ---- Link holders: the gate of the image's, comparison's or approval's own link (state, key, password grant) ----
         var open = app.MapGroup("/api/public/comments").WithTags("Pinned comments (public)").AllowAnonymous();
 
-        open.MapGet("/{code}", async (string code, ClaimsPrincipal user, HttpContext http, IAccessGate gate, IResourceRegistry registry,
+        open.MapGetAndHead("/{code}", async (string code, ClaimsPrincipal user, HttpContext http, IAccessGate gate, IResourceRegistry registry,
                 CommentService comments, CancellationToken ct) =>
             {
                 DeveloperToolsEndpoints.NoStore(http);
@@ -194,10 +201,17 @@ public static class CollaborationEndpoints
                 IResourceRegistry registry, CommentService comments, IOptions<GuestOptions> guests, GuestRateLimiter limiter, CancellationToken ct) =>
             {
                 DeveloperToolsEndpoints.NoStore(http);
+                if (request.X is not { } x || request.Y is not { } y)
+                    return ApiResults.Problem(Error.Validation("x and y are required numbers between 0 and 1."));
                 var target = await CommentTargetAsync(http, gate, registry, code, ct);
                 if (target.Refusal is not null) return target.Refusal;
+                var anonymous = user.Identity?.IsAuthenticated != true;
+                // Settings first (comments off 403, anonymous posting off 401): a request that will be refused anyway never spends a
+                // CAPTCHA verification or a guest-brake slot. PostAsync re-checks both under the row lock.
+                var allowed = await comments.CheckCanPostAsync(target.ResourceId, anonymous, ct);
+                if (!allowed.IsSuccess) return ApiResults.Problem(allowed.Error!);
                 Guid? author = null;
-                if (user.Identity?.IsAuthenticated == true)
+                if (!anonymous)
                 {
                     author = user.GetUserId();
                 }
@@ -211,7 +225,7 @@ public static class CollaborationEndpoints
                         return ApiResults.Problem(Error.TooManyRequests("Too many comments. Try again in a minute."));
                 }
                 var posted = await comments.PostAsync(target.ResourceId, target.OwnerId, target.Kind, new CommentAuthor(author),
-                    new PostCommentCommand(request.X, request.Y, request.Side, request.Body, request.AuthorName), ct);
+                    new PostCommentCommand(x, y, request.Side, request.Body, request.AuthorName), ct);
                 return ApiResults.From(posted, c => Results.Created($"/api/public/comments/{code}/{c.Id}", c));
             })
             .RejectFailedCredentials()
@@ -354,7 +368,7 @@ public static class CollaborationEndpoints
             .WithSummary("Delete the comparison link (410). The images are not touched.")
             .Produces(StatusCodes.Status204NoContent).ProducesProblem(StatusCodes.Status404NotFound);
 
-        app.MapGet("/api/public/compare/{code}", async (string code, HttpContext http, IAccessGate gate, ILinkResolver links,
+        app.MapGetAndHead("/api/public/compare/{code}", async (string code, HttpContext http, IAccessGate gate, ILinkResolver links,
                 IResourceRegistry registry, CompareService service, CancellationToken ct) =>
             {
                 DeveloperToolsEndpoints.NoStore(http);

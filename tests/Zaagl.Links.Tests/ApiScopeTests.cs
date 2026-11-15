@@ -91,13 +91,18 @@ public sealed class ApiScopeTests(RealApiFactory real) : IAsyncLifetime, IClassF
         // anonymous callers. Webhook ingest is the short host only, gated by its 128-bit token.
         ["POST /api/vault/secrets/"] = "guest secret creation",
         ["GET /api/public/vault/{code}"] = "visitor read, gate: key and grant",
+        ["HEAD /api/public/vault/{code}"] = "visitor read (HEAD = GET, no body), gate: key and grant",
         ["POST /api/public/vault/{code}/reveal"] = "visitor reveal, gate: key and grant",
         ["GET /api/public/compare/{code}"] = "visitor read, gate: key and grant",
+        ["HEAD /api/public/compare/{code}"] = "visitor read (HEAD = GET, no body), gate: key and grant",
         ["GET /api/public/capsules/{code}"] = "visitor read, gate: key and grant",
+        ["HEAD /api/public/capsules/{code}"] = "visitor read (HEAD = GET, no body), gate: key and grant",
         ["GET /api/public/comments/{code}"] = "visitor read, gate: key and grant",
+        ["HEAD /api/public/comments/{code}"] = "visitor read (HEAD = GET, no body), gate: key and grant",
         ["POST /api/public/comments/{code}"] = "visitor comment, gate plus CAPTCHA when anonymous",
         ["DELETE /api/public/comments/{code}/{commentId:long}"] = "signed-in author deletes own comment, gate",
         ["GET /api/public/approvals/{code}"] = "visitor read, gate: key and grant",
+        ["HEAD /api/public/approvals/{code}"] = "visitor read (HEAD = GET, no body), gate: key and grant",
         ["POST /api/public/approvals/{code}/approve"] = "visitor approval, gate plus CAPTCHA when anonymous",
         ["POST /api/public/approvals/{code}/download"] = "visitor download after release, gate",
         ["GET /hook/{token}"] = "webhook ingest, short host, token",
@@ -265,7 +270,8 @@ public sealed class ApiScopeTests(RealApiFactory real) : IAsyncLifetime, IClassF
         foreach (var e in ScopedHostEndpoints())
         {
             var scope = RequiredScope(e);
-            var response = await SendAsync(e.Method, e.Pattern, "apikey:" + string.Join(' ', ApiScopes.All.Where(s => s != scope)));
+            var alternatives = scope.Split('|'); // "files:write|tools:write": any one passes, so the key lacks all of them
+            var response = await SendAsync(e.Method, e.Pattern, "apikey:" + string.Join(' ', ApiScopes.All.Where(s => !alternatives.Contains(s))));
             var body = await response.Content.ReadAsStringAsync();
             if (response.StatusCode != HttpStatusCode.Forbidden || !body.Contains(ApiScopes.ProblemCode, StringComparison.Ordinal))
                 failures.Add($"{e.Key} without {scope} -> {(int)response.StatusCode} {body}");
@@ -279,8 +285,11 @@ public sealed class ApiScopeTests(RealApiFactory real) : IAsyncLifetime, IClassF
         var failures = new List<string>();
         foreach (var e in ScopedHostEndpoints())
         {
-            var response = await SendAsync(e.Method, e.Pattern, "apikey:" + RequiredScope(e));
-            if (!PassedAuthorization(response)) failures.Add($"{e.Key} with {RequiredScope(e)} -> {(int)response.StatusCode}");
+            foreach (var scope in RequiredScope(e).Split('|'))
+            {
+                var response = await SendAsync(e.Method, e.Pattern, "apikey:" + scope);
+                if (!PassedAuthorization(response)) failures.Add($"{e.Key} with {scope} -> {(int)response.StatusCode}");
+            }
         }
         Assert.True(failures.Count == 0, string.Join("\n", failures));
     }
@@ -302,6 +311,17 @@ public sealed class ApiScopeTests(RealApiFactory real) : IAsyncLifetime, IClassF
     // text/plain and answers 415 to the JSON body this test sends, after authorization). Never 401/403.
     private static bool PassedAuthorization(HttpResponseMessage response) =>
         (int)response.StatusCode is ApiTestHost.ReachedHandler or StatusCodes.Status400BadRequest or StatusCodes.Status415UnsupportedMediaType or (>= 200 and < 300);
+
+    /// <summary>Phase 2 bug-fix: a tools:write-only key manages its own tool links through /api/resources/{id} (the kind check in the
+    /// handler then refuses it for files, media and snippets: ResourceKindScopeTests in Zaagl.Api.Tests).</summary>
+    [Theory]
+    [InlineData("PATCH /api/resources/{id:guid}")]
+    [InlineData("DELETE /api/resources/{id:guid}")]
+    public void Resource_patch_and_delete_accept_files_write_or_tools_write(string key)
+    {
+        var endpoint = Assert.Single(RealEndpoints(), e => e.Key == key);
+        Assert.Equal(ApiScopes.FilesWrite + "|" + ApiScopes.ToolsWrite, endpoint.Scope);
+    }
 
     [Fact]
     public async Task A_links_read_key_cannot_create_a_link_even_though_guests_may()

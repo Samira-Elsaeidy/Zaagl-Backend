@@ -13,6 +13,7 @@ using LinkOptions = Zaagl.Modules.Links.Application.LinkOptions;
 namespace Zaagl.Api.Endpoints;
 
 /// <summary>openapi SecretCreateRequest (docs/phase2/vault.md).</summary>
+[System.Text.Json.Serialization.JsonNumberHandling(System.Text.Json.Serialization.JsonNumberHandling.Strict)]
 public sealed record SecretCreateRequest(
     string? Ciphertext,
     bool PassphraseProtected = false,
@@ -23,6 +24,7 @@ public sealed record SecretCreateRequest(
     string? CustomSlug = null);
 
 /// <summary>openapi CapsuleCreateRequest (docs/phase2/bug-capsules.md). <c>logs</c> follows the log schema version 1.</summary>
+[System.Text.Json.Serialization.JsonNumberHandling(System.Text.Json.Serialization.JsonNumberHandling.Strict)]
 public sealed record CapsuleCreateRequest(
     System.Text.Json.JsonElement Logs,
     Guid? RecordingResourceId = null,
@@ -90,7 +92,7 @@ public static class DeveloperToolsEndpoints
             .WithSummary("Delete the capsule link (410). The recording upload is not touched.")
             .Produces(StatusCodes.Status204NoContent).ProducesProblem(StatusCodes.Status404NotFound);
 
-        app.MapGet("/api/public/capsules/{code}", async (string code, HttpContext http, IAccessGate gate, ILinkResolver links,
+        app.MapGetAndHead("/api/public/capsules/{code}", async (string code, HttpContext http, IAccessGate gate, ILinkResolver links,
                 Zaagl.Modules.Resources.Contracts.IResourceRegistry registry, CapsuleService service, CancellationToken ct) =>
             {
                 NoStore(http);
@@ -166,7 +168,7 @@ public static class DeveloperToolsEndpoints
 
         var open = app.MapGroup("/api/public/vault").WithTags("Vault (public)").AllowAnonymous();
 
-        open.MapGet("/{code}", async (string code, HttpContext http, IAccessGate gate, ILinkResolver links, VaultService service, CancellationToken ct) =>
+        open.MapGetAndHead("/{code}", async (string code, HttpContext http, IAccessGate gate, ILinkResolver links, VaultService service, CancellationToken ct) =>
             {
                 NoStore(http);
                 var gated = await GateAsync(http, gate, code, LinkTargetKind.Secret, ct);
@@ -207,6 +209,13 @@ public static class DeveloperToolsEndpoints
         if (gated.Kind != kind || gated.ResourceId is not { } resourceId) return new(ApiResults.NotFound(), default, null);
         return new(null, resourceId, gated.LinkState);
     }
+
+    /// <summary>
+    /// A public Phase 2 descriptor route that answers <c>HEAD</c> exactly like <c>GET</c> (same gate, same status, no body; Kestrel drops
+    /// it). Neither consumes anything (docs/phase2/README.md "Common rules"); <c>MapGet</c> alone would 404 a <c>HEAD</c>.
+    /// </summary>
+    internal static RouteHandlerBuilder MapGetAndHead(this IEndpointRouteBuilder app, string pattern, Delegate handler) =>
+        app.MapMethods(pattern, [HttpMethods.Get, HttpMethods.Head], handler);
 
     internal static void NoStore(HttpContext http)
     {

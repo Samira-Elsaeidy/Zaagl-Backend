@@ -92,6 +92,19 @@ public sealed class CommentService(CollabDbContext db, IContentPlanProvider plan
     public async Task<Result<CommentThreadDto>> ListAsync(Guid resourceId, Guid? viewer, CancellationToken ct) =>
         await ThreadAsync(resourceId, viewer, ct);
 
+    /// <summary>
+    /// The cheap, read-only part of the posting rules, run by the endpoint before any CAPTCHA verification or guest-brake slot is spent:
+    /// comments off is 403, an anonymous visitor where anonymous posting is off is 401 ("sign in to comment"). <see cref="PostAsync"/>
+    /// re-checks both under the row lock, so a concurrent settings change still wins.
+    /// </summary>
+    public async Task<Result<bool>> CheckCanPostAsync(Guid resourceId, bool anonymous, CancellationToken ct)
+    {
+        var settings = await db.CommentSettings.AsNoTracking().FirstOrDefaultAsync(s => s.ResourceId == resourceId, ct);
+        if (settings is not { Enabled: true }) return Error.Forbidden("Comments are turned off for this content.");
+        if (anonymous && !settings.AllowAnonymous) return Error.Unauthorized("Sign in to comment on this content.");
+        return true;
+    }
+
     public async Task<Result<CommentDto>> PostAsync(Guid resourceId, Guid ownerId, ResourceKind kind, CommentAuthor author, PostCommentCommand command, CancellationToken ct)
     {
         // Validate first (no I/O).

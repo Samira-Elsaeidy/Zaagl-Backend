@@ -33,7 +33,8 @@ viewer (previously download-only).
 }
 ```
 - `t` is milliseconds from the start of the recording (or of the capture when there is no recording); the viewer syncs the log
-  timeline with the video by it.
+  timeline with the video by it. `t`, `durationMs` and the body sizes must be finite JSON numbers, 0 or more (the error message
+  says exactly that; it no longer prints the internal bound `1.7976931348623157E+308`).
 - Strict: unknown fields, wrong types, NUL characters, unknown levels, status outside 0-999 are `400`. Limits: 5,000 console and
   5,000 network entries, `message` 8 KB, `stack` 16 KB, `source` 2 KB, `url` 4 KB, 50 headers per map, header values 4 KB.
 - **No bodies** in the schema (request/response bodies are where secrets live); only their sizes.
@@ -42,7 +43,12 @@ viewer (previously download-only).
   `Cookie`, `Set-Cookie`, `X-Api-Key`, `X-Auth-Token`, `X-CSRF-Token`, `X-XSRF-Token`, `X-Zaagl-Link-Key`, `X-Zaagl-Grant`,
   `Captcha-Token` → `[redacted]`; URL query values of `token`, `access_token`, `refresh_token`, `id_token`, `key`, `api_key`,
   `apikey`, `secret`, `client_secret`, `password`, `pass`, `pwd`, `auth`, `code`, `session`, `sessionid`, `sig`, `signature`,
-  `credential` → `[redacted]`; URL fragments → `#[redacted]`. The stored document is rebuilt from known fields only.
+  `credential`, `api-key`, `x-api-key`, `access-token`, `auth_token`, `authtoken`, `jwt`, `bearer`, `private_key`, `passwd`,
+  `X-Amz-Signature`, `X-Amz-Credential`, `X-Amz-Security-Token` → `[redacted]`; URL fragments → `#[redacted]`; `user:password@`
+  before the host → `[redacted]@`. Query parameters are split on both `&` and `;`; each key is percent-decoded (repeatedly, `+`
+  as a space), trimmed and matched case-insensitively by its base name **and** every bracket segment, so `token[]=`,
+  `api_key[0]=`, `auth[token]=`, `user[password]=`, `%74oken=` and `a=1;token=…` are all redacted (`CapsuleLogs.RedactUrl`,
+  tests `CapsuleRedactionTests`). The stored document is rebuilt from known fields only.
 
 ### Client capture guidance (for the recorder UI / extension)
 Capture `console.*` and `window.onerror`/`unhandledrejection` (message, source, stack), `fetch`/XHR metadata (method, URL,
